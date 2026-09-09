@@ -411,6 +411,11 @@ orchestration:
                   psd_file: https://example.org/ET_10_full_cryo_psd.txt
 ```
 
+`kind: deepextractor` requires the extra: `pip install 'gwmock[deepextractor]'`.
+Its waveforms are reconstructions fetched from a HuggingFace dataset rather than
+generated, so without the extra the model raises on the first glitch it is asked
+for.
+
 ## Template Variables
 
 You can use Jinja2-style templates in configuration values such as file names

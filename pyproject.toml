@@ -78,6 +78,16 @@ jax = ["gwmock-signal[jax]>=0.16.4"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
 cuda = ["gwmock-signal[jax]>=0.16.4", "jax[cuda12]>=0.11.0"]
+# The DeepExtractor glitch backend, `kind: deepextractor` under
+# `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
+# HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
+# omits. Without this extra the model raises the moment it first reaches for the dataset -- when the
+# run pins the dataset revision, or at the first waveform -- telling the caller to install
+# `gwmock-noise[deepextractor]`, a package they never named.
+#
+# Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
+# publishes this extra, so there is nothing below it that this declaration would rescue.
+deepextractor = ["gwmock-noise[deepextractor]>=0.11.2"]
 
 [dependency-groups]
 dev = [
