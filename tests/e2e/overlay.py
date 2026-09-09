@@ -227,7 +227,64 @@ _OVERLAYS: dict[str, dict[str, Any]] = {
         },
         "orchestration": {"population": {"arguments": {"path": str(POPULATION_FIXTURE)}}},
     },
+    # Two segments rather than one, so a glitch drawn near a boundary is placed by the same code
+    # a full run uses. There is no event to bracket, so the example's 2030 start time is left
+    # alone -- glitch generation reads no Earth-orientation table, which is what the epoch choice
+    # elsewhere in this module is about.
+    #
+    # The rate is not overridden here; it is *scaled*, by _GLITCH_RATE_SCALES below. At the
+    # example's own O3 rates an 8-second segment expects 0.065 glitches per interferometer, and
+    # the whole span 0.13, so nearly every output file would be zeros and the entry would assert
+    # nothing about injection at all.
+    "noise/glitches/deepextractor/et_triangle_sardinia": {
+        "globals": {
+            "simulator-arguments": {
+                "sampling-frequency": 1024,
+                "duration": 8,
+                "total-duration": 16,
+            }
+        }
+    },
 }
+
+#: Factor applied to an entry's configured glitch rates, by label.
+#:
+#: Separate from :data:`_OVERLAYS` because a glitch model lives inside a *list* under
+#: ``noise.arguments.glitches``, which the deep merge replaces wholesale rather than merging into.
+#: An overlay entry that changed the rate would therefore have to restate the whole model --
+#: every class name, SNR, PSD and revision -- and would then be free to drift from the example it
+#: is supposed to be shortening. Multiplying what the example declares duplicates none of it.
+#:
+#: Scaling also preserves the *shape* of the configuration, which the overlay contract requires:
+#: a per-class mapping stays a per-class mapping with its relative weights intact, so the
+#: proportional class draw this entry claims to cover still runs. Rewriting it as a scalar would
+#: switch the backend to a uniform draw and quietly retire that coverage.
+#:
+#: 60 puts the total at 0.486 Hz, about 3.9 glitches per interferometer per 8-second segment --
+#: high enough that no output file is plausibly empty, low enough that events remain mostly
+#: separated rather than piling into continuous noise.
+_GLITCH_RATE_SCALES: dict[str, float] = {
+    "noise/glitches/deepextractor/et_triangle_sardinia": 60.0,
+}
+
+
+def _scale_glitch_rates(config: dict[str, Any], scale: float) -> None:
+    """Multiply every glitch model's ``rate`` in *config*, in place.
+
+    Handles both forms the backends accept: a scalar total rate and a per-class mapping.
+    """
+    glitches = config.get("orchestration", {}).get("noise", {}).get("arguments", {}).get("glitches")
+    if not isinstance(glitches, list):
+        raise KeyError(
+            "a glitch rate scale is declared for this entry, but its configuration has no "
+            "orchestration.noise.arguments.glitches list to scale."
+        )
+    for model in glitches:
+        rate = model["rate"]
+        model["rate"] = (
+            {name: value * scale for name, value in rate.items()} if isinstance(rate, dict) else rate * scale
+        )
+
 
 #: Entries whose span is expected to contain a gravitational-wave signal, so an all-zero output
 #: is a failure rather than a valid result. Noise-only runs are excluded because their content
@@ -277,6 +334,8 @@ def apply_overlay(config: dict[str, Any], label: str, working_directory: Path) -
             f"an example at its full size would take minutes to hours."
         )
     merged = _deep_merge(config, _OVERLAYS[label])
+    if label in _GLITCH_RATE_SCALES:
+        _scale_glitch_rates(merged, _GLITCH_RATE_SCALES[label])
     merged.setdefault("globals", {})["working-directory"] = str(working_directory)
     merged["globals"].setdefault("simulator-arguments", {})["seed"] = _TEST_SEED
 

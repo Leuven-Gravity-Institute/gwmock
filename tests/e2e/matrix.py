@@ -100,6 +100,19 @@ E2E_MATRIX: tuple[MatrixEntry, ...] = (
         requires=("ripplegw",),
     ),
     MatrixEntry(
+        label="noise/glitches/deepextractor/et_triangle_sardinia",
+        covers=(
+            "Glitch injection actually executed -- the per-interferometer Poisson process, the "
+            "per-class rate draw, and coloring a whitened waveform to a target SNR against a "
+            "bundled PSD. The only entry whose output is transients rather than noise or a "
+            "waveform, and the only one reading a `glitches:` block at all, since the gengli "
+            "entry below cannot be run. Also the network-preset path on the noise side: one "
+            "config resolving to three interferometers, each with its own RNG stream. Needs "
+            "`huggingface_hub` and the DeepExtractor dataset, which CI caches"
+        ),
+        requires=("huggingface_hub",),
+    ),
+    MatrixEntry(
         label="noise/glitches/gengli/et_triangle_sardinia/e1",
         covers="**Not run** -- glitch injection, blocked on `gengli` and a local glitch fixture",
         requires=("gengli",),
