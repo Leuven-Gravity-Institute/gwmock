@@ -1,9 +1,11 @@
 """The subset of ``examples/`` that the end-to-end suite runs, and why each one is in it.
 
 ``test_examples_end_to_end.py`` drives each entry through the CLI and
-``test_reproducibility.py`` runs each twice in separate processes. One entry is an exception and
-says so in its own description: it cannot be executed here, and a test enforces that it is
-labelled ``not run`` rather than being counted as coverage that happens.
+``test_reproducibility.py`` runs each twice in separate processes. Two entries are exceptions and
+say so in their own descriptions: they are not executed here, and a test enforces that each is
+labelled ``not run`` rather than being counted as coverage that happens. Their reasons differ --
+one cannot run at all, the other is a download CI declines -- and ``NOT_HERMETIC`` in
+``tests/e2e/overlay.py`` is where each is stated.
 
 This module is the single source of truth for the set. ``examples/README.md`` documents the
 same set for users, and ``test_examples_index.py`` fails if the two disagree.
@@ -102,13 +104,14 @@ E2E_MATRIX: tuple[MatrixEntry, ...] = (
     MatrixEntry(
         label="noise/glitches/deepextractor/et_triangle_sardinia",
         covers=(
-            "Glitch injection actually executed -- the per-interferometer Poisson process, the "
-            "per-class rate draw, and coloring a whitened waveform to a target SNR against a "
-            "bundled PSD. The only entry whose output is transients rather than noise or a "
-            "waveform, and the only one reading a `glitches:` block at all, since the gengli "
-            "entry below cannot be run. Also the network-preset path on the noise side: one "
-            "config resolving to three interferometers, each with its own RNG stream. Needs "
-            "`huggingface_hub` and the DeepExtractor dataset, which CI caches"
+            "**Not run** -- glitch injection from real reconstructions: the per-interferometer "
+            "Poisson process, the per-class rate draw, SNR-calibrated coloring, and the "
+            "network-preset path on the noise side. Unlike the gengli entry this one *works*; "
+            "its overlay and rate scaling were exercised against the real dataset, and "
+            "`tests/e2e/test_overlay.py` still covers them. What keeps it out of CI is the "
+            "2.3 GB dataset the backend downloads, which would dominate a job that otherwise "
+            "takes two minutes. Remove it from NOT_HERMETIC and regenerate its reference to run "
+            "it. Needs `huggingface_hub`"
         ),
         requires=("huggingface_hub",),
     ),

@@ -57,9 +57,15 @@ _PATH_DEFINING_KEYS = (
 #: 512 Hz or across many segments would not be caught here.
 _SCALE_KEYS = ("sampling-frequency", "duration", "total-duration")
 
-#: Matrix entries that can actually be run here. A non-hermetic entry has no overlay yet on
-#: purpose: it cannot be exercised, so an overlay for it would be untested guesswork. The
-#: KeyError in ``apply_overlay`` is what tells whoever adds its fixture to write one.
+#: Matrix entries that are actually run here.
+#:
+#: A non-hermetic entry may or may not have an overlay. The gengli one has none on purpose --
+#: it cannot be exercised at all, so an overlay for it would be untested guesswork, and the
+#: KeyError in ``apply_overlay`` is what tells whoever adds its fixture to write one. The
+#: DeepExtractor one does have one, because it *can* be exercised: it was, against the real
+#: dataset, and CI declines the download rather than the entry. Its overlay is checked by
+#: ``TestGlitchRateScaling`` below, which is parametrized over the scales rather than over
+#: ``_RUNNABLE`` for exactly that reason.
 _RUNNABLE = tuple(entry for entry in E2E_MATRIX if entry.label not in NOT_HERMETIC)
 
 
@@ -165,8 +171,8 @@ def test_a_blocked_entry_is_declared_as_not_run(label: str):
     """An entry that never runs must say so where coverage is read, not only in a skip message.
 
     A matrix entry reads as coverage. One that is permanently skipped is the most misleading
-    thing the matrix can contain -- a reader sees seven entries and assumes seven paths are
-    exercised. Enforcing the marker keeps the count honest as entries come and go.
+    thing the matrix can contain -- a reader counts the entries and takes each for a path that is
+    exercised. Enforcing the marker keeps that count honest as entries come and go.
     """
     entry = next((entry for entry in E2E_MATRIX if entry.label == label), None)
     assert entry is not None, f"'{label}' is listed as blocked but is not in the matrix"
@@ -188,11 +194,21 @@ class TestGlitchRateScaling:
     def _rates(config: dict[str, Any]) -> dict[str, float]:
         return config["orchestration"]["noise"]["arguments"]["glitches"][0]["rate"]
 
-    def test_every_scaled_label_is_a_runnable_matrix_entry(self):
-        """A stale label here scales nothing and says otherwise."""
-        runnable = {entry.label for entry in _RUNNABLE}
-        unknown = sorted(set(_GLITCH_RATE_SCALES) - runnable)
-        assert not unknown, f"_GLITCH_RATE_SCALES names entries that are not runnable: {unknown}"
+    def test_every_scaled_label_is_a_matrix_entry_with_an_overlay(self):
+        """A stale label here scales nothing and says otherwise.
+
+        Membership of the matrix and of ``_OVERLAYS``, not of ``_RUNNABLE``: a scale is applied
+        by ``apply_overlay``, which every entry with an overlay goes through, whether or not CI
+        chooses to run it.
+        """
+        labels = {entry.label for entry in E2E_MATRIX}
+        unknown = sorted(set(_GLITCH_RATE_SCALES) - labels)
+        assert not unknown, f"_GLITCH_RATE_SCALES names entries that are not in the matrix: {unknown}"
+
+        without_overlay = sorted(set(_GLITCH_RATE_SCALES) - set(_OVERLAYS))
+        assert not without_overlay, (
+            f"_GLITCH_RATE_SCALES names entries with no overlay, so the scale is never applied: {without_overlay}"
+        )
 
     @pytest.mark.parametrize("label", sorted(_GLITCH_RATE_SCALES), ids=lambda label: label)
     def test_the_scale_multiplies_the_examples_own_rates(self, label: str, tmp_path: Path):

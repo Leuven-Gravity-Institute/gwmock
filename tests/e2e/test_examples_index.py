@@ -110,23 +110,6 @@ def test_the_documented_matrix_matches_the_declared_matrix():
     )
 
 
-def test_the_dataset_prefetch_names_a_matrix_entry():
-    """CI warms the DeepExtractor cache for one label; a stale one warms the wrong thing.
-
-    The prefetch would still succeed against a renamed example -- it would read a configuration
-    that no longer runs, cache that revision, and the entry would then fetch its own inside the
-    test run. Nothing would fail; the job would just be slow and the cache useless.
-    """
-    from .fetch_deepextractor_dataset import ENTRY_LABEL, pinned_revision
-
-    labels = {entry.label for entry in E2E_MATRIX}
-    assert ENTRY_LABEL in labels, (
-        f"the dataset prefetch names '{ENTRY_LABEL}', which is not a matrix entry, so CI would "
-        f"warm the cache for an example the suite does not run"
-    )
-    assert pinned_revision(), "the prefetched example must pin a dataset revision"
-
-
 @pytest.mark.parametrize("entry", E2E_MATRIX, ids=lambda entry: entry.label)
 def test_every_matrix_entry_is_a_real_example(entry):
     """The matrix must not reference a label that has been renamed or removed."""

@@ -101,13 +101,25 @@ _FIXTURE_EVENT_GPS = _fixture_event_gps()
 #: coverage of the clamped regime, not all coverage of it.
 _ALIGNED_START = 1419724816.0
 
-#: Entries that cannot be run without fetching from the network, with the reason. These are
-#: skipped rather than run against a remote URL. Removing an entry from here requires adding a
-#: local fixture for whatever it downloads.
+#: Entries that are not run here, with the reason. These are skipped rather than run against a
+#: remote URL. Removing an entry from here means supplying whatever it fetches -- a local fixture
+#: for the gengli one, and for the DeepExtractor one a decision to pay for the dataset -- and
+#: generating its reference.
+#:
+#: The two reasons are different in kind and worth keeping apart. The gengli entry *cannot* run:
+#: the population it reads is gone from the host that served it. The DeepExtractor entry can run,
+#: and does locally -- its overlay and rate scaling were exercised against the real dataset -- but
+#: is deliberately kept out of CI, because the download dominates a job that otherwise takes about
+#: two minutes.
 NOT_HERMETIC: dict[str, str] = {
     "noise/glitches/gengli/et_triangle_sardinia/e1": (
         "needs a local blip-glitch population fixture; the example reads one from "
         "sandbox.zenodo.org, whose records are purged"
+    ),
+    "noise/glitches/deepextractor/et_triangle_sardinia": (
+        "the backend downloads a 2.3 GB dataset from the HuggingFace Hub, which is too slow to "
+        "fetch per run; runnable locally once it is cached, by removing this entry and "
+        "regenerating its reference"
     ),
 }
 

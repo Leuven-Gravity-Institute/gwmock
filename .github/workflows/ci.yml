@@ -75,10 +75,11 @@ jobs:
     # so no sync flag can install it, and that entry is separately blocked on a local glitch
     # fixture. It stays skipped here -- see NOT_HERMETIC in tests/e2e/overlay.py.
     #
-    # `deepextractor` is load-bearing in the same way as `jax`, and is the reason glitch injection
-    # is exercised end to end at all. Installing it is only half of what that entry needs, though:
-    # the 2.3 GB dataset is cached separately in the `e2e` job below, because an extra installs
-    # `huggingface_hub` and not the data it downloads.
+    # `deepextractor` is named for a different reason: its entry is *not* run. The extra supplies
+    # `huggingface_hub`, which the matrix declares as that entry's requirement and which the guard
+    # step therefore checks for -- but the backend then downloads a 2.3 GB dataset, which is too
+    # slow to fetch on every run, so the entry is in NOT_HERMETIC and skips. Installing the extra
+    # keeps that guard honest: what was declined is the data, not the dependency.
     test-jax:
         # The ripple/JAX-gated unit tests, which the `test` job cannot reach: it installs the dev
         # group only, so every `importorskip("ripplegw")` there skips. That left the
@@ -198,10 +199,6 @@ jobs:
         env:
             RIPPLEGW_CACHE_DIR: ${{ github.workspace }}/.ephemeris-cache
             EPHEMERIS_FILES: earth00-40-DE405.dat.gz sun00-40-DE405.dat.gz
-            # Inside the workspace, so `actions/cache` can reach it. The DeepExtractor glitch
-            # dataset the glitch entry draws from is 2.3 GB, so re-downloading it every run would
-            # dominate this job; cached, the entry costs a restore.
-            HF_HOME: ${{ github.workspace }}/.huggingface
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
@@ -216,10 +213,10 @@ jobs:
                   python-version: '3.12'
                   enable-cache: 'true'
 
-            # `deepextractor` is on this line so the glitch entry runs rather than skipping.
-            # It is the only matrix entry that exercises glitch injection at all -- the gengli one
-            # is blocked on a fixture -- and the extra is what supplies `huggingface_hub`. The
-            # dataset itself is the cache step further down.
+            # `deepextractor` is here for the guard step below, which reads every `requires` in
+            # the matrix: the DeepExtractor entry declares `huggingface_hub`, so the extra has to
+            # be installed for that check to pass. The entry itself still skips -- running it
+            # means downloading a 2.3 GB dataset, which is why it sits in NOT_HERMETIC.
             - name: Install dependencies
               run:
                   uv sync --group dev --extra sgwb --extra jax --extra
@@ -269,52 +266,6 @@ jobs:
 
             - name: Verify the ephemeris tables against their recorded hashes
               run: uv run --no-sync python tests/data/verify_ephemeris.py
-
-            # Read from the example rather than restated, because the example is what the
-            # suite runs: a revision written into this workflow would let CI warm the cache for
-            # one commit of the dataset while the run fetched another.
-            - name: Read the pinned DeepExtractor dataset revision
-              id: dataset
-              run: |
-                  revision=$(sed -n 's/^ *revision: *//p' \
-                      examples/noise/glitches/deepextractor/et_triangle_sardinia/config.yaml)
-                  if [ -z "$revision" ]; then
-                      echo "::error::the DeepExtractor example no longer pins \`revision\`, so" \
-                           "there is no specific dataset version to cache"
-                      exit 1
-                  fi
-                  echo "revision=$revision" >> "$GITHUB_OUTPUT"
-
-            # Keyed on that revision, so the key changes when and only when the data does -- a
-            # code change invalidates nothing. Unlike the ephemeris tables this needs no separate
-            # hash file: the key is a git commit SHA, so it *is* the content identity, and
-            # huggingface_hub checks each restored file's ETag against the Hub before use.
-            - name: Cache the DeepExtractor glitch dataset
-              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-              with:
-                  path: ${{ github.workspace }}/.huggingface
-                  key:
-                      deepextractor-dataset-${{ steps.dataset.outputs.revision
-                      }}
-
-            # Fetched up front so a Hub outage fails here, with retries, rather than surfacing
-            # from inside a test as a missing-cache-entry error attributed to whichever assertion
-            # triggered the lazy load.
-            - name: Fetch the DeepExtractor dataset if not cached
-              run: |
-                  for attempt in 1 2 3; do
-                      if uv run --no-sync python \
-                          tests/e2e/fetch_deepextractor_dataset.py; then
-                          exit 0
-                      fi
-                      if [ "$attempt" -lt 3 ]; then
-                          echo "dataset fetch attempt $attempt failed; retrying"
-                          sleep $((attempt * 10))
-                      fi
-                  done
-                  echo "::error::could not fetch the DeepExtractor glitch dataset from the" \
-                       "HuggingFace Hub after three attempts; the glitch entry needs it"
-                  exit 1
 
             - name: Run end-to-end tests
               run:

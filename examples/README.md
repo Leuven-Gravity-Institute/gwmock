@@ -112,7 +112,8 @@ through the real CLI by the `e2e` test suite.
 Those tests are excluded from the default run — they generate data — and run in
 their own CI job, which installs the `sgwb`, `jax` and `deepextractor` extras.
 `cuda` is deliberately left out there: the runner has no GPU, and its wheels are
-multi-gigabyte. To run them yourself:
+multi-gigabyte. `deepextractor` is installed but its entry still skips — see
+below. To run them yourself:
 
 ```bash
 uv run pytest -m e2e --no-cov
@@ -123,13 +124,22 @@ The examples themselves are never edited. A test-time overlay
 files, so the examples stay realistic while the suite finishes in about two
 minutes.
 
-One input is not in-repo and cannot be: the `deepextractor` entry draws from a
-2.3 GB HuggingFace dataset, pinned to a commit by the example's `revision`. It
-is fetched once and cached (`~/.cache/huggingface` by default, `HF_HOME` to move
-it), and every later run reads the cache. So the first local e2e run pays that
-download and CI keeps the cache between runs. Delete the cache and the entry
-fetches again; take the network away with the cache warm and it still runs, on
-the cached files.
+One entry is deliberately not run, and it is worth being clear about why. The
+`deepextractor` entry draws from a 2.3 GB HuggingFace dataset, pinned to a
+commit by the example's `revision`. The entry works — its overlay was exercised
+against the real dataset — but that download dominates a job that otherwise
+finishes in about two minutes, so CI skips it. To run it yourself, install the
+extra, delete its line from `NOT_HERMETIC` in `tests/e2e/overlay.py`, and
+generate its reference:
+
+```bash
+uv sync --group dev --extra deepextractor
+GWMOCK_WRITE_E2E_REFERENCES=1 uv run pytest -m e2e --no-cov -k deepextractor
+```
+
+The dataset is fetched once and cached (`~/.cache/huggingface` by default,
+`HF_HOME` to move it), so only the first run pays for it. With the cache warm
+the entry runs with no network at all.
 
 > **What is and is not checked.** Each entry is run and its output verified
 > against the manifest the run itself records: every declared file present,
@@ -169,18 +179,18 @@ what guarantee the others follow. That assumption is the reason the subset is
 legitimate; if a change makes two examples take genuinely different paths, the
 matrix needs a new entry.
 
-| Label                                               | Code path it is intended to cover                                                                                                                                                                         |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default_config`                                    | The blank template must run unedited; noise-only, single segment                                                                                                                                          |
-| `noise/uncorrelated_gaussian/quick_start`           | Signal **and** noise in one run; CBC; GWF output                                                                                                                                                          |
-| `noise/uncorrelated_gaussian/et_triangle_sardinia`  | Noise-only across **many** segments (chunking, per-segment seeds)                                                                                                                                         |
-| `signal/bbh/et_triangle_sardinia`                   | Signal-only CBC; Earth rotation; population loaded from file                                                                                                                                              |
-| `signal/sgwb/et_triangle_sardinia`                  | `StochasticBackgroundSimulator` — a different simulator class; **HDF5** output                                                                                                                            |
-| `signal/waveform_backend/ripple`                    | A non-default waveform library resolved from config. Needs `ripplegw`                                                                                                                                     |
-| `signal/execution/batched`                          | `execution: batched` — one batched call per segment, converted back to per-event chunks. Needs `ripplegw`                                                                                                 |
-| `signal/cw/et_triangle_sardinia`                    | The continuous-wave branch of `_simulate`; multi-segment, since one segment cannot distinguish it                                                                                                         |
-| `noise/glitches/deepextractor/et_triangle_sardinia` | Glitch injection actually run — the per-interferometer Poisson process, the per-class rate draw, and SNR-calibrated coloring; also the network preset resolved on the noise side. Needs `huggingface_hub` |
-| `noise/glitches/gengli/et_triangle_sardinia/e1`     | **Not run** — glitch injection, blocked on `gengli` and a local glitch fixture                                                                                                                            |
+| Label                                               | Code path it is intended to cover                                                                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `default_config`                                    | The blank template must run unedited; noise-only, single segment                                                                                                                                                                     |
+| `noise/uncorrelated_gaussian/quick_start`           | Signal **and** noise in one run; CBC; GWF output                                                                                                                                                                                     |
+| `noise/uncorrelated_gaussian/et_triangle_sardinia`  | Noise-only across **many** segments (chunking, per-segment seeds)                                                                                                                                                                    |
+| `signal/bbh/et_triangle_sardinia`                   | Signal-only CBC; Earth rotation; population loaded from file                                                                                                                                                                         |
+| `signal/sgwb/et_triangle_sardinia`                  | `StochasticBackgroundSimulator` — a different simulator class; **HDF5** output                                                                                                                                                       |
+| `signal/waveform_backend/ripple`                    | A non-default waveform library resolved from config. Needs `ripplegw`                                                                                                                                                                |
+| `signal/execution/batched`                          | `execution: batched` — one batched call per segment, converted back to per-event chunks. Needs `ripplegw`                                                                                                                            |
+| `signal/cw/et_triangle_sardinia`                    | The continuous-wave branch of `_simulate`; multi-segment, since one segment cannot distinguish it                                                                                                                                    |
+| `noise/glitches/deepextractor/et_triangle_sardinia` | **Not run** — glitch injection from real reconstructions: Poisson process per interferometer, per-class rate draw, SNR-calibrated coloring, network preset on the noise side. Works, but needs a 2.3 GB dataset CI declines to fetch |
+| `noise/glitches/gengli/et_triangle_sardinia/e1`     | **Not run** — glitch injection, blocked on `gengli` and a local glitch fixture                                                                                                                                                       |
 
 Deliberately excluded, with the reason:
 
