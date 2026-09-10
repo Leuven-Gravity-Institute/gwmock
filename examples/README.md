@@ -23,17 +23,17 @@ end.
 
 **By what you want to generate**
 
-| Goal                                      | Label                                          |
-| ----------------------------------------- | ---------------------------------------------- |
-| Detector noise only                       | `noise/uncorrelated_gaussian/<network>`        |
-| Noise with transient glitches             | `noise/glitches/gengli/<network>/<detector>`   |
-| CBC signals only (no noise)               | `signal/bbh/<network>`, `signal/bns/<network>` |
-| Signals **and** noise together            | `noise/uncorrelated_gaussian/quick_start`      |
-| Stochastic background                     | `signal/sgwb/<network>`                        |
-| Signals from a different waveform library | `signal/waveform_backend/ripple`               |
-| Batched generation (the GPU-capable path) | `signal/execution/batched`                     |
-| Continuous waves from pulsars             | `signal/cw/et_triangle_sardinia`               |
-| A blank starting point                    | `default_config`                               |
+| Goal                                      | Label                                                                                  |
+| ----------------------------------------- | -------------------------------------------------------------------------------------- |
+| Detector noise only                       | `noise/uncorrelated_gaussian/<network>`                                                |
+| Noise with transient glitches             | `noise/glitches/gengli/<network>/<detector>`, `noise/glitches/deepextractor/<network>` |
+| CBC signals only (no noise)               | `signal/bbh/<network>`, `signal/bns/<network>`                                         |
+| Signals **and** noise together            | `noise/uncorrelated_gaussian/quick_start`                                              |
+| Stochastic background                     | `signal/sgwb/<network>`                                                                |
+| Signals from a different waveform library | `signal/waveform_backend/ripple`                                                       |
+| Batched generation (the GPU-capable path) | `signal/execution/batched`                                                             |
+| Continuous waves from pulsars             | `signal/cw/et_triangle_sardinia`                                                       |
+| A blank starting point                    | `default_config`                                                                       |
 
 **By waveform library** — `signal.waveform-backend` chooses which library
 generates the polarizations: `lal` (the default), `pycbc`, `ripple`, or
@@ -78,24 +78,31 @@ each is runnable without editing.
 
 ## Every example
 
-| Label                                              | Generates          | Network                       | Notes                                                                                                                                        |
-| -------------------------------------------------- | ------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default_config`                                   | noise              | Triangle Sardinia             | Commented template; single 4096 s segment                                                                                                    |
-| `noise/uncorrelated_gaussian/quick_start`          | signal + noise     | Triangle Sardinia             | **Start here.** 1024 s, one BBH event                                                                                                        |
-| `noise/uncorrelated_gaussian/et_triangle_sardinia` | noise              | Triangle Sardinia             | 1 day, `ET_10_full_cryo_psd`                                                                                                                 |
-| `noise/uncorrelated_gaussian/et_triangle_emr`      | noise              | Triangle EMR                  | 1 day, `ET_10_full_cryo_psd`                                                                                                                 |
-| `noise/uncorrelated_gaussian/et_2l_aligned`        | noise              | 2L aligned                    | 1 day, `ET_15_full_cryo_psd`                                                                                                                 |
-| `noise/uncorrelated_gaussian/et_2l_misaligned`     | noise              | 2L misaligned                 | 1 day, `ET_15_full_cryo_psd`                                                                                                                 |
-| `noise/glitches/gengli/<network>/<e1\|e2\|e3>`     | noise + glitches   | all four                      | One file **per detector**; blip glitches at 1/min. Needs `gengli`                                                                            |
-| `signal/bbh/<network>`                             | signal             | all four                      | `IMRPhenomXPHM`, f<sub>min</sub> 10 Hz, Earth rotation on                                                                                    |
-| `signal/bns/<network>`                             | signal             | all four                      | `IMRPhenomPv2_NRTidalv2`, f<sub>min</sub> 20 Hz, Earth rotation on. Cannot use `execution: batched` — ripple lacks this approximant          |
-| `signal/sgwb/<network>`                            | background + noise | Triangle Sardinia, 2L aligned | 16 s; signal written as **HDF5**, noise as GWF                                                                                               |
-| `signal/waveform_backend/ripple`                   | signal             | Triangle Sardinia             | Waveforms from **ripple** rather than LAL. Needs `gwmock[jax]`                                                                               |
-| `signal/execution/batched`                         | signal             | Triangle Sardinia             | A segment's events generated in one batched call. Needs `gwmock[jax]`; add `gwmock[cuda]` for a GPU                                          |
-| `signal/cw/et_triangle_sardinia`                   | signal             | Triangle Sardinia             | Continuous waves from a pulsar catalogue. Always-on, so every source is in every segment. Needs `gwmock[jax]` and LALPulsar ephemeris tables |
+| Label                                              | Generates          | Network                       | Notes                                                                                                                                               |
+| -------------------------------------------------- | ------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default_config`                                   | noise              | Triangle Sardinia             | Commented template; single 4096 s segment                                                                                                           |
+| `noise/uncorrelated_gaussian/quick_start`          | signal + noise     | Triangle Sardinia             | **Start here.** 1024 s, one BBH event                                                                                                               |
+| `noise/uncorrelated_gaussian/et_triangle_sardinia` | noise              | Triangle Sardinia             | 1 day, `ET_10_full_cryo_psd`                                                                                                                        |
+| `noise/uncorrelated_gaussian/et_triangle_emr`      | noise              | Triangle EMR                  | 1 day, `ET_10_full_cryo_psd`                                                                                                                        |
+| `noise/uncorrelated_gaussian/et_2l_aligned`        | noise              | 2L aligned                    | 1 day, `ET_15_full_cryo_psd`                                                                                                                        |
+| `noise/uncorrelated_gaussian/et_2l_misaligned`     | noise              | 2L misaligned                 | 1 day, `ET_15_full_cryo_psd`                                                                                                                        |
+| `noise/glitches/gengli/<network>/<e1\|e2\|e3>`     | glitches           | all four                      | One file **per detector**; blip glitches at 1/min. Needs `gengli`                                                                                   |
+| `noise/glitches/deepextractor/<network>`           | glitches           | all four                      | One file **per network**; real O3 reconstructions in seven Gravity Spy classes at their O3 rates, written as **GWF**. Needs `gwmock[deepextractor]` |
+| `signal/bbh/<network>`                             | signal             | all four                      | `IMRPhenomXPHM`, f<sub>min</sub> 10 Hz, Earth rotation on                                                                                           |
+| `signal/bns/<network>`                             | signal             | all four                      | `IMRPhenomPv2_NRTidalv2`, f<sub>min</sub> 20 Hz, Earth rotation on. Cannot use `execution: batched` — ripple lacks this approximant                 |
+| `signal/sgwb/<network>`                            | background + noise | Triangle Sardinia, 2L aligned | 16 s; signal written as **HDF5**, noise as GWF                                                                                                      |
+| `signal/waveform_backend/ripple`                   | signal             | Triangle Sardinia             | Waveforms from **ripple** rather than LAL. Needs `gwmock[jax]`                                                                                      |
+| `signal/execution/batched`                         | signal             | Triangle Sardinia             | A segment's events generated in one batched call. Needs `gwmock[jax]`; add `gwmock[cuda]` for a GPU                                                 |
+| `signal/cw/et_triangle_sardinia`                   | signal             | Triangle Sardinia             | Continuous waves from a pulsar catalogue. Always-on, so every source is in every segment. Needs `gwmock[jax]` and LALPulsar ephemeris tables        |
 
-The glitch examples are per-detector rather than per-network because each
-detector draws from its own glitch population file.
+The `gengli` examples are per-detector rather than per-network because each
+detector draws from its own glitch population file. The `deepextractor` ones are
+per-network: the dataset is shared, so a network preset and one file cover a
+whole geometry, and each interferometer still gets its own glitch realisation
+from its own RNG stream. What splits _those_ four files is the coloring PSD —
+one glitch model carries exactly one `psd_file` and applies it to every
+interferometer of the run, so the 10 km triangle and the 15 km 2L cannot share a
+file.
 
 ## The end-to-end test matrix
 
@@ -103,9 +110,10 @@ A **subset** of these examples is the end-to-end matrix: the configs driven
 through the real CLI by the `e2e` test suite.
 
 Those tests are excluded from the default run — they generate data — and run in
-their own CI job, which installs the `sgwb` and `jax` extras. `cuda` is
-deliberately left out there: the runner has no GPU, and its wheels are
-multi-gigabyte. To run them yourself:
+their own CI job, which installs the `sgwb`, `jax` and `deepextractor` extras.
+`cuda` is deliberately left out there: the runner has no GPU, and its wheels are
+multi-gigabyte. `deepextractor` is installed but its entry still skips — see
+below. To run them yourself:
 
 ```bash
 uv run pytest -m e2e --no-cov
@@ -115,6 +123,23 @@ The examples themselves are never edited. A test-time overlay
 (`tests/e2e/overlay.py`) shortens each run and repoints its inputs at in-repo
 files, so the examples stay realistic while the suite finishes in about two
 minutes.
+
+One entry is deliberately not run, and it is worth being clear about why. The
+`deepextractor` entry draws from a 2.3 GB HuggingFace dataset, pinned to a
+commit by the example's `revision`. The entry works — its overlay was exercised
+against the real dataset — but that download dominates a job that otherwise
+finishes in about two minutes, so CI skips it. To run it yourself, install the
+extra, delete its line from `NOT_HERMETIC` in `tests/e2e/overlay.py`, and
+generate its reference:
+
+```bash
+uv sync --group dev --extra deepextractor
+GWMOCK_WRITE_E2E_REFERENCES=1 uv run pytest -m e2e --no-cov -k deepextractor
+```
+
+The dataset is fetched once and cached (`~/.cache/huggingface` by default,
+`HF_HOME` to move it), so only the first run pays for it. With the cache warm
+the entry runs with no network at all.
 
 > **What is and is not checked.** Each entry is run and its output verified
 > against the manifest the run itself records: every declared file present,
@@ -154,17 +179,18 @@ what guarantee the others follow. That assumption is the reason the subset is
 legitimate; if a change makes two examples take genuinely different paths, the
 matrix needs a new entry.
 
-| Label                                              | Code path it is intended to cover                                                                         |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `default_config`                                   | The blank template must run unedited; noise-only, single segment                                          |
-| `noise/uncorrelated_gaussian/quick_start`          | Signal **and** noise in one run; CBC; GWF output                                                          |
-| `noise/uncorrelated_gaussian/et_triangle_sardinia` | Noise-only across **many** segments (chunking, per-segment seeds)                                         |
-| `signal/bbh/et_triangle_sardinia`                  | Signal-only CBC; Earth rotation; population loaded from file                                              |
-| `signal/sgwb/et_triangle_sardinia`                 | `StochasticBackgroundSimulator` — a different simulator class; **HDF5** output                            |
-| `signal/waveform_backend/ripple`                   | A non-default waveform library resolved from config. Needs `ripplegw`                                     |
-| `signal/execution/batched`                         | `execution: batched` — one batched call per segment, converted back to per-event chunks. Needs `ripplegw` |
-| `signal/cw/et_triangle_sardinia`                   | The continuous-wave branch of `_simulate`; multi-segment, since one segment cannot distinguish it         |
-| `noise/glitches/gengli/et_triangle_sardinia/e1`    | **Not run** — glitch injection, blocked on `gengli` and a local glitch fixture                            |
+| Label                                               | Code path it is intended to cover                                                                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `default_config`                                    | The blank template must run unedited; noise-only, single segment                                                                                                                                                                     |
+| `noise/uncorrelated_gaussian/quick_start`           | Signal **and** noise in one run; CBC; GWF output                                                                                                                                                                                     |
+| `noise/uncorrelated_gaussian/et_triangle_sardinia`  | Noise-only across **many** segments (chunking, per-segment seeds)                                                                                                                                                                    |
+| `signal/bbh/et_triangle_sardinia`                   | Signal-only CBC; Earth rotation; population loaded from file                                                                                                                                                                         |
+| `signal/sgwb/et_triangle_sardinia`                  | `StochasticBackgroundSimulator` — a different simulator class; **HDF5** output                                                                                                                                                       |
+| `signal/waveform_backend/ripple`                    | A non-default waveform library resolved from config. Needs `ripplegw`                                                                                                                                                                |
+| `signal/execution/batched`                          | `execution: batched` — one batched call per segment, converted back to per-event chunks. Needs `ripplegw`                                                                                                                            |
+| `signal/cw/et_triangle_sardinia`                    | The continuous-wave branch of `_simulate`; multi-segment, since one segment cannot distinguish it                                                                                                                                    |
+| `noise/glitches/deepextractor/et_triangle_sardinia` | **Not run** — glitch injection from real reconstructions: Poisson process per interferometer, per-class rate draw, SNR-calibrated coloring, network preset on the noise side. Works, but needs a 2.3 GB dataset CI declines to fetch |
+| `noise/glitches/gengli/et_triangle_sardinia/e1`     | **Not run** — glitch injection, blocked on `gengli` and a local glitch fixture                                                                                                                                                       |
 
 Deliberately excluded, with the reason:
 

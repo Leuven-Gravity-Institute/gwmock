@@ -63,9 +63,10 @@ answered by replaying the matrix on a CUDA host rather than by argument:
 
 Done on 2026-08-09 against an RTX 5060 Ti (compute capability 12.0): **all eight stored references
 matched**, `argmax` included -- which is compared exactly, so the device difference moved no peak off its
-sample. (The run reports "9 passed, 1 skipped": eight reference comparisons, plus the separate test that
-every runnable entry has a reference, with the gengli entry skipped. An earlier draft of this paragraph
-read that as nine entries, which a reviewer corrected.) An earlier measurement on an RTX 2080 Ti agreed. The delta
+sample. (The run reported "9 passed, 1 skipped" at the time: eight reference comparisons, plus the separate
+test that every runnable entry has a reference, with the gengli entry skipped. An earlier draft of this
+paragraph read that as nine entries, which a reviewer corrected. A second non-hermetic entry has been
+added since, so the same run now reports two skips and still eight comparisons.) An earlier measurement on an RTX 2080 Ti agreed. The delta
 itself was characterised separately as a global time shift of 2.3e-16 s, 3.16e-13 relative end to end.
 
 **Where the gate actually sits.** Two effects were measured against it, and it falls between them:

@@ -74,6 +74,12 @@ jobs:
     # It does *not* cover the gengli entry. gengli is not a declared extra of this project at all,
     # so no sync flag can install it, and that entry is separately blocked on a local glitch
     # fixture. It stays skipped here -- see NOT_HERMETIC in tests/e2e/overlay.py.
+    #
+    # `deepextractor` is named for a different reason: its entry is *not* run. The extra supplies
+    # `huggingface_hub`, which the matrix declares as that entry's requirement and which the guard
+    # step therefore checks for -- but the backend then downloads a 2.3 GB dataset, which is too
+    # slow to fetch on every run, so the entry is in NOT_HERMETIC and skips. Installing the extra
+    # keeps that guard honest: what was declined is the data, not the dependency.
     test-jax:
         # The ripple/JAX-gated unit tests, which the `test` job cannot reach: it installs the dev
         # group only, so every `importorskip("ripplegw")` there skips. That left the
@@ -207,8 +213,14 @@ jobs:
                   python-version: '3.12'
                   enable-cache: 'true'
 
+            # `deepextractor` is here for the guard step below, which reads every `requires` in
+            # the matrix: the DeepExtractor entry declares `huggingface_hub`, so the extra has to
+            # be installed for that check to pass. The entry itself still skips -- running it
+            # means downloading a 2.3 GB dataset, which is why it sits in NOT_HERMETIC.
             - name: Install dependencies
-              run: uv sync --group dev --extra sgwb --extra jax
+              run:
+                  uv sync --group dev --extra sgwb --extra jax --extra
+                  deepextractor
 
             - name: Confirm the optional stack is present
               # Otherwise a missing extra turns the whole job into a silent no-op: every gated

@@ -20,6 +20,7 @@ from .matrix import E2E_MATRIX
 from .overlay import (
     _ALIGNED_START,
     _FIXTURE_EVENT_GPS,
+    _GLITCH_RATE_SCALES,
     _OVERLAYS,
     _TEST_SEED,
     CONTAINS_SIGNAL,
@@ -56,9 +57,15 @@ _PATH_DEFINING_KEYS = (
 #: 512 Hz or across many segments would not be caught here.
 _SCALE_KEYS = ("sampling-frequency", "duration", "total-duration")
 
-#: Matrix entries that can actually be run here. A non-hermetic entry has no overlay yet on
-#: purpose: it cannot be exercised, so an overlay for it would be untested guesswork. The
-#: KeyError in ``apply_overlay`` is what tells whoever adds its fixture to write one.
+#: Matrix entries that are actually run here.
+#:
+#: A non-hermetic entry may or may not have an overlay. The gengli one has none on purpose --
+#: it cannot be exercised at all, so an overlay for it would be untested guesswork, and the
+#: KeyError in ``apply_overlay`` is what tells whoever adds its fixture to write one. The
+#: DeepExtractor one does have one, because it *can* be exercised: it was, against the real
+#: dataset, and CI declines the download rather than the entry. Its overlay is checked by
+#: ``TestGlitchRateScaling`` below, which is parametrized over the scales rather than over
+#: ``_RUNNABLE`` for exactly that reason.
 _RUNNABLE = tuple(entry for entry in E2E_MATRIX if entry.label not in NOT_HERMETIC)
 
 
@@ -164,8 +171,8 @@ def test_a_blocked_entry_is_declared_as_not_run(label: str):
     """An entry that never runs must say so where coverage is read, not only in a skip message.
 
     A matrix entry reads as coverage. One that is permanently skipped is the most misleading
-    thing the matrix can contain -- a reader sees seven entries and assumes seven paths are
-    exercised. Enforcing the marker keeps the count honest as entries come and go.
+    thing the matrix can contain -- a reader counts the entries and takes each for a path that is
+    exercised. Enforcing the marker keeps that count honest as entries come and go.
     """
     entry = next((entry for entry in E2E_MATRIX if entry.label == label), None)
     assert entry is not None, f"'{label}' is listed as blocked but is not in the matrix"
@@ -173,6 +180,98 @@ def test_a_blocked_entry_is_declared_as_not_run(label: str):
         f"'{label}' cannot be executed here, so its matrix description must say so; it currently "
         f"reads: {entry.covers!r}"
     )
+
+
+class TestGlitchRateScaling:
+    """The one overlay mechanism that reaches inside a list, and what bounds it.
+
+    ``_OVERLAYS`` is deep-merged, and ``noise.arguments.glitches`` is a list -- so an overlay
+    that named it would replace the whole glitch model and be free to drift from the example.
+    Scaling the rate instead touches one number per model. These tests are what keep it to that.
+    """
+
+    @staticmethod
+    def _rates(config: dict[str, Any]) -> dict[str, float]:
+        return config["orchestration"]["noise"]["arguments"]["glitches"][0]["rate"]
+
+    def test_every_scaled_label_is_a_matrix_entry_with_an_overlay(self):
+        """A stale label here scales nothing and says otherwise.
+
+        Membership of the matrix and of ``_OVERLAYS``, not of ``_RUNNABLE``: a scale is applied
+        by ``apply_overlay``, which every entry with an overlay goes through, whether or not CI
+        chooses to run it.
+        """
+        labels = {entry.label for entry in E2E_MATRIX}
+        unknown = sorted(set(_GLITCH_RATE_SCALES) - labels)
+        assert not unknown, f"_GLITCH_RATE_SCALES names entries that are not in the matrix: {unknown}"
+
+        without_overlay = sorted(set(_GLITCH_RATE_SCALES) - set(_OVERLAYS))
+        assert not without_overlay, (
+            f"_GLITCH_RATE_SCALES names entries with no overlay, so the scale is never applied: {without_overlay}"
+        )
+
+    @pytest.mark.parametrize("label", sorted(_GLITCH_RATE_SCALES), ids=lambda label: label)
+    def test_the_scale_multiplies_the_examples_own_rates(self, label: str, tmp_path: Path):
+        """Every rate must be the example's value times the declared factor -- and nothing else.
+
+        Checked against the example rather than against restated numbers, which is the whole
+        reason the overlay scales instead of listing: a rate written out here could drift from
+        the configuration it claims to shorten and this test would still pass.
+        """
+        original = self._rates(_example(label))
+        scaled = self._rates(apply_overlay(_example(label), label, tmp_path))
+        scale = _GLITCH_RATE_SCALES[label]
+
+        assert set(scaled) == set(original), (
+            "the overlay changed which glitch classes are configured; the backend requires the "
+            "rate mapping's keys to match `glitch_classes` exactly"
+        )
+        for name, value in original.items():
+            assert scaled[name] == pytest.approx(value * scale, rel=1e-12), (
+                f"rate for '{name}' is {scaled[name]}, not {value} * {scale}"
+            )
+
+    @pytest.mark.parametrize("label", sorted(_GLITCH_RATE_SCALES), ids=lambda label: label)
+    def test_the_scale_leaves_everything_but_the_rate_alone(self, label: str, tmp_path: Path):
+        """The complement: bound what the scaling may touch, not only what it must produce.
+
+        A per-class ``rate`` mapping stays a mapping -- rewriting it as a scalar would switch the
+        backend from a proportional class draw to a uniform one, retiring the coverage the matrix
+        entry claims while every other assertion here still passed.
+        """
+        original = _example(label)["orchestration"]["noise"]["arguments"]["glitches"]
+        merged = apply_overlay(_example(label), label, tmp_path)["orchestration"]["noise"]["arguments"]["glitches"]
+
+        assert len(merged) == len(original), "the overlay added or dropped a glitch model"
+        for before, after in zip(original, merged, strict=True):
+            assert type(after["rate"]) is type(before["rate"]), (
+                "the overlay changed the rate's form; scalar and per-class mapping select "
+                "different class-draw code in the backend"
+            )
+            assert {key: value for key, value in after.items() if key != "rate"} == {
+                key: value for key, value in before.items() if key != "rate"
+            }, "the overlay changed a glitch-model setting other than the rate"
+
+    @pytest.mark.parametrize("label", sorted(_GLITCH_RATE_SCALES), ids=lambda label: label)
+    def test_the_scaled_span_expects_glitches_in_every_output_file(self, label: str, tmp_path: Path):
+        """The point of scaling: at the example's own rates the entry would write zeros.
+
+        A run that fires no glitch still completes and writes correctly-shaped files, exactly the
+        trap ``test_the_output_contains_signal_where_expected`` exists for on the signal side --
+        and that test cannot cover a glitch-only entry, which has no ``signal`` block to look
+        under. So the arithmetic is asserted here instead: the expected count per output file,
+        which is one segment of one interferometer, has to be comfortably above one.
+        """
+        merged = apply_overlay(_example(label), label, tmp_path)
+        segment = merged["globals"]["simulator-arguments"]["duration"]
+        rate = self._rates(merged)
+        total = sum(rate.values()) if isinstance(rate, dict) else rate
+
+        expected = total * segment
+        assert expected > 3.0, (
+            f"'{label}' expects only {expected:.2f} glitches per segment per interferometer, so "
+            f"an output file of zeros is a likely outcome rather than a failure"
+        )
 
 
 def test_contains_signal_only_names_matrix_entries():

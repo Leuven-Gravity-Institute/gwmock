@@ -111,7 +111,13 @@ background. These set `signal.source-type: sgwb` and require no population:
 Example configurations for generating detector glitches with various
 configurations and sensitivities.
 
-### Einstein Telescope - Triangular
+### gengli blip glitches
+
+One configuration **per interferometer**, because each draws from its own glitch
+population file. Output is HDF5. These need `gengli`, which is not a declared
+extra of gwmock — install it yourself.
+
+#### Einstein Telescope - Triangular
 
 - EMR location
     - E1:
@@ -128,7 +134,7 @@ configurations and sensitivities.
     - E3:
       [`noise/glitches/gengli/et_triangle_sardinia/e3/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/gengli/et_triangle_sardinia/e3/config.yaml)
 
-### Einstein Telescope - 2L
+#### Einstein Telescope - 2L
 
 - Aligned configuration
     - E1:
@@ -140,6 +146,25 @@ configurations and sensitivities.
       [`noise/glitches/gengli/et_2l_misaligned/e1/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/gengli/et_2l_misaligned/e1/config.yaml)
     - E2:
       [`noise/glitches/gengli/et_2l_misaligned/e2/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/gengli/et_2l_misaligned/e2/config.yaml)
+
+### DeepExtractor glitches
+
+One configuration **per detector network**: `detectors` names a network preset
+and the noise side resolves it into that geometry's interferometers, each with
+its own glitch realisation. Real O3 reconstructions in seven Gravity Spy
+classes, at their measured O3 rates and median SNRs, written as GWF frames.
+These need `gwmock[deepextractor]` and download a 2.3 GB HuggingFace dataset on
+first use. See [Configuration Files](configuration.md) for what each argument
+does.
+
+- Triangle, Sardinia location:
+  [`noise/glitches/deepextractor/et_triangle_sardinia/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/deepextractor/et_triangle_sardinia/config.yaml)
+- Triangle, EMR location:
+  [`noise/glitches/deepextractor/et_triangle_emr/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/deepextractor/et_triangle_emr/config.yaml)
+- 2L, aligned configuration:
+  [`noise/glitches/deepextractor/et_2l_aligned/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/deepextractor/et_2l_aligned/config.yaml)
+- 2L, misaligned configuration:
+  [`noise/glitches/deepextractor/et_2l_misaligned/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/noise/glitches/deepextractor/et_2l_misaligned/config.yaml)
 
 ## Storage Estimates
 

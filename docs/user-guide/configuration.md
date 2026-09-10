@@ -411,10 +411,89 @@ orchestration:
                   psd_file: https://example.org/ET_10_full_cryo_psd.txt
 ```
 
-`kind: deepextractor` requires the extra: `pip install 'gwmock[deepextractor]'`.
-Its waveforms are reconstructions fetched from a HuggingFace dataset rather than
-generated, so without the extra the model raises on the first glitch it is asked
-for.
+`kind: deepextractor` injects real O3 glitch reconstructions, in seven Gravity
+Spy classes, coloured against a target PSD and rescaled to a target SNR. It
+takes two arguments the parametric models leave optional: `psd_file` and `snr`
+are **required** here, where `blip` and `scattered_light` default both to `None`
+and emit an uncoloured, unscaled waveform. There is no default to fall back on,
+because a reconstruction arrives whitened and amplitude-normalized — the PSD is
+what turns it into strain and the SNR is what sets its size.
+
+```yaml
+orchestration:
+    noise:
+        arguments:
+            detectors:
+                - ET-Triangle-Sardinia
+            glitches:
+                - kind: deepextractor
+                  # Required. Total Poisson rate in Hz, or one rate per class.
+                  rate:
+                      Blip: 0.0003536
+                      Fast_Scattering: 0.001955
+                      Koi_Fish: 0.0006158
+                      Low_Frequency_Burst: 0.0006542
+                      Scattered_Light: 0.002902
+                      Tomte: 0.001239
+                      Whistle: 0.0003792
+                  # Required. Target optimal SNR, scalar or one per class.
+                  snr:
+                      Blip: 13.95
+                      Fast_Scattering: 9.004
+                      Koi_Fish: 113.9
+                      Low_Frequency_Burst: 12.23
+                      Scattered_Light: 11.47
+                      Tomte: 13.96
+                      Whistle: 10.73
+                  # Required. The coloring reference.
+                  psd_file: ET_10_full_cryo_psd
+                  low_frequency_cutoff: 5.0
+                  # Pin the dataset, so the run is reproducible.
+                  revision: 144f56880c6e7aa8def31c537ca843b8c9e5bdda
+```
+
+| Argument                 | Required | Meaning                                                                                                                                                                                                                               |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rate`                   | yes      | Poisson rate in Hz, per interferometer. A number is the total rate, with each event's class drawn uniformly; a mapping gives one rate per class, the total being their sum and each event's class drawn in proportion to its own rate |
+| `snr`                    | **yes**  | Target optimal SNR against `psd_file`. A number applies to every class; a mapping gives one target per class                                                                                                                          |
+| `psd_file`               | **yes**  | The PSD the whitened reconstructions are coloured with. A bundled name (`ET_10_full_cryo_psd`), a local path, or an http(s) URL to a two-column `.txt`                                                                                |
+| `glitch_classes`         | no       | Which of the seven classes to draw from. Defaults to all seven                                                                                                                                                                        |
+| `revision`               | no       | Pins the HuggingFace dataset to a branch, tag, or commit SHA. Unset tracks the repository default                                                                                                                                     |
+| `low_frequency_cutoff`   | no       | Lower edge of the band the SNR is computed over, in Hz. Defaults to 2.0                                                                                                                                                               |
+| `high_frequency_cutoff`  | no       | Upper edge, in Hz. Defaults to Nyquist                                                                                                                                                                                                |
+| `amplitude_distribution` | yes      | Multiplier applied on top of the SNR calibration, required of every glitch model. `mean: 1.0, std: 0.0` for no spread                                                                                                                 |
+| `local_files_only`       | no       | Read the cached dataset without contacting the Hub at all. Defaults to `false`                                                                                                                                                        |
+| `repo_id`                | no       | The dataset to draw from. Defaults to `tomdooney/deepextractor-glitch-reconstructions`                                                                                                                                                |
+
+Four things about it are worth knowing before a production run:
+
+- **A `rate` mapping's keys must match `glitch_classes` exactly.** Not a subset
+  and not a superset — a missing or unconfigured class is an error, not a
+  silently-zero rate. The same holds for an `snr` mapping. Configuring fewer
+  classes therefore means narrowing both.
+- **`revision` is the difference between a reproducible run and one that tracks
+  whatever the Hub served that day.** Pin it to a commit SHA and a regenerated
+  dataset is bit-identical for a fixed (version, configuration, seed). Whatever
+  you pin, the run records the concrete commit it resolved to, so replaying a
+  run through its metadata fetches that commit even as the upstream dataset
+  moves.
+- **The dataset is 2.3 GB, fetched lazily on first use** and cached by
+  `huggingface_hub`. Later runs reuse the cache after an ETag check; if the Hub
+  is unreachable the check is skipped with a warning and the cache is used
+  anyway. With nothing cached and no network, the first glitch raises.
+- **Below 4096 Hz the backend resamples by linear interpolation, with no
+  anti-aliasing filter.** 4096 Hz is the dataset's native rate; under it,
+  high-frequency glitch content aliases. The SNR calibration is unaffected,
+  being computed after resampling — so what a lower `sampling-frequency` costs
+  is the morphology, not the amplitude.
+
+The extra is required: `pip install 'gwmock[deepextractor]'`. Its waveforms are
+reconstructions fetched from a HuggingFace dataset rather than generated, so
+without it the model raises the moment it first reaches for the dataset.
+
+See `examples/noise/glitches/deepextractor/<network>` for runnable
+configurations — one per detector network, each covering that geometry's
+interferometers in a single file and writing frames.
 
 ## Template Variables
 

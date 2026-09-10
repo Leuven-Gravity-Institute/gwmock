@@ -1,0 +1,126 @@
+# DeepExtractor instrumental glitches for the Einstein Telescope triangle,
+# Sardinia site.
+#
+# One file for the whole geometry: `detectors` names a network preset and the
+# noise side resolves it into its three interferometers (ET1_SARD, ET2_SARD and
+# ET3_SARD). Each (glitch model, interferometer) pair runs its own independent
+# Poisson process off its own RNG stream, so one file and one seed give three
+# independent glitch realisations. Unlike the `gengli_blip` examples beside this
+# one there is nothing per-interferometer to split out: DeepExtractor draws from
+# a single dataset rather than from a per-interferometer population file.
+#
+# Output is `.gwf`, since frames are the usual deliverable for glitch data.
+#
+# Needs the extra: `pip install 'gwmock[deepextractor]'`. The dataset (~2.3 GB)
+# is fetched from the HuggingFace Hub on first use and cached; later runs reuse
+# the cache after an ETag check.
+#
+# THE PSD IS THE COLORING REFERENCE, AND ONE MODEL CARRIES ONE OF THEM. The
+# dataset's waveforms are whitened reconstructions, and `psd_file` is what
+# shapes them back into strain. A glitch model carries exactly one `psd_file`
+# and applies it to every interferometer of the run, so no single file can mix
+# the 10 km triangle's PSD with the 15 km 2L's -- which is why each geometry
+# gets its own file here.
+
+globals:
+    simulator-arguments:
+        # 4096 Hz is the dataset's native rate. Below it the backend resamples
+        # by linear interpolation with no anti-aliasing filter, so
+        # high-frequency glitch content aliases; the SNR calibration stays exact
+        # either way, because it is computed after resampling.
+        sampling-frequency: 4096
+        duration: 4096
+        total-duration: 1 day
+        # GPS 1577491218 is 2030-01-01, inside the ET observing era rather than
+        # LIGO's.
+        start-time: 1577491218
+    working-directory: .
+    output-directory: output
+    metadata-directory: metadata
+
+orchestration:
+    noise:
+        arguments:
+            seed: 42
+            detectors:
+                - ET-Triangle-Sardinia
+            glitches:
+                - kind: deepextractor
+                  # Per-class Poisson rates in Hz, per interferometer. `rate`
+                  # also accepts a single number, in which case it is the total
+                  # rate shared by all configured classes and each event's class
+                  # is drawn uniformly; as a mapping the keys must match the
+                  # configured `glitch_classes` exactly, the total rate is their
+                  # sum, and each event's class is drawn in proportion to its
+                  # own rate.
+                  #
+                  # These are the seven Gravity Spy classes the DeepExtractor
+                  # dataset has waveforms for, at their O3 LIGO rates -- label
+                  # counts divided by GWOSC observing livetime, averaged over H1
+                  # and L1 across O3a+O3b. They sum to 8.098e-3 Hz, one glitch
+                  # per 2.1 minutes per interferometer, which is 77% of the full
+                  # O3 glitch rate of 1.053e-2 Hz. The missing 23% is the
+                  # sixteen Gravity Spy classes with no waveforms here; the
+                  # seven are deliberately NOT rescaled to carry the full rate,
+                  # which would put another class's events into these seven
+                  # morphologies.
+                  #
+                  # They are also averages over a rate that is not stationary:
+                  # the all-class rate varies by 2.7x across the four
+                  # (interferometer, run-half) cells, and Fast_Scattering is 29x
+                  # more frequent in L1 than in H1. Using one table for every ET
+                  # interferometer assumes each behaves like an average O3 LIGO
+                  # interferometer.
+                  rate:
+                      Blip: 0.0003536
+                      Fast_Scattering: 0.001955
+                      Koi_Fish: 0.0006158
+                      Low_Frequency_Burst: 0.0006542
+                      Scattered_Light: 0.002902
+                      Tomte: 0.001239
+                      Whistle: 0.0003792
+                  # Target optimal SNR against `psd_file`, per class: the median
+                  # Omicron SNR of that class in O3. Required -- there is no
+                  # default, and a scalar here would apply one target to every
+                  # class.
+                  #
+                  # A median is a weak summary and it is the best this backend
+                  # accepts. Each class's SNR distribution is heavy-tailed, so
+                  # calibrating every event of a class to one value discards the
+                  # tail. The only available spread is the lognormal
+                  # `amplitude_distribution` multiplier below, left at unity
+                  # rather than standing in for a measured shape. Koi_Fish
+                  # really is an order of magnitude above the rest.
+                  snr:
+                      Blip: 13.95
+                      Fast_Scattering: 9.004
+                      Koi_Fish: 113.9
+                      Low_Frequency_Burst: 12.23
+                      Scattered_Light: 11.47
+                      Tomte: 13.96
+                      Whistle: 10.73
+                  amplitude_distribution: # unity: SNR alone sets the scale
+                      distribution: lognormal
+                      mean: 1.0
+                      std: 0.0
+                  # The 10 km triangle PSD, applied to all three interferometers
+                  # of this run. Required, and a bundled name rather than a path
+                  # -- a local path or an http(s) URL to a two-column .txt works
+                  # too.
+                  psd_file: ET_10_full_cryo_psd
+                  low_frequency_cutoff: 5.0
+                  # Pin the dataset to a commit so a regenerated frame set is
+                  # reproducible for a fixed (gwmock version, this file, seed).
+                  # Without it the run tracks the repository default and records
+                  # whatever the Hub served that day.
+                  revision: 144f56880c6e7aa8def31c537ca843b8c9e5bdda
+        output:
+            output_directory: glitch
+            # The `.gwf` suffix is what selects frame output -- the format is
+            # inferred from the file name, not declared. `{{ detectors }}`
+            # expands once per interferometer.
+            file_name:
+                'E-{{ detectors }}_STRAIN_GLITCH-{{ start_time }}-{{ duration
+                }}.gwf'
+            arguments:
+                channel: '{{ detectors }}:STRAIN'
