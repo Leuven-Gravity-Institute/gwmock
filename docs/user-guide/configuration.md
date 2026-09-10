@@ -259,6 +259,11 @@ The `orchestration:` section is required and must contain at least one of
 
 ```yaml
 orchestration:
+    # Whether the HDF5 output files may carry the parameters the signals were
+    # injected with. False by default -- see "Injection parameters in the data
+    # files" below.
+    include-injection-parameters: false
+
     population:
         backend: FilePopulationLoader # or any registered backend alias
         source-type: bbh
@@ -291,6 +296,51 @@ orchestration:
             arguments:
                 channel: '{{ detectors }}:STRAIN'
 ```
+
+### Injection parameters in the data files
+
+Every HDF5 file a run writes carries the run's metadata record inside it, at the
+file root, so that a file handed to another pipeline says which run produced it
+without its sidecar. `.npy` and `.gwf` have nowhere to put a document, so for
+those formats the sidecar remains the only description, and so does a file
+written by `gwmock merge --force`, which was given no metadata to carry. A
+consumer reads the sidecar whenever there is one — see
+[Reading data](reading-data.md) for how to read the embedded record back.
+
+The embedded copy leaves out the source parameters of the injected signals:
+
+```yaml
+orchestration:
+    include-injection-parameters: false # the default
+```
+
+A blind mock data challenge is released as the strain files alone, and those
+parameters are the answer its participants are asked to find, so excluding them
+is the default and including them has to be asked for. Set the flag to `true`
+for data generated for a different purpose — a training or inference set, a
+benchmark, a released "solved" challenge.
+
+It changes the data files only. The metadata sidecar always records the
+injection parameters, whatever the flag says; it is the producer's copy and is
+not part of a release. `gwmock merge` takes the same decision through
+`--include-injection-parameters`, with the same default, because the sidecars it
+reads carry the parameters even when the files it merges do not.
+
+Two things the flag does **not** do, and both matter before releasing a blind
+challenge:
+
+- The embedded record still carries the run's configuration, its seeds and its
+  software versions. If the population is _drawn_ from a distribution rather
+  than loaded from a file you withhold, the configuration and the seed
+  regenerate the injections whether or not their values were embedded.
+- It does not touch data already written. Files from an earlier run keep
+  whatever they were written with.
+
+One further consequence: two identical runs no longer write byte-identical HDF5
+files, because the record embedded in them carries a timestamp, the host and the
+environment freeze. What reproducibility is checked against is the _content_
+hash — the decoded samples and their timing — which the record does not affect,
+and which `gwmock validate` reports separately from the byte hash.
 
 ### Choosing the waveform library
 
@@ -473,10 +523,11 @@ Four things about it are worth knowing before a production run:
   classes therefore means narrowing both.
 - **`revision` is the difference between a reproducible run and one that tracks
   whatever the Hub served that day.** Pin it to a commit SHA and a regenerated
-  dataset is bit-identical for a fixed (version, configuration, seed). Whatever
-  you pin, the run records the concrete commit it resolved to, so replaying a
-  run through its metadata fetches that commit even as the upstream dataset
-  moves.
+  dataset holds bit-identical samples for a fixed (version, configuration, seed)
+  — compare the content hash, not the container bytes, since each HDF5 file
+  embeds its own run's record. Whatever you pin, the run records the concrete
+  commit it resolved to, so replaying a run through its metadata fetches that
+  commit even as the upstream dataset moves.
 - **The dataset is 2.3 GB, fetched lazily on first use** and cached by
   `huggingface_hub`. Later runs reuse the cache after an ETag check; if the Hub
   is unreachable the check is skipped with a warning and the cache is used

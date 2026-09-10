@@ -16,6 +16,20 @@ What the schema declares is written into the artifact itself, at the **file root
     misread a file (a dataset renamed, an attribute's meaning changed); the minor moves when something
     is added that such a reader can ignore.
 
+``run_metadata`` (1.1.0, optional)
+    The provenance record of the run that wrote the file, as a JSON document -- the same record the
+    metadata sidecar carries, so that a file handed to another pipeline describes itself. Optional
+    because a file may be written by a path that has no record to embed, and because every file
+    written before 1.1.0 has none; a consumer reads it with :func:`read_run_metadata` and falls back
+    to the sidecar when it is absent.
+
+    It is a *copy* rather than a second source of truth: one record is built per batch and written to
+    both places, and the embedded copy differs only by what it deliberately leaves out. It omits the
+    injection parameters unless the run asked for them (``orchestration.include-injection-parameters``
+    -- a blind challenge must not release the answer key with the data), and it omits the file hashes,
+    which cannot describe the file they are stored in. See
+    :func:`gwmock.cli.utils.metadata.embed_metadata_record`.
+
 Version 1.0.0 requires, of every dataset in the file:
 
 * the samples of one channel, and the dataset is **named** for that channel;
@@ -57,11 +71,14 @@ Two consequences of the root placement are deliberate:
 
 Only HDF5 carries the declaration, because only HDF5 has somewhere to put it: ``.npy`` is a bare array
 container with no metadata space, and GWF frames are composed by the frame library from a fixed set of
-fields. For those formats the run's metadata record remains the only description of what was written.
+fields. The same is true of the embedded record above, and for the same reason. For those formats the
+run's metadata *sidecar* remains the only description of what was written, and a consumer that wants a
+self-describing artifact has to ask for HDF5.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -75,13 +92,23 @@ STRAIN_SCHEMA = "gwmock-strain"
 #: channel, with the grid in ``x0``/``dx``/``xunit`` and the channel in ``channel``/``name``. This is
 #: the layout gwmock's own writer already produced; 1.0.0 declares it, and makes the other two writers
 #: meet it rather than widening the contract to cover what each of them happened to emit.
-STRAIN_SCHEMA_VERSION = "1.0.0"
+#:
+#: 1.1.0: the root may carry ``run_metadata``, the run's provenance record as JSON. Added rather than
+#: changed: no dataset moved, nothing already declared means anything different, and a reader written
+#: against 1.0.0 goes on reading a 1.1.0 file without noticing the attribute -- which is what the minor
+#: component is for.
+STRAIN_SCHEMA_VERSION = "1.1.0"
 
 #: Root attribute naming the schema.
 SCHEMA_ATTRIBUTE = "schema"
 
 #: Root attribute carrying the schema version.
 SCHEMA_VERSION_ATTRIBUTE = "schema_version"
+
+#: Root attribute carrying the run's provenance record, as a JSON document. Written by
+#: :func:`gwmock.cli.utils.metadata.embed_metadata_record`, which is the only place that decides what a
+#: copy of the record may contain; read back with :func:`read_run_metadata`.
+RUN_METADATA_ATTRIBUTE = "run_metadata"
 
 #: The dataset attributes version 1.0.0 requires. A consumer may read these on any declared file.
 REQUIRED_DATASET_ATTRIBUTES = ("x0", "dx", "xunit", "channel", "name")
@@ -232,6 +259,53 @@ def read_strain_schema(path: str | Path) -> StrainSchema | None:
             name=_as_text(handle.attrs[SCHEMA_ATTRIBUTE]),
             version=_as_text(handle.attrs[SCHEMA_VERSION_ATTRIBUTE]),
         )
+
+
+def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
+    """Return the provenance record an artifact carries, or ``None`` if it carries none.
+
+    ``None`` covers a file in a format with no metadata space, one written before 1.1.0, one written
+    by a path that had no record to embed, and one from another producer -- four situations a consumer
+    handles the same way: read the run's metadata sidecar instead.
+
+    What comes back is the *embedded* copy, which is not the whole record. It omits the file hashes,
+    and it omits the injection parameters unless the run that wrote it opted in; the sidecar is the
+    complete one. See :func:`gwmock.cli.utils.metadata.embed_metadata_record`.
+
+    Args:
+        path: The artifact to read.
+
+    Returns:
+        The embedded record, or None.
+
+    Raises:
+        ValueError: If the attribute is present but is not a JSON object, which no gwmock wrote.
+    """
+    artifact = Path(path)
+    if not carries_strain_schema(artifact):
+        return None
+
+    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+
+    with h5py.File(artifact, "r") as handle:
+        if RUN_METADATA_ATTRIBUTE not in handle.attrs:
+            return None
+        document = _as_text(handle.attrs[RUN_METADATA_ATTRIBUTE])
+    try:
+        decoded = json.loads(document)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{artifact} carries a '{RUN_METADATA_ATTRIBUTE}' attribute that is not JSON: {exc}") from exc
+    # A record is an object. Refusing anything else keeps the return type honest, and matters most
+    # for the one value that would otherwise pass silently: `null` decodes to None, which is this
+    # function's way of saying "no record here, read the sidecar" -- so an attribute holding `null`
+    # would send a consumer to the sidecar as though the file carried nothing, rather than telling it
+    # that the file carries something it cannot use.
+    if not isinstance(decoded, dict):
+        raise ValueError(
+            f"{artifact} carries a '{RUN_METADATA_ATTRIBUTE}' attribute holding JSON "
+            f"{type(decoded).__name__}, not an object. No gwmock wrote it."
+        )
+    return decoded
 
 
 def missing_layout_attributes(path: str | Path) -> dict[str, list[str]]:

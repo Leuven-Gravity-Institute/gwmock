@@ -287,6 +287,17 @@ class OrchestrationConfig(BaseModel):
     noise: NoiseAdapterConfig | None = None
     population: PopulationConfig | None = None
     signal: SignalConfig | None = None
+    include_injection_parameters: bool = Field(
+        default=False,
+        alias="include-injection-parameters",
+        description=(
+            "Embed the source parameters of the injected signals in the HDF5 output as well as in the "
+            "metadata sidecar. False by default: a blind mock data challenge is released as the data "
+            "files alone, and those parameters are the answer its participants are asked to find. Set "
+            "it for data generated for a different purpose -- a training set, a benchmark, a released "
+            "'solved' challenge. It does not change the sidecar, which always records them."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_combinations(self) -> OrchestrationConfig:

@@ -33,6 +33,17 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     author: Annotated[str, typer.Option("--author", help="Author of the merged file")] | None = None,
     email: Annotated[str, typer.Option("--email", help="Email of the author")] | None = None,
     force: Annotated[bool, typer.Option("--force", help="Bypass the requirements of providing metadata files")] = False,
+    include_injection_parameters: Annotated[
+        bool,
+        typer.Option(
+            "--include-injection-parameters",
+            help=(
+                "Embed the source parameters of the injected signals in the merged HDF5 file. Off by "
+                "default, matching 'orchestration.include-injection-parameters' in a run's config: a "
+                "merge of a blind challenge's frames is still a blind challenge's frames."
+            ),
+        ),
+    ] = False,
 ):
     """Merge multiple frame files into a single file.
 
@@ -46,6 +57,10 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         author (str | None): Author of the merged file.
         email (str | None): Email of the author.
         force (bool): If True, bypass the requirement of providing metadata files.
+        include_injection_parameters (bool): If True, the record embedded in the merged HDF5 file
+            keeps the source parameters of the injected signals. It is off by default for the reason
+            a run's own flag is: the sources' metadata files carry those parameters, so a merge that
+            embedded them verbatim would put a blind challenge's answers into the file it releases.
 
     Raises:
         ValueError: If metadata files are not provided and force is False, or if the format cannot be
@@ -62,6 +77,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     from gwpy.timeseries import TimeSeries
 
     from gwmock.cli.utils.hash import compute_file_hash
+    from gwmock.cli.utils.metadata import embed_metadata_record
     from gwmock.strain_schema import declare_strain_schema
     from gwmock.utils.log import get_dependency_versions
 
@@ -136,13 +152,9 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     # under its final name -- a reader that opens it the instant it exists sees a complete artifact.
     # A merge is a strain artifact like any other, and it is the one gwmock hands to another pipeline.
     declare_strain_schema(temp_output)
-    temp_output.rename(output)
 
+    merged_metadata: dict | None = None
     if metadata:
-        # If metadata is provided, create a new metadata file for the merged file
-
-        typer.echo("Creating merged metadata file...")
-
         merged_metadata = {"type": "merged", "source_files": {}}
 
         for i, file_name in enumerate(file_names):
@@ -163,11 +175,31 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         timestamp = datetime.datetime.now(datetime.timezone.utc)
 
         merged_metadata["output_files"] = [output]
-        merged_metadata["file_hashes"] = {output: compute_file_hash(output)}
         merged_metadata["author"] = author
         merged_metadata["email"] = email
         merged_metadata["timestamp"] = timestamp.isoformat()
         merged_metadata["versions"] = get_dependency_versions()
+
+        # Embedded here for the two reasons the declaration above is placed here: before the rename,
+        # so the file is complete the moment it appears under its final name, and before the hash
+        # below, since embedding changes the container bytes the hash is of. The sources' records
+        # are copied in whole, so they bring their injection parameters with them -- which is why
+        # this goes through the same withholding as a run's own outputs rather than writing the
+        # document as assembled.
+        embed_metadata_record(
+            temp_output,
+            merged_metadata,
+            include_injection_parameters=include_injection_parameters,
+        )
+
+    temp_output.rename(output)
+
+    if merged_metadata is not None:
+        # If metadata is provided, create a new metadata file for the merged file
+
+        typer.echo("Creating merged metadata file...")
+
+        merged_metadata["file_hashes"] = {output: compute_file_hash(output)}
 
         # Atomic write of metadata file
         merged_metadata_file = Path(output).with_suffix(".metadata.yaml")

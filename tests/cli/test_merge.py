@@ -9,6 +9,7 @@ not at all.
 from __future__ import annotations
 
 import getpass
+import json
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +19,12 @@ from gwpy.timeseries import TimeSeries
 
 from gwmock.cli.merge import merge_command
 from gwmock.cli.utils.hash import compute_file_hash
-from gwmock.strain_schema import STRAIN_SCHEMA_VERSION, read_strain_schema, require_strain_schema
+from gwmock.strain_schema import (
+    STRAIN_SCHEMA_VERSION,
+    read_run_metadata,
+    read_strain_schema,
+    require_strain_schema,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -314,3 +320,95 @@ class TestTheMergedMetadata:
     def test_no_temporary_metadata_file_is_left_behind(self, tmp_path: Path, two_frames) -> None:
         self._merge_with_metadata(tmp_path, two_frames)
         assert not (tmp_path / "merged.metadata.tmp").exists()
+
+
+class TestTheRecordInsideTheMergedFile:
+    """A merge is the artifact gwmock hands on, so it carries the record -- minus the answer key.
+
+    The sources' metadata files are copied into the merged record whole, and a run's sidecar always
+    records its injection parameters whatever it embedded in its own outputs. So a merge that wrote
+    the assembled record into the file would re-publish, in one file, exactly what every run in the
+    merge had withheld from its own. It goes through the same withholding, with the same default.
+    """
+
+    CANARY_MASS = 41.2468
+
+    @staticmethod
+    def _hdf5(path: Path, values) -> Path:
+        series = TimeSeries(np.asarray(values, dtype=float), sample_rate=RATE, t0=START, channel=CHANNEL, name=CHANNEL)
+        series.write(path)
+        return path
+
+    @classmethod
+    def _source_metadata(cls, source: Path, metadata_path: Path) -> Path:
+        """Write a source record shaped like a run's: hashes to verify, and injections to protect."""
+        metadata_path.write_text(
+            yaml.safe_dump(
+                {
+                    "file_hashes": {source.name: compute_file_hash(source)},
+                    "signal": {
+                        "injections": [{"event_id": 0, "parameters": {"detector_frame_mass_1": cls.CANARY_MASS}}],
+                    },
+                }
+            )
+        )
+        return metadata_path
+
+    def _merge(self, tmp_path: Path, **kwargs) -> Path:
+        sources = [self._hdf5(tmp_path / "a.hdf5", np.ones(RATE)), self._hdf5(tmp_path / "b.hdf5", 2 * np.ones(RATE))]
+        metadata = [str(self._source_metadata(path, tmp_path / f"{path.stem}.yaml")) for path in sources]
+        output = tmp_path / "merged.hdf5"
+        merge_command(sources, output=str(output), metadata=metadata, **kwargs)
+        return output
+
+    def test_the_merged_file_carries_the_merged_record(self, tmp_path: Path) -> None:
+        output = self._merge(tmp_path)
+
+        embedded = read_run_metadata(output)
+
+        assert embedded is not None
+        assert embedded["type"] == "merged"
+        assert sorted(Path(name).name for name in embedded["source_files"]) == ["a.hdf5", "b.hdf5"]
+
+    def test_it_withholds_the_injection_parameters_by_default(self, tmp_path: Path) -> None:
+        output = self._merge(tmp_path)
+
+        embedded = read_run_metadata(output)
+
+        assert embedded is not None, "nothing was embedded, so this assertion proves nothing"
+        assert str(self.CANARY_MASS) not in json.dumps(embedded)
+
+    def test_it_keeps_them_when_the_merge_asks_for_them(self, tmp_path: Path) -> None:
+        output = self._merge(tmp_path, include_injection_parameters=True)
+
+        embedded = read_run_metadata(output)
+
+        assert embedded is not None
+        source = embedded["source_files"][str(tmp_path / "a.hdf5")]
+        assert source["signal"]["injections"][0]["parameters"]["detector_frame_mass_1"] == self.CANARY_MASS
+
+    def test_the_sidecar_keeps_them_either_way(self, tmp_path: Path) -> None:
+        """The producer's copy is untouched: only what goes inside the released file is trimmed."""
+        self._merge(tmp_path)
+
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+
+        source = record["source_files"][str(tmp_path / "a.hdf5")]
+        assert source["signal"]["injections"][0]["parameters"]["detector_frame_mass_1"] == self.CANARY_MASS
+
+    def test_the_recorded_hash_is_of_the_file_that_carries_the_record(self, tmp_path: Path) -> None:
+        """Embedding changes the container bytes, so it happens before the digest is taken."""
+        output = self._merge(tmp_path)
+
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+
+        assert record["file_hashes"][str(output)] == compute_file_hash(output)
+
+    def test_a_forced_merge_embeds_nothing(self, tmp_path: Path) -> None:
+        """With no source metadata there is no record to carry, and none is invented."""
+        sources = [self._hdf5(tmp_path / "a.hdf5", np.ones(RATE))]
+        output = tmp_path / "merged.hdf5"
+
+        merge_command(sources, output=str(output), force=True)
+
+        assert read_run_metadata(output) is None

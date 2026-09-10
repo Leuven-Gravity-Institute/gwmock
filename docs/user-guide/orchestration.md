@@ -8,6 +8,9 @@ three explicit sections:
 - `orchestration.signal`
 - `orchestration.noise`
 
+One key sits beside those three rather than inside them, because it applies to
+everything the run writes: `orchestration.include-injection-parameters`.
+
 ## Migration from `simulators:`
 
 The legacy `simulators:` schema has been removed. Configs that use a top-level
@@ -58,6 +61,45 @@ orchestration:
         output:
             file_name: sgwb-{{ counter }}.hdf5
 ```
+
+## Injection parameters in the released files
+
+Each HDF5 file a run writes carries the run's metadata record inside it, so the
+data describes itself. The injection parameters are excluded from that embedded
+copy unless the run asks for them:
+
+```yaml
+orchestration:
+    include-injection-parameters: false # default
+    population: ...
+    signal: ...
+```
+
+The default keeps a blind mock data challenge blind: it is released as the
+strain files alone, and the parameters the signals were injected with are the
+answer its participants are asked to find. Set it to `true` when the data is for
+a training set, a benchmark, or a challenge released with its solutions.
+
+- It applies to the whole run — every signal and noise output of every batch —
+  not to one section.
+- It never changes the metadata sidecar, which always records the injection
+  parameters. The sidecar is the producer's copy; the flag governs the files
+  that leave.
+- `.npy` and `.gwf` outputs carry no record either way, having nowhere to put
+  one.
+- No adapter has to do anything to honour it. gwmock writes the record into the
+  artifact after the backend has produced it, in the one place that also stamps
+  the [strain schema](reading-data.md), so a third-party population, signal or
+  noise backend gets the behaviour without implementing any of it.
+
+`gwmock merge` carries the same switch as `--include-injection-parameters`, with
+the same default: the sidecars it reads hold the parameters even when the files
+it merges do not, so a merge would otherwise re-publish what each run withheld.
+
+See
+[Configuration Files](configuration.md#injection-parameters-in-the-data-files)
+for what the flag does not cover, and [Reading data](reading-data.md) for how a
+consumer reads the embedded record.
 
 For protocol details and third-party backend integration, see
 [Protocol Contracts](protocols.md) and [Extensibility](extensibility.md).

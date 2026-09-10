@@ -40,6 +40,12 @@ file**:
 | `schema`         | `gwmock-strain`     | Which contract this is                       |
 | `schema_version` | `MAJOR.MINOR.PATCH` | Which revision of it the file was written to |
 
+Since `1.1.0` the root may carry a third attribute, `run_metadata`: the run's
+provenance record as JSON. It is optional -- a file written before `1.1.0`, or
+by a path with no record to embed, carries none -- so a consumer falls back to
+the metadata sidecar when it is absent. See
+[The record inside the file](#the-record-inside-the-file) below.
+
 Version `1.0.0` requires, of **every** dataset in the file: the samples of one
 channel, in a dataset named for that channel, plus these attributes.
 
@@ -83,8 +89,50 @@ constructor, and one it does not recognise makes the file unreadable through
 
 **GWF and `.npy` carry no declaration.** A frame is composed from a fixed set of
 fields and `.npy` is a bare array container, so neither has anywhere to put it;
-for those formats the run's metadata record remains the description of what was
+for those formats the run's metadata sidecar remains the description of what was
 written.
+
+## The record inside the file
+
+An HDF5 file usually also carries the provenance record of the run that wrote
+it, so a file that reaches you without its sidecar still says where it came
+from. Read it, and fall back to the sidecar when there is none — a file written
+before this existed carries no record, and neither does one from
+`gwmock merge --force`, which is merging files it was given no metadata for:
+
+```python
+from gwmock.strain_schema import read_run_metadata
+
+record = read_run_metadata("filename.hdf5")
+if record is None:
+    ...  # no embedded record: read the run's metadata sidecar instead
+else:
+    print(record["gwmock_version"], record["config"], record["outputs"])
+```
+
+**Use the sidecar whenever you have one.** It is the complete record, and it is
+the only description at all for `.npy` and `.gwf` — and for the forced merge
+above, which writes neither.
+
+What the file carries is the same record the sidecar holds, with three
+deliberate omissions:
+
+- **The injection parameters**, unless the run that wrote the file set
+  `orchestration.include-injection-parameters: true`. The default excludes them
+  so that a blind mock data challenge can be released as the data files
+  themselves. `record["signal"]["injections"]` is simply absent, rather than
+  empty -- an empty list would be indistinguishable from a segment that holds no
+  signal.
+- **The file hashes.** A file cannot carry its own digest: `file_hashes`,
+  `content_hashes` and the `sha256`/`content_sha256` of each entry in `outputs`
+  are recorded in the sidecar, which is taken after the record is written into
+  the file.
+
+- **The simulator's replay state.** `pre_batch_state` is stored as separate
+  `.npy` files an embedded copy could not point at. It is removed wherever it
+  appears, including inside the source records a merged file carries: that state
+  and the configuration beside it regenerate the run, and so regenerate the
+  injections the same document withheld.
 
 ## Reading a file
 
