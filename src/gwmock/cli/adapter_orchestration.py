@@ -24,6 +24,7 @@ from gwmock.mixin.time_series import TimeSeriesMixin
 from gwmock.noise import NoiseAdapter
 from gwmock.population import PopulationAdapter
 from gwmock.signal import SignalAdapter
+from gwmock.signal.projection_backend import require_backend_accepts_projection_backend
 from gwmock.simulator.base import Simulator
 from gwmock.simulator.seeds import derive_seed
 from gwmock.simulator.state import StateAttribute
@@ -444,6 +445,16 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_backend_name if waveform_backend_name is not None else _DEFAULT_WAVEFORM_BACKEND,
                 init_kwargs=waveform_backend_arguments,
             )
+        # `projection-backend` reaches gwmock-signal as a constructor argument, and only when the
+        # user set it. Passing the default explicitly would be a behaviour change rather than a
+        # no-op: each simulator picks its own -- the host path for compact binaries, the device
+        # path for continuous waves, where projection is 99% of a segment -- and forwarding
+        # "numpy" everywhere would silently take the second one off it.
+        projection_backend = getattr(signal_config, "projection_backend", None)
+        if projection_backend is not None:
+            require_backend_accepts_projection_backend(backend_class, projection_backend)
+            backend_arguments["projection_backend"] = projection_backend
+
         backend_instance = SignalAdapter.instantiate_backend(
             backend_class,
             waveform_model=signal_config.waveform_model,

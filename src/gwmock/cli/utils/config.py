@@ -192,6 +192,18 @@ class SignalConfig(BaseModel):
             "goes to the simulator rather than to the waveform backend."
         ),
     )
+    projection_backend: str | None = Field(
+        default=None,
+        alias="projection-backend",
+        description=(
+            "Which implementation projects the polarizations onto the detectors: 'numpy' (the "
+            "host path, and what a run does today) or 'jax'. The two agree to ~1e-10 of peak, so "
+            "this chooses a speed and not an answer -- and projection is where a long segment "
+            "spends almost all of its time. Omit it to leave the choice to the gwmock-signal "
+            "backend, which is the host path for compact binaries. Needs only JAX, not ripple; "
+            "whether that JAX runs on a CPU or a GPU depends on which JAX is installed."
+        ),
+    )
     waveform_arguments: dict[str, Any] = Field(
         default_factory=dict,
         alias="waveform-arguments",
@@ -245,6 +257,46 @@ class SignalConfig(BaseModel):
         if not v:
             raise ValueError("'detectors' must contain at least one detector")
         return v
+
+    @field_validator("projection_backend")
+    @classmethod
+    def validate_projection_backend(cls, v: str | None) -> str | None:
+        """Reject an unknown projection backend rather than passing the name downstream.
+
+        Checked against gwmock-signal's own list, so this cannot accept a name the projection
+        would then refuse. ``None`` means the setting is absent, which is not the same as
+        naming the default: it leaves each backend on whatever it chooses for itself.
+        """
+        if v is None:
+            return None
+        from gwmock.signal.projection_backend import validate_projection_backend_name  # noqa: PLC0415
+
+        return validate_projection_backend_name(v)
+
+    @model_validator(mode="after")
+    def _validate_projection_backend_is_usable(self) -> SignalConfig:
+        """Refuse a device projection this run could not perform, while parsing rather than later.
+
+        Both conditions are enforced by gwmock-signal too, and would be caught there. The point
+        of repeating them is *when*: from inside the projection they surface after the population
+        is drawn and the earlier segments are already written, and the message is about a
+        function argument rather than about the setting that chose it.
+        """
+        if self.projection_backend != "jax":
+            return self
+        if not self.earth_rotation:
+            raise ValueError(
+                "'projection-backend: jax' is only available with 'earth-rotation: true'. The "
+                "constant-pattern branch applies one frequency-domain phase shift for the whole "
+                "span and has no device implementation; it is also the cheap branch, being the "
+                "one that skips the resampler. Set 'earth-rotation: true', or use "
+                "'projection-backend: numpy'."
+            )
+
+        from gwmock.signal.projection_backend import require_projection_backend_runnable  # noqa: PLC0415
+
+        require_projection_backend_runnable(self.projection_backend)
+        return self
 
     @field_validator("execution")
     @classmethod
@@ -401,6 +453,49 @@ class Config(BaseModel):
     batch: BatchConfig | None = Field(default=None, description="Resources and scheduler configuration")
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _validate_projection_span(self) -> Config:
+        """Refuse a segment the device projection could not accept, while parsing.
+
+        The device path extrapolates sidereal time linearly from a single Astropy anchor, which
+        is validated up to :data:`~gwmock.signal.projection_backend.MAX_PROJECTION_SPAN_SECONDS`
+        and refused beyond it. A run of any length made of ordinary segments is unaffected,
+        because each one re-anchors.
+
+        What this catches is a *configured segment* longer than the limit. It is not the whole
+        condition: the span the projection measures is the polarization buffer, and a compact
+        binary's buffer starts well before its coalescence, so a buffer can be longer than the
+        segment it lands in. That case is still caught, from inside gwmock-signal, with a message
+        naming the span it was given -- the check here exists because the common case is knowable
+        without generating anything.
+        """
+        signal = self.orchestration.signal
+        if signal is None or signal.projection_backend != "jax":
+            return self
+
+        from gwmock.signal.projection_backend import MAX_PROJECTION_SPAN_SECONDS  # noqa: PLC0415
+
+        arguments = {key.replace("-", "_"): value for key, value in self.globals.simulator_arguments.items()}
+        if "duration" not in arguments:
+            return self
+        try:
+            duration = float(arguments["duration"])
+        except (TypeError, ValueError):
+            # Not this validator's error to report: an unparsable duration fails where the
+            # simulation is set up, with a message about the duration rather than about a
+            # projection backend the user may not even have connected to it.
+            return self
+        if duration > MAX_PROJECTION_SPAN_SECONDS:
+            raise ValueError(
+                f"'projection-backend: jax' accepts a span of at most "
+                f"{MAX_PROJECTION_SPAN_SECONDS:.0f} s and 'globals.simulator-arguments.duration' "
+                f"is {duration:.0f} s. The device path extrapolates sidereal time linearly from "
+                f"one anchor and is only validated to that span. Use shorter segments -- each one "
+                f"re-anchors, so a run of any total length is fine -- or "
+                f"'projection-backend: numpy', which asks Astropy for every sample."
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod
