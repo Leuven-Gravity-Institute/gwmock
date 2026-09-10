@@ -1,4 +1,15 @@
-"""Utilities for reading and writing versioned metadata records."""
+"""Utilities for reading and writing versioned metadata records.
+
+A record is written twice: to its sidecar, which the producer keeps, and -- where the output format
+has room for it -- into the data file itself, so that a file handed to another pipeline describes
+itself. :func:`embed_metadata_record` is the only writer of the second copy, and the two copies come
+from one record built once, so they cannot drift into disagreeing about the run.
+
+They are not identical, and the difference is the point. The embedded copy leaves out the injection
+parameters unless the run asked for them, because a blind mock data challenge is released as the data
+files alone and those parameters are the answer the participants are asked to find; and it leaves out
+the file hashes, which a file cannot carry about itself.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +36,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: so. ``signal_index.yaml`` changed shape in the same release.
 SCHEMA_VERSION = "1.5.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+
+#: The key the source parameters of the injected signals are recorded under. Removed from an embedded
+#: copy at **every depth**, not only from ``signal.injections``: the orchestrator records the same list
+#: three times over -- there, inside ``signal.metadata``, and again inside ``simulator_metadata`` --
+#: because each of those blobs is a verbatim copy of what the orchestrator reported. A sanitiser that
+#: removed the documented one would leave two intact, and a test written against the same documented
+#: one would agree with it.
+INJECTION_PARAMETERS_KEY = "injections"
+
+#: Top-level keys an embedded copy drops. ``pre_batch_state`` is the simulator's RNG state, kept for
+#: replay: it is megabytes of array in a record that has to fit in a file attribute, and the sidecar
+#: externalises it to ``.npy`` files that an embedded copy could not point at.
+_REPLAY_ONLY_KEYS = ("pre_batch_state",)
+
+#: Top-level hash maps an embedded copy drops, and the per-output keys that duplicate them. A file
+#: cannot carry its own hash: the digest is taken after the record is embedded, precisely so that what
+#: the sidecar records describes the bytes that were published. Left in, they would be the hashes of a
+#: file that no longer exists.
+_SELF_REFERENTIAL_KEYS = ("file_hashes", "content_hashes")
+_SELF_REFERENTIAL_OUTPUT_KEYS = ("sha256", "content_sha256")
 
 
 class SubpackageVersions(BaseModel):
@@ -263,3 +294,116 @@ def load_metadata_record(
         metadata_file=metadata_file, metadata_dir=metadata_dir, encoding=encoding
     )
     return MetadataRecord.model_validate(metadata)
+
+
+def without_injection_parameters(document: Any) -> Any:
+    """Return *document* with every ``injections`` entry removed, at any depth.
+
+    Depth matters: see :data:`INJECTION_PARAMETERS_KEY`. The document is rebuilt rather than edited in
+    place, because the caller's copy is the one that goes into the sidecar with the parameters intact.
+
+    Args:
+        document: The record, or any part of one.
+
+    Returns:
+        The same structure without any ``injections`` key.
+    """
+    if isinstance(document, dict):
+        return {
+            key: without_injection_parameters(value)
+            for key, value in document.items()
+            if key != INJECTION_PARAMETERS_KEY
+        }
+    if isinstance(document, list):
+        return [without_injection_parameters(item) for item in document]
+    return document
+
+
+def embeddable_metadata(metadata: dict[str, Any], *, include_injection_parameters: bool = False) -> dict[str, Any]:
+    """Return the copy of a metadata record that may be written inside a data file.
+
+    What it drops, and why, is in :data:`_REPLAY_ONLY_KEYS`, :data:`_SELF_REFERENTIAL_KEYS` and
+    :data:`INJECTION_PARAMETERS_KEY`. Everything else the run recorded is kept, so the embedded copy
+    still names the configuration, the seeds, the software versions and the outputs -- which is what
+    makes the file self-describing, and which is also worth knowing before releasing one: a blind
+    challenge whose population is *drawn* rather than loaded from a withheld file is reproducible from
+    the configuration and the seed alone, whether or not the parameters themselves are embedded.
+
+    Args:
+        metadata: The record, as built for the sidecar.
+        include_injection_parameters: Keep the source parameters of the injected signals. False by
+            default, so a run has to say that its data is not a blind challenge.
+
+    Returns:
+        A JSON-safe copy of the record.
+    """
+    document = {key: value for key, value in metadata.items() if key not in _REPLAY_ONLY_KEYS}
+    for key in _SELF_REFERENTIAL_KEYS:
+        document.pop(key, None)
+    if not include_injection_parameters:
+        document = without_injection_parameters(document)
+    document = _normalize_json_value(document)
+    outputs = document.get("outputs")
+    if isinstance(outputs, list):
+        document["outputs"] = [
+            {key: value for key, value in record.items() if key not in _SELF_REFERENTIAL_OUTPUT_KEYS}
+            if isinstance(record, dict)
+            else record
+            for record in outputs
+        ]
+    return document
+
+
+def embed_metadata_record(
+    file_path: Path | str,
+    metadata: dict[str, Any],
+    *,
+    include_injection_parameters: bool = False,
+) -> bool:
+    """Write a run's metadata record into the data file it describes.
+
+    The only writer of the embedded copy, so that one place decides what a released file may say about
+    its run -- and so that a caller cannot embed a record by reaching past the exclusion of the
+    injection parameters, which is the default and has to be asked out of.
+
+    Call it after the samples are written and **before** the file is hashed. It changes the container
+    bytes, so a hash taken first describes a file that is never published, and ``gwmock validate``
+    would then report every output of every run as a byte mismatch.
+
+    It is a no-op for the formats with nowhere to put a document -- ``.npy`` and ``.gwf``, exactly the
+    ones :func:`gwmock.strain_schema.declare_strain_schema` skips -- so a caller writing several
+    formats does not branch on the format.
+
+    Args:
+        file_path: The artifact to write into.
+        metadata: The record, as built for the sidecar.
+        include_injection_parameters: Embed the source parameters of the injected signals too.
+
+    Returns:
+        True if the record was embedded, False if the format cannot carry one.
+
+    Raises:
+        FileNotFoundError: If the artifact does not exist. Embedding describes an artifact that was
+            already written; creating one here would publish a file holding metadata and no data.
+    """
+    from gwmock.strain_schema import (  # noqa: PLC0415  # deferred to keep the import graph acyclic
+        RUN_METADATA_ATTRIBUTE,
+        carries_strain_schema,
+    )
+
+    artifact = Path(file_path)
+    if not carries_strain_schema(artifact):
+        return False
+    if not artifact.exists():
+        raise FileNotFoundError(f"Cannot embed a metadata record in a file that does not exist: {artifact}")
+
+    document = json.dumps(
+        embeddable_metadata(metadata, include_injection_parameters=include_injection_parameters),
+        sort_keys=True,
+    )
+
+    import h5py  # noqa: PLC0415  # deferred so importing the record does not pull in the HDF5 stack
+
+    with h5py.File(artifact, "a") as handle:
+        handle.attrs[RUN_METADATA_ATTRIBUTE] = document
+    return True

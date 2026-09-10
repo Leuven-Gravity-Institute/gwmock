@@ -44,7 +44,7 @@ from gwmock.cli.utils.checkpoint import (
 from gwmock.cli.utils.config import OrchestrationConfig, SimulatorConfig, resolve_class_path
 from gwmock.cli.utils.environment import capture_environment
 from gwmock.cli.utils.hash import compute_content_hash, compute_file_hash
-from gwmock.cli.utils.metadata import save_metadata_record
+from gwmock.cli.utils.metadata import embed_metadata_record, save_metadata_record
 from gwmock.cli.utils.simulation_plan import (
     SimulationBatch,
     SimulationPlan,
@@ -393,15 +393,31 @@ def _build_noise_section(simulator: Simulator, batch: SimulationBatch) -> dict[s
     }
 
 
+class _OutputArtifact(NamedTuple):
+    """One generated file and the descriptor the metadata record holds it under.
+
+    The two travel together because the descriptor's hashes cannot be filled in when it is built.
+    They are taken after the record has been embedded in the artifact -- embedding changes the
+    container bytes -- and the path the digest is read from has to be the one the descriptor names,
+    not a path re-derived from the string it stores.
+    """
+
+    path: Path
+    record: dict[str, Any]
+
+
 def _build_output_records(
     simulator: Simulator,
     batch: SimulationBatch,
     batch_data: object,
     output_files: list[Path],
-) -> list[dict[str, Any]]:
-    """Build output descriptors for the versioned metadata schema."""
+) -> list[_OutputArtifact]:
+    """Build output descriptors for the versioned metadata schema, without their hashes.
+
+    See :func:`_hash_output_records` for why the hashes are absent here.
+    """
     working_directory = batch.globals_config.working_directory
-    output_records: list[dict[str, Any]] = []
+    output_records: list[_OutputArtifact] = []
 
     if isinstance(batch_data, AdapterOrchestrationResult):
         if batch.simulator_config.signal is not None and batch_data.signal_segment is not None:
@@ -415,15 +431,16 @@ def _build_output_records(
             )
             for index, output_file in enumerate(signal_files):
                 output_records.append(
-                    {
-                        "kind": "signal",
-                        "path": _to_path_string(output_file, working_directory),
-                        "channels": signal_channels[index : index + 1] if signal_channels else [],
-                        "t0": _to_plain_number(batch_data.signal_segment.start_time),
-                        "duration": _to_plain_number(batch_data.signal_segment.duration),
-                        "sha256": compute_file_hash(output_file),
-                        "content_sha256": compute_content_hash(output_file),
-                    }
+                    _OutputArtifact(
+                        output_file,
+                        {
+                            "kind": "signal",
+                            "path": _to_path_string(output_file, working_directory),
+                            "channels": signal_channels[index : index + 1] if signal_channels else [],
+                            "t0": _to_plain_number(batch_data.signal_segment.start_time),
+                            "duration": _to_plain_number(batch_data.signal_segment.duration),
+                        },
+                    )
                 )
 
         if batch_data.noise_result is not None:
@@ -434,15 +451,16 @@ def _build_output_records(
                 else:
                     channel_id = f"{detector}:{noise_output_config.channel}"
                 output_records.append(
-                    {
-                        "kind": "noise",
-                        "path": _to_path_string(output_path, working_directory),
-                        "channels": [channel_id],
-                        "t0": _to_plain_number(simulator.start_time),
-                        "duration": _to_plain_number(simulator.duration),
-                        "sha256": compute_file_hash(output_path),
-                        "content_sha256": compute_content_hash(output_path),
-                    }
+                    _OutputArtifact(
+                        output_path,
+                        {
+                            "kind": "noise",
+                            "path": _to_path_string(output_path, working_directory),
+                            "channels": [channel_id],
+                            "t0": _to_plain_number(simulator.start_time),
+                            "duration": _to_plain_number(simulator.duration),
+                        },
+                    )
                 )
         return output_records
 
@@ -450,15 +468,16 @@ def _build_output_records(
         channel_prefix = str(getattr(simulator, "_active_channel_prefix", "MOCK"))
         for detector, output_path in batch_data.output_paths.items():
             output_records.append(
-                {
-                    "kind": batch.simulator_name,
-                    "path": _to_path_string(output_path, working_directory),
-                    "channels": [f"{detector}:{channel_prefix}"],
-                    "t0": _to_plain_number(getattr(simulator, "start_time", None)),
-                    "duration": _to_plain_number(getattr(simulator, "duration", None)),
-                    "sha256": compute_file_hash(output_path),
-                    "content_sha256": compute_content_hash(output_path),
-                }
+                _OutputArtifact(
+                    output_path,
+                    {
+                        "kind": batch.simulator_name,
+                        "path": _to_path_string(output_path, working_directory),
+                        "channels": [f"{detector}:{channel_prefix}"],
+                        "t0": _to_plain_number(getattr(simulator, "start_time", None)),
+                        "duration": _to_plain_number(getattr(simulator, "duration", None)),
+                    },
+                )
             )
         return output_records
 
@@ -466,17 +485,51 @@ def _build_output_records(
     channels = _flatten_to_strings(expanded_arguments.get("channel"))
     for index, output_file in enumerate(output_files):
         output_records.append(
-            {
-                "kind": batch.simulator_name,
-                "path": _to_path_string(output_file, working_directory),
-                "channels": channels[index : index + 1] if channels else [],
-                "t0": _to_plain_number(getattr(batch_data, "start_time", getattr(simulator, "start_time", None))),
-                "duration": _to_plain_number(getattr(batch_data, "duration", getattr(simulator, "duration", None))),
-                "sha256": compute_file_hash(output_file),
-                "content_sha256": compute_content_hash(output_file),
-            }
+            _OutputArtifact(
+                output_file,
+                {
+                    "kind": batch.simulator_name,
+                    "path": _to_path_string(output_file, working_directory),
+                    "channels": channels[index : index + 1] if channels else [],
+                    "t0": _to_plain_number(getattr(batch_data, "start_time", getattr(simulator, "start_time", None))),
+                    "duration": _to_plain_number(getattr(batch_data, "duration", getattr(simulator, "duration", None))),
+                },
+            )
         )
     return output_records
+
+
+def _hash_output_records(output_records: list[_OutputArtifact]) -> None:
+    """Fill in each descriptor's hashes, from the artifact as it now stands on disk.
+
+    Separate from :func:`_build_output_records`, and called later, because the run embeds its
+    metadata record in the artifacts between the two: hashing first would record the digest of a
+    file that is never published, and `gwmock validate` would then report a byte mismatch for every
+    output of every run.
+
+    Args:
+        output_records: The artifacts and their descriptors, mutated in place.
+    """
+    for artifact in output_records:
+        artifact.record["sha256"] = compute_file_hash(artifact.path)
+        artifact.record["content_sha256"] = compute_content_hash(artifact.path)
+
+
+def _includes_injection_parameters(batch: SimulationBatch) -> bool:
+    """Return whether this batch's run asked for its injection parameters in its data files.
+
+    False for anything but an orchestration config, which is the only schema carrying the flag --
+    and the only one that has injection parameters to withhold.
+
+    Args:
+        batch: The batch being recorded.
+
+    Returns:
+        Whether the source parameters may be embedded in the outputs.
+    """
+    if isinstance(batch.simulator_config, OrchestrationConfig):
+        return bool(batch.simulator_config.include_injection_parameters)
+    return False
 
 
 class StaleIndexReadError(RuntimeError):
@@ -2069,6 +2122,7 @@ def save_batch_metadata(
     seed = _resolve_seed(simulator, batch)
     config_payload = _build_config_payload(batch, simulator)
     resolved_config, replayable = _build_resolved_config(simulator, config_payload)
+    output_records = _build_output_records(simulator, batch, batch_data, output_files)
     metadata = create_batch_metadata(
         simulator_name=batch.simulator_name,
         batch_index=batch.batch_index,
@@ -2088,7 +2142,7 @@ def save_batch_metadata(
         population=_build_population_section(simulator, batch),
         signal=_build_signal_section(simulator, batch),
         noise=_build_noise_section(simulator, batch),
-        outputs=_build_output_records(simulator, batch, batch_data, output_files),
+        outputs=[artifact.record for artifact in output_records],
         host=_get_host_metadata(),
         environment=capture_environment(),
     )
@@ -2097,10 +2151,24 @@ def save_batch_metadata(
     # Store just the file names, not full paths
     metadata["output_files"] = [f.name for f in output_files]
 
+    # Embed the record in the artifacts it describes, so a file handed to another pipeline says
+    # which run wrote it. One record, written to both places, rather than two constructions that
+    # can disagree -- and the embedded copy withholds the injection parameters unless this run
+    # asked for them. Before the hashes below, because it changes the container bytes.
+    include_injection_parameters = _includes_injection_parameters(batch)
+    for output_file in output_files:
+        embed_metadata_record(
+            output_file,
+            metadata,
+            include_injection_parameters=include_injection_parameters,
+        )
+
     # Compute and add file hashes for integrity checking. Two hashes are kept:
     #   * file_hashes    -- raw container bytes (exact-file integrity)
     #   * content_hashes -- decoded scientific content, stable across write-time
     #                       and frame-library version (reproducibility check)
+    _hash_output_records(output_records)
+    metadata["outputs"] = [artifact.record for artifact in output_records]
     file_hashes = {}
     content_hashes = {}
     for output_file in output_files:

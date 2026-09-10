@@ -15,8 +15,10 @@ import numpy as np
 import pytest
 from gwpy.timeseries import TimeSeries
 
+from gwmock.cli.utils.metadata import embed_metadata_record
 from gwmock.strain_schema import (
     REQUIRED_DATASET_ATTRIBUTES,
+    RUN_METADATA_ATTRIBUTE,
     SCHEMA_ATTRIBUTE,
     SCHEMA_VERSION_ATTRIBUTE,
     STRAIN_SCHEMA,
@@ -27,6 +29,7 @@ from gwmock.strain_schema import (
     declare_strain_schema,
     missing_layout_attributes,
     parse_strain_schema_version,
+    read_run_metadata,
     read_strain_schema,
     require_strain_schema,
     strain_schema_attributes,
@@ -63,7 +66,13 @@ class TestWhatTheDeclarationSays:
     """The constants are the contract, so their shape is part of it."""
 
     def test_the_version_is_a_semantic_version(self) -> None:
-        assert parse_strain_schema_version(STRAIN_SCHEMA_VERSION) == (1, 0, 0)
+        assert parse_strain_schema_version(STRAIN_SCHEMA_VERSION) == (1, 1, 0)
+
+    def test_the_minor_moved_for_the_embedded_record(self) -> None:
+        """1.1.0 adds `run_metadata` at the root and changes nothing a 1.0.0 reader reads, so the major
+        must not have moved with it: a bumped major would make every such reader refuse a file it can
+        still read perfectly well."""
+        assert parse_strain_schema_version(STRAIN_SCHEMA_VERSION)[0] == 1
 
     def test_the_attributes_name_the_schema_and_its_version(self) -> None:
         assert strain_schema_attributes() == {
@@ -574,3 +583,52 @@ class TestRequiringTheDeclaration:
 
         with pytest.raises(ValueError, match="semantic versioning"):
             require_strain_schema(path)
+
+
+class TestReadingTheEmbeddedRecord:
+    """The consumer side of `run_metadata`: a file that describes its own run, or says it cannot."""
+
+    def test_a_record_written_into_a_file_reads_back(self, tmp_path: Path) -> None:
+        path = _hdf5_strain(tmp_path / "strain.hdf5")
+        embed_metadata_record(path, {"schema_version": "1.5.0", "seed": 7})
+
+        assert read_run_metadata(path) == {"schema_version": "1.5.0", "seed": 7}
+
+    def test_a_file_carrying_none_reads_as_none(self, tmp_path: Path) -> None:
+        """Everything written before 1.1.0, and everything another producer wrote: read the sidecar."""
+        assert read_run_metadata(_hdf5_strain(tmp_path / "strain.hdf5")) is None
+
+    def test_a_format_that_cannot_carry_one_reads_as_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "strain.npy"
+        np.save(path, np.arange(4, dtype=float))
+
+        assert read_run_metadata(path) is None
+
+    def test_an_attribute_that_is_not_json_is_refused(self, tmp_path: Path) -> None:
+        """No gwmock wrote it, so it is another producer's attribute of the same name -- and returning
+        None would file that under 'no record' rather than under 'this file is not what it claims'."""
+        path = _hdf5_strain(tmp_path / "strain.hdf5")
+        with h5py.File(path, "a") as handle:
+            handle.attrs[RUN_METADATA_ATTRIBUTE] = "not json"
+
+        with pytest.raises(ValueError, match="is not JSON"):
+            read_run_metadata(path)
+
+    def test_the_record_does_not_cost_the_consumer_the_standard_reader(self, tmp_path: Path) -> None:
+        """The same reason the declaration goes at the root: gwpy hands every *dataset* attribute to
+        the series constructor, so a record written there would make the file unreadable."""
+        path = _hdf5_strain(tmp_path / "strain.hdf5", channel="H1:MOCK_NOISE")
+        declare_strain_schema(path)
+        embed_metadata_record(path, {"schema_version": "1.5.0"})
+
+        assert np.allclose(TimeSeries.read(path, "H1:MOCK_NOISE").value, np.arange(16, dtype=float), atol=0.0)
+
+    def test_the_record_does_not_disturb_the_declaration(self, tmp_path: Path) -> None:
+        """Two root attributes written by two calls, in either order, and both survive."""
+        path = _hdf5_strain(tmp_path / "strain.hdf5")
+
+        embed_metadata_record(path, {"schema_version": "1.5.0"})
+        declare_strain_schema(path)
+
+        assert require_strain_schema(path).version == STRAIN_SCHEMA_VERSION
+        assert read_run_metadata(path) == {"schema_version": "1.5.0"}

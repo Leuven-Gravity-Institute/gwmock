@@ -111,6 +111,22 @@ Python version and the version of every installed distribution (direct and
 transitive) — recorded so the run can be reproduced against exactly those
 dependencies. It is `null` for records written before this field existed.
 
+A copy of the record is written into each HDF5 output as well, at the file root,
+so a data file that reaches a consumer without its sidecar still describes the
+run. It is the same record with three omissions: the file hashes (a file cannot
+carry its own digest), `pre_batch_state` (stored as separate `.npy` files an
+embedded copy could not point at), and `signal.injections` unless the run set
+`orchestration.include-injection-parameters: true`. The sidecar described above
+is always complete.
+
+That copy carries a timestamp, the host and the environment freeze, so **two
+identical runs no longer write byte-identical HDF5 files** even though they hold
+identical samples. What "reproducible" is measured against here is the _content_
+hash — the decoded samples plus their timing, recorded as `content_sha256` and
+checked by `gwmock validate` separately from the byte hash — which the embedded
+record does not affect. GWF output has never been byte-reproducible, for the
+same kind of reason: a frame records its write time.
+
 For the config shape that feeds this record, see
 [Orchestration](orchestration.md) and [Protocol Contracts](protocols.md).
 

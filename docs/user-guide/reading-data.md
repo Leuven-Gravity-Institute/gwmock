@@ -40,6 +40,12 @@ file**:
 | `schema`         | `gwmock-strain`     | Which contract this is                       |
 | `schema_version` | `MAJOR.MINOR.PATCH` | Which revision of it the file was written to |
 
+Since `1.1.0` the root may carry a third attribute, `run_metadata`: the run's
+provenance record as JSON. It is optional -- a file written before `1.1.0`, or
+by a path with no record to embed, carries none -- so a consumer falls back to
+the metadata sidecar when it is absent. See
+[The record inside the file](#the-record-inside-the-file) below.
+
 Version `1.0.0` requires, of **every** dataset in the file: the samples of one
 channel, in a dataset named for that channel, plus these attributes.
 
@@ -83,8 +89,40 @@ constructor, and one it does not recognise makes the file unreadable through
 
 **GWF and `.npy` carry no declaration.** A frame is composed from a fixed set of
 fields and `.npy` is a bare array container, so neither has anywhere to put it;
-for those formats the run's metadata record remains the description of what was
+for those formats the run's metadata sidecar remains the description of what was
 written.
+
+## The record inside the file
+
+An HDF5 file also carries the provenance record of the run that wrote it, so a
+file that reaches you without its sidecar still says where it came from:
+
+```python
+from gwmock.strain_schema import read_run_metadata
+
+record = read_run_metadata("filename.hdf5")
+if record is None:
+    ...  # no embedded record: read the run's metadata sidecar instead
+else:
+    print(record["gwmock_version"], record["config"], record["outputs"])
+```
+
+It is the same record the sidecar holds, with two deliberate omissions:
+
+- **The injection parameters**, unless the run that wrote the file set
+  `orchestration.include-injection-parameters: true`. The default excludes them
+  so that a blind mock data challenge can be released as the data files
+  themselves. `record["signal"]["injections"]` is simply absent, rather than
+  empty -- an empty list would be indistinguishable from a segment that holds no
+  signal.
+- **The file hashes.** A file cannot carry its own digest: `file_hashes`,
+  `content_hashes` and the `sha256`/`content_sha256` of each entry in `outputs`
+  are recorded in the sidecar, which is taken after the record is written into
+  the file.
+
+`pre_batch_state`, the simulator state kept for replay, is likewise
+sidecar-only: it is stored as separate `.npy` files an embedded copy could not
+point at.
 
 ## Reading a file
 
