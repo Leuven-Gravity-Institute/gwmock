@@ -614,6 +614,21 @@ class TestReadingTheEmbeddedRecord:
         with pytest.raises(ValueError, match="is not JSON"):
             read_run_metadata(path)
 
+    @pytest.mark.parametrize(
+        ("document", "described"),
+        [("null", "NoneType"), ("[1, 2]", "list"), ('"a string"', "str"), ("7", "int")],
+    )
+    def test_json_that_is_not_an_object_is_refused(self, tmp_path: Path, document: str, described: str) -> None:
+        """A record is an object, and `null` is the case that would otherwise pass silently: it
+        decodes to None, which is this function's way of saying "no record, read the sidecar", so a
+        consumer would be sent to the sidecar rather than told the file carries something unusable."""
+        path = _hdf5_strain(tmp_path / "strain.hdf5")
+        with h5py.File(path, "a") as handle:
+            handle.attrs[RUN_METADATA_ATTRIBUTE] = document
+
+        with pytest.raises(ValueError, match=f"JSON {described}, not an object"):
+            read_run_metadata(path)
+
     def test_the_record_does_not_cost_the_consumer_the_standard_reader(self, tmp_path: Path) -> None:
         """The same reason the declaration goes at the root: gwpy hands every *dataset* attribute to
         the series constructor, so a record written there would make the file unreadable."""

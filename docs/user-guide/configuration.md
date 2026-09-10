@@ -302,7 +302,9 @@ orchestration:
 Every HDF5 file a run writes carries the run's metadata record inside it, at the
 file root, so that a file handed to another pipeline says which run produced it
 without its sidecar. `.npy` and `.gwf` have nowhere to put a document, so for
-those formats the sidecar remains the only description — see
+those formats the sidecar remains the only description, and so does a file
+written by `gwmock merge --force`, which was given no metadata to carry. A
+consumer reads the sidecar whenever there is one — see
 [Reading data](reading-data.md) for how to read the embedded record back.
 
 The embedded copy leaves out the source parameters of the injected signals:

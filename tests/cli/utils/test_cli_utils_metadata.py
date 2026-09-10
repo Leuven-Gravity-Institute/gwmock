@@ -245,6 +245,11 @@ class TestLoadMetadataWithExternalState:
         np.testing.assert_array_equal(loaded["pre_batch_state"]["array"], array)
 
 
+def _refuse_non_standard(token: str):
+    """`json.loads` hook that rejects the tokens JSON does not have, which Python accepts anyway."""
+    raise AssertionError(f"the document is not valid JSON: it contains the bare token {token}")
+
+
 class TestWithoutInjectionParameters:
     """The sanitiser: what it removes, where it looks, and what it leaves alone."""
 
@@ -304,6 +309,53 @@ class TestEmbeddableMetadata:
     def test_the_replay_state_is_dropped(self):
         """It is arrays the sidecar externalises to `.npy` files an embedded copy cannot point at."""
         assert "pre_batch_state" not in embeddable_metadata(self._record())
+
+    def test_the_replay_state_is_dropped_at_every_depth(self):
+        """`gwmock merge` nests each source's whole record under `source_files`, so a top-level-only
+        drop put every source's RNG state into the merged artifact -- and RNG state beside the
+        configuration regenerates the run, which is to say the injections the same document is at
+        pains to withhold."""
+        record = {"type": "merged", "source_files": {"a.hdf5": self._record()}}
+
+        document = embeddable_metadata(record)
+
+        assert "pre_batch_state" not in json.dumps(document)
+
+    def test_a_sources_own_hashes_are_kept(self):
+        """The counterpart, and the reason the hash maps are *not* stripped at depth: a nested one
+        is the digest of an input, which says what this artifact was made from. Nothing in this file
+        can invalidate it, so it is provenance to carry rather than a self-reference to remove."""
+        record = {"type": "merged", "source_files": {"a.hdf5": self._record()}}
+
+        document = embeddable_metadata(record)
+
+        assert document["source_files"]["a.hdf5"]["file_hashes"] == {"a.hdf5": "x"}
+        assert "file_hashes" not in document
+
+    @pytest.mark.parametrize(
+        ("value", "why"),
+        [
+            (float("inf"), "unlimited max_samples is stored as np.inf"),
+            (float("-inf"), "the mirror case"),
+            (float("nan"), "a backend may report one from a failed fit"),
+        ],
+    )
+    def test_a_non_finite_float_does_not_produce_invalid_json(self, value, why):
+        """`json.dumps` writes `Infinity`/`NaN`, which Python reads back and a strict parser refuses
+        -- and the point of the embedded copy is that something other than gwmock parses it."""
+        _ = why
+
+        document = embeddable_metadata({"simulator_metadata": {"max_samples": value}})
+
+        text = json.dumps(document)
+        assert json.loads(text, parse_constant=_refuse_non_standard) == {"simulator_metadata": {"max_samples": None}}
+
+    def test_a_non_finite_value_inside_an_array_is_normalised_too(self):
+        """The array branch has to recurse, or the same token appears one level down."""
+        document = embeddable_metadata({"signal": {"metadata": {"grid": np.array([1.0, np.inf])}}})
+
+        text = json.dumps(document)
+        assert json.loads(text, parse_constant=_refuse_non_standard)["signal"]["metadata"]["grid"] == [1.0, None]
 
     def test_the_self_referential_hashes_are_dropped(self):
         """A file cannot carry its own digest: the digest is taken after this copy is written."""

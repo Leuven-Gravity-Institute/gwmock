@@ -279,7 +279,7 @@ def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
         The embedded record, or None.
 
     Raises:
-        ValueError: If the attribute is present but is not a JSON document, which no gwmock wrote.
+        ValueError: If the attribute is present but is not a JSON object, which no gwmock wrote.
     """
     artifact = Path(path)
     if not carries_strain_schema(artifact):
@@ -292,9 +292,20 @@ def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
             return None
         document = _as_text(handle.attrs[RUN_METADATA_ATTRIBUTE])
     try:
-        return json.loads(document)
+        decoded = json.loads(document)
     except json.JSONDecodeError as exc:
         raise ValueError(f"{artifact} carries a '{RUN_METADATA_ATTRIBUTE}' attribute that is not JSON: {exc}") from exc
+    # A record is an object. Refusing anything else keeps the return type honest, and matters most
+    # for the one value that would otherwise pass silently: `null` decodes to None, which is this
+    # function's way of saying "no record here, read the sidecar" -- so an attribute holding `null`
+    # would send a consumer to the sidecar as though the file carried nothing, rather than telling it
+    # that the file carries something it cannot use.
+    if not isinstance(decoded, dict):
+        raise ValueError(
+            f"{artifact} carries a '{RUN_METADATA_ATTRIBUTE}' attribute holding JSON "
+            f"{type(decoded).__name__}, not an object. No gwmock wrote it."
+        )
+    return decoded
 
 
 def missing_layout_attributes(path: str | Path) -> dict[str, list[str]]:

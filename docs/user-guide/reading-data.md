@@ -94,8 +94,11 @@ written.
 
 ## The record inside the file
 
-An HDF5 file also carries the provenance record of the run that wrote it, so a
-file that reaches you without its sidecar still says where it came from:
+An HDF5 file usually also carries the provenance record of the run that wrote
+it, so a file that reaches you without its sidecar still says where it came
+from. Read it, and fall back to the sidecar when there is none — a file written
+before this existed carries no record, and neither does one from
+`gwmock merge --force`, which is merging files it was given no metadata for:
 
 ```python
 from gwmock.strain_schema import read_run_metadata
@@ -107,7 +110,12 @@ else:
     print(record["gwmock_version"], record["config"], record["outputs"])
 ```
 
-It is the same record the sidecar holds, with two deliberate omissions:
+**Use the sidecar whenever you have one.** It is the complete record, and it is
+the only description at all for `.npy` and `.gwf` — and for the forced merge
+above, which writes neither.
+
+What the file carries is the same record the sidecar holds, with three
+deliberate omissions:
 
 - **The injection parameters**, unless the run that wrote the file set
   `orchestration.include-injection-parameters: true`. The default excludes them
@@ -120,9 +128,11 @@ It is the same record the sidecar holds, with two deliberate omissions:
   are recorded in the sidecar, which is taken after the record is written into
   the file.
 
-`pre_batch_state`, the simulator state kept for replay, is likewise
-sidecar-only: it is stored as separate `.npy` files an embedded copy could not
-point at.
+- **The simulator's replay state.** `pre_batch_state` is stored as separate
+  `.npy` files an embedded copy could not point at. It is removed wherever it
+  appears, including inside the source records a merged file carries: that state
+  and the configuration beside it regenerate the run, and so regenerate the
+  injections the same document withheld.
 
 ## Reading a file
 

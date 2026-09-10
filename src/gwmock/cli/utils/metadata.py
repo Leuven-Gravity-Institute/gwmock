@@ -14,6 +14,7 @@ the file hashes, which a file cannot carry about itself.
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -45,15 +46,28 @@ _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)
 #: one would agree with it.
 INJECTION_PARAMETERS_KEY = "injections"
 
-#: Top-level keys an embedded copy drops. ``pre_batch_state`` is the simulator's RNG state, kept for
-#: replay: it is megabytes of array in a record that has to fit in a file attribute, and the sidecar
-#: externalises it to ``.npy`` files that an embedded copy could not point at.
-_REPLAY_ONLY_KEYS = ("pre_batch_state",)
+#: The key holding the simulator's RNG state, kept for replay. Dropped from an embedded copy at
+#: **every depth**, for the same reason as the injections and then one more.
+#:
+#: The reasons it is not useful there: it is megabytes of array in a record that has to fit in a file
+#: attribute, and the sidecar externalises it to ``.npy`` files an embedded copy could not point at.
+#:
+#: The reason the depth matters: ``gwmock merge`` copies each source's *whole* record under
+#: ``source_files``, so a top-level-only drop left every merged artifact carrying its sources' RNG
+#: state. Measured before this was fixed. That state, with the configuration beside it, regenerates
+#: the run -- which is to say it regenerates the injections that the same document went to the
+#: trouble of withholding.
+_REPLAY_STATE_KEY = "pre_batch_state"
 
 #: Top-level hash maps an embedded copy drops, and the per-output keys that duplicate them. A file
 #: cannot carry its own hash: the digest is taken after the record is embedded, precisely so that what
 #: the sidecar records describes the bytes that were published. Left in, they would be the hashes of a
 #: file that no longer exists.
+#:
+#: Top-level only, deliberately, and unlike the two keys above. The nested ones a merge brings in
+#: under ``source_files`` are the hashes of the *inputs*, which nothing in this file can invalidate:
+#: they say which artifacts this one was made from, and that is provenance worth carrying rather than
+#: a self-reference to remove.
 _SELF_REFERENTIAL_KEYS = ("file_hashes", "content_hashes")
 _SELF_REFERENTIAL_OUTPUT_KEYS = ("sha256", "content_sha256")
 
@@ -166,20 +180,38 @@ class MetadataRecord(BaseModel):
 
 
 def _normalize_json_value(value: Any) -> Any:
-    """Convert Python objects to JSON-safe values."""
+    """Convert Python objects to JSON-safe values.
+
+    Non-finite floats become ``None``. JSON has no way to write one: ``json.dumps`` emits the bare
+    tokens ``Infinity``, ``-Infinity`` and ``NaN``, which Python reads back but which are not JSON,
+    so a strict parser rejects the whole document rather than the one field. That was survivable
+    while the record only ever went to a sidecar Python read; it is not, now that a copy of it is
+    written into the data file for another pipeline to parse.
+
+    ``None`` rather than a string, because these are numeric fields and a consumer doing arithmetic
+    on them should get "no value" rather than a type it did not expect. It is also the spelling the
+    one reachable case already has on the way in: ``max_samples`` is ``np.inf`` exactly when the run
+    asked for no limit, and ``Simulator(max_samples=None)`` is how that limit is *requested*, so the
+    round trip lands back on its own input.
+
+    The array branch recurses rather than returning ``tolist()`` directly, so a non-finite sample
+    inside an array is normalised too.
+    """
     normalized = value
     if isinstance(value, Path):
         normalized = str(value)
     elif hasattr(value, "unit") and hasattr(value, "value"):
         normalized = _normalize_json_value(value.value)
     elif isinstance(value, np.ndarray):
-        normalized = value.tolist()
+        normalized = _normalize_json_value(value.tolist())
     elif isinstance(value, np.generic):
-        normalized = value.item()
+        normalized = _normalize_json_value(value.item())
     elif isinstance(value, dict):
         normalized = {str(key): _normalize_json_value(val) for key, val in value.items()}
     elif isinstance(value, (list, tuple, set)):
         normalized = [_normalize_json_value(item) for item in value]
+    if isinstance(normalized, float) and not math.isfinite(normalized):
+        normalized = None
     return normalized
 
 
@@ -296,11 +328,30 @@ def load_metadata_record(
     return MetadataRecord.model_validate(metadata)
 
 
+def _without_key(document: Any, name: str) -> Any:
+    """Return *document* with every entry called *name* removed, at any depth.
+
+    The document is rebuilt rather than edited in place, because the caller's copy is the one that
+    goes into the sidecar with everything intact.
+
+    Args:
+        document: The record, or any part of one.
+        name: The key to remove wherever it appears.
+
+    Returns:
+        The same structure without that key.
+    """
+    if isinstance(document, dict):
+        return {key: _without_key(value, name) for key, value in document.items() if key != name}
+    if isinstance(document, list):
+        return [_without_key(item, name) for item in document]
+    return document
+
+
 def without_injection_parameters(document: Any) -> Any:
     """Return *document* with every ``injections`` entry removed, at any depth.
 
-    Depth matters: see :data:`INJECTION_PARAMETERS_KEY`. The document is rebuilt rather than edited in
-    place, because the caller's copy is the one that goes into the sidecar with the parameters intact.
+    Depth matters: see :data:`INJECTION_PARAMETERS_KEY`.
 
     Args:
         document: The record, or any part of one.
@@ -308,21 +359,13 @@ def without_injection_parameters(document: Any) -> Any:
     Returns:
         The same structure without any ``injections`` key.
     """
-    if isinstance(document, dict):
-        return {
-            key: without_injection_parameters(value)
-            for key, value in document.items()
-            if key != INJECTION_PARAMETERS_KEY
-        }
-    if isinstance(document, list):
-        return [without_injection_parameters(item) for item in document]
-    return document
+    return _without_key(document, INJECTION_PARAMETERS_KEY)
 
 
 def embeddable_metadata(metadata: dict[str, Any], *, include_injection_parameters: bool = False) -> dict[str, Any]:
     """Return the copy of a metadata record that may be written inside a data file.
 
-    What it drops, and why, is in :data:`_REPLAY_ONLY_KEYS`, :data:`_SELF_REFERENTIAL_KEYS` and
+    What it drops, and why, is in :data:`_REPLAY_STATE_KEY`, :data:`_SELF_REFERENTIAL_KEYS` and
     :data:`INJECTION_PARAMETERS_KEY`. Everything else the run recorded is kept, so the embedded copy
     still names the configuration, the seeds, the software versions and the outputs -- which is what
     makes the file self-describing, and which is also worth knowing before releasing one: a blind
@@ -337,9 +380,10 @@ def embeddable_metadata(metadata: dict[str, Any], *, include_injection_parameter
     Returns:
         A JSON-safe copy of the record.
     """
-    document = {key: value for key, value in metadata.items() if key not in _REPLAY_ONLY_KEYS}
+    document = dict(metadata)
     for key in _SELF_REFERENTIAL_KEYS:
         document.pop(key, None)
+    document = _without_key(document, _REPLAY_STATE_KEY)
     if not include_injection_parameters:
         document = without_injection_parameters(document)
     document = _normalize_json_value(document)
