@@ -38,6 +38,14 @@ except ImportError:  # pragma: no cover - same
     MAX_PROJECTION_SPAN_SECONDS = 86400.0
 
 
+#: Parameter kinds a caller can actually pass ``projection_backend`` to *by name*.
+#:
+#: Positional-only is excluded deliberately: a parameter named ``projection_backend`` that can
+#: only be given positionally cannot be reached by the keyword this module forwards, so its name
+#: is not a promise about anything.
+_NAMED_PARAMETER_KINDS = frozenset({inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY})
+
+
 def validate_projection_backend_name(value: str) -> str:
     """Return *value* if it names a projection implementation, else raise.
 
@@ -102,29 +110,60 @@ def require_projection_backend_runnable(value: str) -> None:
 
 
 def require_backend_accepts_projection_backend(backend_class: type[Any], value: str) -> None:
-    """Refuse a configuration whose signal backend cannot be told which implementation to use.
+    """Refuse a signal backend that cannot be *shown* to consume the setting.
 
-    The setting is threaded to gwmock-signal as a constructor argument, so a backend class that
-    does not take one would either raise ``TypeError`` about an unexpected keyword -- naming
-    neither the setting nor what to do -- or, for a class that swallows extra keywords, accept it
-    and project on the host anyway. The second is the dangerous one: the run would be reported as
-    using the backend it never used.
+    The setting is threaded to gwmock-signal as a constructor argument, so what happens to a
+    backend that does not take one depends entirely on how its constructor is written, and one of
+    the two outcomes is silent:
+
+    * A constructor with named parameters raises ``TypeError`` about an unexpected keyword --
+      loud, but naming neither the setting nor what to do about it.
+    * A constructor ending in ``**kwargs`` accepts the keyword, discards it, and projects with
+      its own default. The run then completes, the configuration and the run metadata both say
+      ``jax`` was asked for, and the output is what the host path produced. Nothing anywhere
+      says the request was dropped.
+
+    So a **named** ``projection_backend`` parameter is required, and ``**kwargs`` does not
+    substitute for one: accepting a keyword is not evidence of using it, and this is the only
+    evidence available before the projection runs. A backend that takes its arguments through
+    ``**kwargs`` and does honour the setting has to name it in its signature to say so -- which
+    costs one parameter and is what makes the promise checkable.
 
     Args:
         backend_class: The resolved ``orchestration.signal.backend`` class.
         value: The configured ``projection-backend``.
 
     Raises:
-        ValueError: If *backend_class* takes no ``projection_backend`` parameter.
+        ValueError: If *backend_class* does not expose a named ``projection_backend`` parameter,
+            or if its signature cannot be read at all.
     """
     try:
         parameters = inspect.signature(backend_class).parameters
-    except (TypeError, ValueError):  # pragma: no cover - unintrospectable callables are rare
+    except (TypeError, ValueError) as exc:
+        # Refused rather than waved through. An unreadable signature is not evidence that the
+        # setting is honoured, and the failure it would otherwise lead to is the silent one.
+        raise ValueError(
+            f"'projection-backend: {value}' cannot be applied: the signature of the signal "
+            f"backend {getattr(backend_class, '__name__', backend_class)!r} cannot be read, so "
+            "there is no way to tell whether it would use the setting or discard it. Wrap it in "
+            "a class whose __init__ names 'projection_backend', or remove the setting."
+        ) from exc
+
+    named = parameters.get("projection_backend")
+    if named is not None and named.kind in _NAMED_PARAMETER_KINDS:
         return
-    if "projection_backend" in parameters:
-        return
-    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
-        return
+
+    takes_any_keyword = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+    if takes_any_keyword:
+        raise ValueError(
+            f"'projection-backend: {value}' cannot be applied: the signal backend "
+            f"{backend_class.__name__} takes arbitrary keyword arguments and does not name "
+            "'projection_backend' among them, so it would accept the setting and could silently "
+            "discard it -- leaving a run that reports the implementation it was asked for and "
+            "produces the output of the other one. Name 'projection_backend' in its __init__ if "
+            "it honours the setting, or remove the setting to leave the backend on its own "
+            "default."
+        )
     raise ValueError(
         f"'projection-backend: {value}' cannot be applied: the signal backend "
         f"{backend_class.__name__} takes no 'projection_backend' argument. A gwmock-signal older "

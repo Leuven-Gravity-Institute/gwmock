@@ -129,6 +129,25 @@ class _RefusingSimulator:
         raise NotImplementedError
 
 
+class _SwallowingSimulator:
+    """A signal backend whose constructor takes anything and keeps nothing.
+
+    The shape that made the check necessary: it accepts ``projection_backend`` without error and
+    projects with its own default, so nothing between the configuration and the output says the
+    request was dropped.
+    """
+
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    @property
+    def required_params(self) -> frozenset[str]:
+        return frozenset()
+
+    def simulate(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover - never called here
+        raise NotImplementedError
+
+
 class TestWhatTheConfigurationAccepts:
     """The name itself, and the default that keeps every existing run unchanged."""
 
@@ -267,6 +286,16 @@ class TestWhatReachesTheSimulator:
         with pytest.raises(ValueError, match="projection-backend"):
             self._adapter(monkeypatch, _RefusingSimulator, **{"projection-backend": "jax"})
 
+    def test_a_simulator_that_would_swallow_it_is_refused(self, monkeypatch):
+        """The guard is wired into the path a configuration actually takes, not merely present.
+
+        This is the failure the whole check exists for: `_SwallowingSimulator` accepts
+        `projection_backend="jax"` and drops it, so without the refusal the run would finish, the
+        metadata would record `jax`, and the strain would be what the host path produced.
+        """
+        with pytest.raises(ValueError, match="silently discard"):
+            self._adapter(monkeypatch, _SwallowingSimulator, **{"projection-backend": "jax"})
+
     @pytest.mark.skipif(
         not _REAL_SIMULATOR_TAKES_IT,
         reason="the installed gwmock-signal predates the projection_backend argument",
@@ -317,10 +346,63 @@ def test_the_span_limit_is_read_from_gwmock_signal():
     )
 
 
-def test_a_backend_taking_arbitrary_keywords_is_not_refused():
-    """A `**kwargs` constructor cannot be shown to reject it, so it is given the benefit."""
+class TestOnlyAProvablyConsumedSettingIsAllowed:
+    """Accepting the keyword is not evidence of using it, and only evidence is accepted.
 
-    class _Flexible:
-        def __init__(self, **_: Any) -> None: ...
+    The dangerous shape is a constructor ending in ``**kwargs``: it takes
+    ``projection_backend="jax"`` without complaint, discards it, projects on the host, and
+    leaves a run whose configuration and metadata both record the implementation that never
+    ran. There is no later point at which that surfaces, so it is refused here.
+    """
 
-    require_backend_accepts_projection_backend(_Flexible, "jax")
+    def test_arbitrary_keywords_are_not_evidence(self):
+        """The regression: this constructor used to be waved through and silently swallow it."""
+
+        class _Flexible:
+            def __init__(self, **_: Any) -> None: ...
+
+        with pytest.raises(ValueError, match="silently discard"):
+            require_backend_accepts_projection_backend(_Flexible, "jax")
+
+    def test_arbitrary_keywords_alongside_a_named_parameter_are_fine(self):
+        """Naming it is the promise; what else the constructor accepts is its own business."""
+
+        class _FlexibleButExplicit:
+            def __init__(self, *, projection_backend: str = "numpy", **_: Any) -> None: ...
+
+        require_backend_accepts_projection_backend(_FlexibleButExplicit, "jax")
+
+    def test_a_positional_only_parameter_of_that_name_is_not_enough(self):
+        """The setting is forwarded by keyword, so a positional-only parameter cannot receive it.
+
+        Its name would be a promise about a parameter this code can never reach, and passing the
+        keyword anyway would land in ``**kwargs`` -- back to the silent case.
+        """
+
+        class _PositionalOnly:
+            def __init__(self, projection_backend: str = "numpy", /, **_: Any) -> None: ...
+
+        with pytest.raises(ValueError, match="silently discard"):
+            require_backend_accepts_projection_backend(_PositionalOnly, "jax")
+
+    def test_an_unreadable_signature_is_refused(self, monkeypatch):
+        """No signature is no evidence either, and the failure it leads to is the silent one."""
+
+        class _Opaque:
+            def __init__(self, **_: Any) -> None: ...
+
+        def _no_signature(_: Any) -> Any:
+            raise ValueError("no signature found")
+
+        monkeypatch.setattr(inspect, "signature", _no_signature)
+        with pytest.raises(ValueError, match="cannot be read"):
+            require_backend_accepts_projection_backend(_Opaque, "jax")
+
+    def test_a_constructor_with_no_such_parameter_names_the_likely_cause(self):
+        """The common case in practice: a gwmock-signal older than the argument."""
+
+        class _Old:
+            def __init__(self, waveform_model: str | None = None) -> None: ...
+
+        with pytest.raises(ValueError, match="upgrade it"):
+            require_backend_accepts_projection_backend(_Old, "jax")

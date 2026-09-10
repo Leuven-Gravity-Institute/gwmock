@@ -384,10 +384,11 @@ long run.
 `signal.projection-backend` selects **which implementation projects** the
 polarizations onto the detectors, independently of which library generated them:
 
-| Value                 | Behaviour                                                              |
-| --------------------- | ---------------------------------------------------------------------- |
-| `numpy` (the default) | Project on the host, asking Astropy for sidereal time at every sample. |
-| `jax`                 | The same algorithm, compiled into one fused kernel.                    |
+| Value     | Behaviour                                                              |
+| --------- | ---------------------------------------------------------------------- |
+| _omitted_ | Leave the choice to the backend. **This is the default.**              |
+| `numpy`   | Project on the host, asking Astropy for sidereal time at every sample. |
+| `jax`     | The same algorithm, compiled into one fused kernel.                    |
 
 ```yaml
 orchestration:
@@ -395,6 +396,13 @@ orchestration:
         projection-backend: jax
         earth-rotation: true
 ```
+
+**Omitting the key is not the same as writing `numpy`.** Omitted, each
+gwmock-signal backend keeps its own choice — the host path for compact binaries,
+so a CBC run behaves exactly as it did before this key existed, and the _device_
+path for continuous waves, where projection is 99% of a segment. Writing `numpy`
+explicitly overrides that, which for a continuous-wave run means giving up the
+faster path. Set it only when you mean to choose.
 
 **What it buys.** Projection is where a long segment spends its time. Measured
 at 1024 s and 8192 Hz across five ET detectors, a single-event `gwmock simulate`
@@ -420,9 +428,7 @@ one changes nothing about how the waveforms are generated.
 **It is not a different answer.** The two implementations agree to ~1e-10 of
 peak — 2.5e-10 worst case across five ET detectors at the configuration above,
 and 8.0e-13 through a 32 s segment at 256 Hz. The difference is floating-point
-reassociation, so this is a substitution rather than a change of model. Omitting
-the key leaves each gwmock-signal backend on its own default, which is the host
-path for compact binaries.
+reassociation, so this is a substitution rather than a change of model.
 
 Three things are refused when the configuration is loaded rather than part-way
 through a run:
@@ -443,6 +449,15 @@ through a run:
   condition: a compact binary's waveform buffer starts well before its
   coalescence and can be longer than the segment it lands in, and that case is
   still reported by gwmock-signal at generation time.
+
+One more is refused a moment later, when the signal backend is built: a backend
+whose constructor does not **name** a `projection_backend` parameter. That
+covers a gwmock-signal older than the release which added it, and it covers a
+custom backend of your own — including one whose constructor ends in `**kwargs`.
+Taking arbitrary keywords is not evidence of using them: such a backend would
+accept `projection-backend: jax`, discard it, and produce host output from a run
+whose configuration and metadata both record `jax`. Naming the parameter is how
+a backend says it honours the setting, so that is what is required.
 
 ### Choosing the execution mode
 
