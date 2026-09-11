@@ -51,6 +51,7 @@ from gwmock.cli.utils.simulation_plan import (
     create_batch_metadata,
 )
 from gwmock.cli.utils.template import expand_template_variables
+from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, IndexSpec
 from gwmock.cli.utils.utils import handle_signal
 from gwmock.simulator.base import Simulator
 
@@ -382,6 +383,10 @@ def _build_noise_section(simulator: Simulator, batch: SimulationBatch) -> dict[s
         return {
             "backend": _backend_path_from_object(simulator.noise_adapter.backend),
             "psd": None if psd_value is None else str(psd_value),
+            # Every glitch this batch's noise output(s) carry, in time order -- the counterpart
+            # of `signal.injections`, and what backs the glitch->frame lookup. Empty for a run
+            # without glitches.
+            "glitch_injections": list(simulator_metadata["orchestration"]["noise"].get("glitch_injections") or []),
             "metadata": simulator_metadata["orchestration"]["noise"],
         }
 
@@ -542,13 +547,18 @@ class StaleIndexReadError(RuntimeError):
     """
 
 
-class SignalIndexRebuildError(RuntimeError):
-    """The signal index could not be rebuilt from the batch metadata files.
+class IndexRebuildError(RuntimeError):
+    """A truth index could not be rebuilt from the batch metadata files.
 
     Raised instead of writing a partial index. A rebuild's whole value is that its result is
     complete -- it is the repair for an index that lost entries -- so a source file it cannot read
     has to stop it rather than quietly shrink what it produces.
     """
+
+
+#: The name this error carried while the signal index was the only one. Kept because it is caught
+#: by name outside this module.
+SignalIndexRebuildError = IndexRebuildError
 
 
 class IndexDigestNotRecordedError(RuntimeError):
@@ -720,15 +730,15 @@ def update_metadata_index(
             raise
 
 
-def _withdraw_batch(index: dict[str, Any], metadata_file_name: str) -> dict[str, Any]:
+def _withdraw_batch(spec: IndexSpec, index: dict[str, Any], metadata_file_name: str) -> dict[str, Any]:
     """Return *index* with every contribution from *metadata_file_name* removed.
 
     Entries left with no contributions are dropped, so a re-run that injects nothing no longer
     leaves an id pointing at frames it did not write.
 
-    Pre-1.5.0 entries carried a single ``metadata`` string and a flat ``frames`` list. They are
-    migrated in passing rather than rejected: an index is a rebuildable cache, and refusing to read
-    one written by an older gwmock would make an upgrade look like data loss.
+    Pre-1.5.0 signal entries carried a single ``metadata`` string and a flat ``frames`` list. They
+    are migrated in passing rather than rejected: an index is a rebuildable cache, and refusing to
+    read one written by an older gwmock would make an upgrade look like data loss.
     """
     migrated: dict[str, Any] = {}
     for event_id, entry in index.items():
@@ -738,7 +748,7 @@ def _withdraw_batch(index: dict[str, Any], metadata_file_name: str) -> dict[str,
         kept = [batch for batch in batches if batch.get("metadata") != metadata_file_name]
         if not kept:
             continue
-        migrated[event_id] = {"batches": kept, "coa_time": entry.get("coa_time")}
+        migrated[event_id] = {"batches": kept, spec.time_key: entry.get(spec.time_key)}
     return migrated
 
 
@@ -762,7 +772,7 @@ def _warn_unlocked_once() -> None:
     Cached rather than flagged so the "warns once" claim is enforced by the decorator instead of
     by a global nobody re-checks.
     """
-    logger.warning("fcntl unavailable: the signal index is updated without a lock, so concurrent runs can race.")
+    logger.warning("fcntl unavailable: the truth indexes are updated without a lock, so concurrent runs can race.")
 
 
 @contextmanager
@@ -790,7 +800,7 @@ def _exclusive_index_lock(index_file: Path) -> Iterator[None]:
     caller had before, while an ImportError would take out a working single-writer run.
 
     Args:
-        index_file: Path to ``signal_index.yaml``; the sidecar sits beside it.
+        index_file: Path to the index file; the sidecar sits beside it.
 
     Yields:
         Nothing. The lock is held for the duration of the block.
@@ -880,7 +890,7 @@ def _index_digest(index_file: Path) -> str:
     would then act on.
 
     Args:
-        index_file: Path to ``signal_index.yaml``.
+        index_file: Path to the index file.
 
     Returns:
         Hex digest, or ``"absent"`` when the file does not exist.
@@ -912,7 +922,7 @@ def _recorded_digest(lock_file: Path) -> str | None:
         # check, and treating it as absent would silently disable the guard on a corrupt or
         # unreadable file. Refuse instead.
         raise StaleIndexReadError(
-            f"The signal-index sidecar {lock_file} exists but could not be read ({error}), so "
+            f"The index sidecar {lock_file} exists but could not be read ({error}), so "
             "this write cannot verify it is reading the current index. Stop all writers against "
             f"this metadata directory, then delete {lock_file.name} to re-baseline the digest; "
             "it holds only the digest and the lock, no data."
@@ -964,7 +974,7 @@ def _record_digest(lock_file: Path, digest: str) -> None:
         # next batch, with a message blaming a cache that is not the cause.
         logger.error("Could not record the index digest in %s: %s", lock_file, error)
         raise IndexDigestNotRecordedError(
-            f"The signal index was committed, but its digest could not be recorded in "
+            f"The index was committed, but its digest could not be recorded in "
             f"{lock_file.name} ({error}). The index itself is intact and correct. Until the "
             f"digest is re-synced every later write will refuse as stale. Stop every writer "
             f"against this directory, then delete {lock_file.name} to re-baseline it -- it holds "
@@ -1393,11 +1403,51 @@ def update_signal_index(
     metadata_file_name: str,
     encoding: str = "utf-8",
 ) -> None:
-    """Update the signal index mapping each injected event to its frame file(s).
+    """Update ``signal_index.yaml`` with this batch's injected signals.
 
-    The index (``signal_index.yaml``) maps a signal's ``event_id`` to the signal
-    frame file(s) that contain it plus the batch metadata file, enabling O(1)
-    signal->frame lookup by id.
+    See :func:`_update_index`, which this and :func:`update_glitch_index` are both names for.
+
+    Args:
+        metadata_directory: Directory where metadata and the index live.
+        metadata: The batch metadata record just written.
+        metadata_file_name: File name of that batch metadata record.
+        encoding: File encoding for reading/writing the index file.
+    """
+    _update_index(SIGNAL_INDEX, metadata_directory, metadata, metadata_file_name, encoding)
+
+
+def update_glitch_index(
+    metadata_directory: Path,
+    metadata: dict[str, Any],
+    metadata_file_name: str,
+    encoding: str = "utf-8",
+) -> None:
+    """Update ``glitch_index.yaml`` with this batch's injected glitches.
+
+    The glitch counterpart of :func:`update_signal_index`, answering "which frame holds glitch X"
+    the way ``gwmock find-signal`` already answered it for signals. Same machinery, same failure
+    modes, same repair (``gwmock reindex``); see :func:`_update_index`.
+
+    Args:
+        metadata_directory: Directory where metadata and the index live.
+        metadata: The batch metadata record just written.
+        metadata_file_name: File name of that batch metadata record.
+        encoding: File encoding for reading/writing the index file.
+    """
+    _update_index(GLITCH_INDEX, metadata_directory, metadata, metadata_file_name, encoding)
+
+
+def _update_index(
+    spec: IndexSpec,
+    metadata_directory: Path,
+    metadata: dict[str, Any],
+    metadata_file_name: str,
+    encoding: str = "utf-8",
+) -> None:
+    """Update one truth index, mapping each injected event to its frame file(s).
+
+    The index maps an event's ``event_id`` to the frame file(s) that contain it plus the batch
+    metadata file, enabling O(1) event->frame lookup by id.
 
     **Safe against concurrent writers on one host, when the lock is taken**, which it was not before: the
     read-modify-write was unlocked, so two runs sharing a metadata directory lost one side's
@@ -1436,18 +1486,19 @@ def update_signal_index(
         metadata files, which no race touches. That is a repair, not a second guarantee -- it fixes
         what was lost rather than stopping the loss.
 
-    Parameter-based lookup reads the injections recorded in the batch metadata files (their
-    source of truth); this index is only the id shortcut. A batch with no injected signals
+    Parameter-based lookup reads the events recorded in the batch metadata files (their
+    source of truth); this index is only the id shortcut. A batch that injected nothing
     writes nothing.
 
     Args:
+        spec: Which index to update, and where its events come from.
         metadata_directory: Directory where metadata and the index live.
         metadata: The batch metadata record just written.
         metadata_file_name: File name of that batch metadata record.
         encoding: File encoding for reading/writing the index file.
     """
-    injections = (metadata.get("signal") or {}).get("injections") or []
-    index_file = metadata_directory / "signal_index.yaml"
+    injections = spec.events(metadata) or []
+    index_file = metadata_directory / spec.index_file_name
     lock_file = index_file.with_name(index_file.name + ".lock")
     with _exclusive_index_lock(index_file):
         # Taking the lock for a batch that turns out to have nothing to do is deliberate: the
@@ -1466,7 +1517,7 @@ def update_signal_index(
         if not injections and not index_file.exists() and _recorded_digest(lock_file) is None:
             return
         _require_fresh_index_read(index_file, lock_file)
-        committed = _update_signal_index_locked(index_file, injections, metadata, metadata_file_name, encoding)
+        committed = _update_index_locked(spec, index_file, injections, metadata, metadata_file_name, encoding)
         # Recorded whatever the flush managed, and this is a decision with a history. An earlier
         # version of this branch *withheld* the digest when the directory could not be flushed, on the
         # grounds that a digest describing a possibly-non-durable rename can wedge the directory after
@@ -1494,7 +1545,7 @@ def update_signal_index(
         _note_flush_outcome(index_file.parent, committed.directory_flush, index_file, lock_file.name)
 
 
-class RebuiltSignalIndex(NamedTuple):
+class RebuiltIndex(NamedTuple):
     """What a rebuild read and what it wrote."""
 
     index_file: Path
@@ -1507,8 +1558,44 @@ class RebuiltSignalIndex(NamedTuple):
     """Distinct ``event_id`` values in the rebuilt index."""
 
 
-def rebuild_signal_index(metadata_directory: Path, encoding: str = "utf-8") -> RebuiltSignalIndex:
+#: The name this result carried while the signal index was the only one.
+RebuiltSignalIndex = RebuiltIndex
+
+
+def rebuild_signal_index(metadata_directory: Path, encoding: str = "utf-8") -> RebuiltIndex:
     """Rebuild ``signal_index.yaml`` from the batch metadata files, discarding what it held.
+
+    See :func:`_rebuild_index`, which this and :func:`rebuild_glitch_index` are both names for.
+
+    Args:
+        metadata_directory: Directory holding ``*.metadata.json`` and the index.
+        encoding: File encoding for reading the metadata files.
+
+    Returns:
+        The index written, and how much went into it.
+    """
+    return _rebuild_index(SIGNAL_INDEX, metadata_directory, encoding)
+
+
+def rebuild_glitch_index(metadata_directory: Path, encoding: str = "utf-8") -> RebuiltIndex:
+    """Rebuild ``glitch_index.yaml`` from the batch metadata files, discarding what it held.
+
+    See :func:`_rebuild_index`. A directory whose runs injected no glitches rebuilds to an empty
+    index rather than being refused: a run without glitches is an ordinary run, unlike a directory
+    with no batch metadata files at all, which means the wrong path was given.
+
+    Args:
+        metadata_directory: Directory holding ``*.metadata.json`` and the index.
+        encoding: File encoding for reading the metadata files.
+
+    Returns:
+        The index written, and how much went into it.
+    """
+    return _rebuild_index(GLITCH_INDEX, metadata_directory, encoding)
+
+
+def _rebuild_index(spec: IndexSpec, metadata_directory: Path, encoding: str = "utf-8") -> RebuiltIndex:
+    """Rebuild one truth index from the batch metadata files, discarding what it held.
 
     The index is a cache. The batch metadata files are the source of truth -- ``signal.injections``
     and the ``signal`` outputs of each batch -- so an index that has lost entries can be recovered
@@ -1551,6 +1638,7 @@ def rebuild_signal_index(metadata_directory: Path, encoding: str = "utf-8") -> R
     equality test.
 
     Args:
+        spec: Which index to rebuild, and where its events come from.
         metadata_directory: Directory holding ``*.metadata.json`` and the index.
         encoding: File encoding for reading the metadata files.
 
@@ -1558,7 +1646,7 @@ def rebuild_signal_index(metadata_directory: Path, encoding: str = "utf-8") -> R
         The index written, and how much went into it.
 
     Raises:
-        SignalIndexRebuildError: If the directory holds no batch metadata files, or one of them
+        IndexRebuildError: If the directory holds no batch metadata files, or one of them
             cannot be read, cannot be parsed, or does not decode into the shape of a batch
             metadata record.
         IndexDigestNotRecordedError: If the index was written but its digest could not be
@@ -1569,15 +1657,15 @@ def rebuild_signal_index(metadata_directory: Path, encoding: str = "utf-8") -> R
     # stray sidecar in whatever directory it named. The check inside is the one that counts.
     _require_batch_metadata(metadata_directory)
 
-    index_file = metadata_directory / "signal_index.yaml"
+    index_file = metadata_directory / spec.index_file_name
     lock_file = index_file.with_name(index_file.name + ".lock")
     with _exclusive_index_lock(index_file):
-        index, contributing = _index_from_batch_metadata(metadata_directory, encoding)
+        index, contributing = _index_from_batch_metadata(spec, metadata_directory, encoding)
         committed = _atomically_write_index(index_file, index)
         _record_digest(lock_file, committed.digest)
         _note_flush_outcome(index_file.parent, committed.directory_flush, index_file, lock_file.name)
     logger.info("Rebuilt %s from %d batch metadata file(s): %d event(s).", index_file, contributing, len(index))
-    return RebuiltSignalIndex(index_file=index_file, batches=contributing, events=len(index))
+    return RebuiltIndex(index_file=index_file, batches=contributing, events=len(index))
 
 
 def _require_batch_metadata(metadata_directory: Path) -> list[Path]:
@@ -1595,22 +1683,23 @@ def _require_batch_metadata(metadata_directory: Path) -> list[Path]:
         The metadata files, sorted by name.
 
     Raises:
-        SignalIndexRebuildError: If the directory holds none.
+        IndexRebuildError: If the directory holds none.
     """
     metadata_files = sorted(metadata_directory.glob("*.metadata.json"))
     if not metadata_files:
-        raise SignalIndexRebuildError(
+        raise IndexRebuildError(
             f"No batch metadata files (*.metadata.json) found in {metadata_directory}, so there is "
-            "nothing to rebuild the signal index from. Check the path: rebuilding against the "
+            "nothing to rebuild the index from. Check the path: rebuilding against the "
             "wrong directory would replace a correct index with an empty one."
         )
     return metadata_files
 
 
-def _index_from_batch_metadata(metadata_directory: Path, encoding: str) -> tuple[dict[str, Any], int]:
+def _index_from_batch_metadata(spec: IndexSpec, metadata_directory: Path, encoding: str) -> tuple[dict[str, Any], int]:
     """Build the index a directory's batch metadata files describe, without writing it.
 
     Args:
+        spec: Which index to build, and where its events come from.
         metadata_directory: Directory holding ``*.metadata.json``.
         encoding: File encoding for reading them.
 
@@ -1618,7 +1707,7 @@ def _index_from_batch_metadata(metadata_directory: Path, encoding: str) -> tuple
         The index mapping, and how many batches contributed at least one injection.
 
     Raises:
-        SignalIndexRebuildError: If the directory holds no batch metadata files, or one of them
+        IndexRebuildError: If the directory holds no batch metadata files, or one of them
             cannot be read, cannot be parsed, or does not decode into the shape of a batch
             metadata record.
     """
@@ -1633,10 +1722,10 @@ def _index_from_batch_metadata(metadata_directory: Path, encoding: str) -> tuple
             # replaces the index, so a file skipped here is an event silently deleted from the
             # lookup by the very command run to restore it.
             _refuse_metadata_file(metadata_file, f"could not be read ({error})", error)
-        metadata, injections = _validated_batch_metadata(metadata_file, decoded)
+        metadata, injections = _validated_batch_metadata(spec, metadata_file, decoded)
         if not injections:
             continue
-        _record_batch_in_index(index, injections, metadata, metadata_file.name)
+        _record_batch_in_index(spec, index, injections, metadata, metadata_file.name)
         contributing += 1
     return index, contributing
 
@@ -1656,15 +1745,17 @@ def _refuse_metadata_file(metadata_file: Path, detail: str, cause: BaseException
     Raises:
         SignalIndexRebuildError: Always.
     """
-    raise SignalIndexRebuildError(
-        f"Cannot rebuild the signal index: {metadata_file.name} {detail}. Every batch metadata "
+    raise IndexRebuildError(
+        f"Cannot rebuild the index: {metadata_file.name} {detail}. Every batch metadata "
         "file has to be usable, because an index built from the rest would be missing exactly the "
         "events this one recorded and would look complete. The existing index has not been "
         "touched."
     ) from cause
 
 
-def _validated_batch_metadata(metadata_file: Path, decoded: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _validated_batch_metadata(
+    spec: IndexSpec, metadata_file: Path, decoded: Any
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Check that a decoded batch metadata record has the shape the rebuild reads, and return it.
 
     Parsing as JSON is not the same as being a batch metadata record, and the gap between the two
@@ -1677,7 +1768,7 @@ def _validated_batch_metadata(metadata_file: Path, decoded: Any) -> tuple[dict[s
     :func:`_record_batch_in_index` indexes into each injection and each output, so validating only
     the top level would move the traceback rather than remove it.
 
-    Not applied to :func:`update_signal_index`, deliberately. Its record is built in-process by the
+    Not applied to :func:`_update_index`, deliberately. Its record is built in-process by the
     run that is writing it, a few frames up the stack; there is no file, no decode, and nothing to
     distrust. Validating it would be a per-batch cost paid to guard against gwmock having
     constructed its own record wrongly, which is a bug for a test to catch rather than a shape for
@@ -1687,14 +1778,15 @@ def _validated_batch_metadata(metadata_file: Path, decoded: Any) -> tuple[dict[s
     way an absent key already was rather than becoming a ``TypeError`` in the builder.
 
     Args:
+        spec: Which index is being rebuilt, and which section of the record it reads.
         metadata_file: The file the record came from, named in any refusal.
         decoded: Whatever ``json.loads`` returned.
 
     Returns:
-        The record, and its injections (empty when it records none).
+        The record, and its events (empty when it records none).
 
     Raises:
-        SignalIndexRebuildError: If any part of the record is not the shape the rebuild reads.
+        IndexRebuildError: If any part of the record is not the shape the rebuild reads.
     """
 
     def refuse(field: str, value: Any, expected: str) -> NoReturn:
@@ -1707,27 +1799,28 @@ def _validated_batch_metadata(metadata_file: Path, decoded: Any) -> tuple[dict[s
     if not isinstance(decoded, dict):
         refuse("the top-level value", decoded, "an object")
 
-    signal = decoded.get("signal")
-    if signal is not None and not isinstance(signal, dict):
-        refuse("'signal'", signal, "an object")
+    section = decoded.get(spec.section)
+    if section is not None and not isinstance(section, dict):
+        refuse(f"'{spec.section}'", section, "an object")
 
-    injections = (signal or {}).get("injections")
+    injections = (section or {}).get(spec.events_key)
     if injections is not None and not isinstance(injections, list):
-        refuse("'signal.injections'", injections, "a list")
+        refuse(f"'{spec.events_path}'", injections, "a list")
 
     for position, injection in enumerate(injections or []):
         if not isinstance(injection, dict):
-            refuse(f"'signal.injections[{position}]'", injection, "an object")
+            refuse(f"'{spec.events_path}[{position}]'", injection, "an object")
         event_id = injection.get("event_id")
         # `str(event_id)` is the index key, so anything it would stringify into nonsense has to
         # stop here: a mapping or a list would key the entry by its repr, and a float by a
         # spelling (`3.0`) that the integer lookup in `find_signals` never asks for. `bool` is an
         # `int` subclass and would key on `True`, so it is excluded by name.
         if event_id is not None and (isinstance(event_id, bool) or not isinstance(event_id, (int, str))):
-            refuse(f"'signal.injections[{position}].event_id'", event_id, "an integer or a string")
-        parameters = injection.get("parameters")
-        if parameters is not None and not isinstance(parameters, dict):
-            refuse(f"'signal.injections[{position}].parameters'", parameters, "an object")
+            refuse(f"'{spec.events_path}[{position}].event_id'", event_id, "an integer or a string")
+        if spec.parameters_key is not None:
+            parameters = injection.get(spec.parameters_key)
+            if parameters is not None and not isinstance(parameters, dict):
+                refuse(f"'{spec.events_path}[{position}].{spec.parameters_key}'", parameters, "an object")
 
     outputs = decoded.get("outputs")
     if outputs is not None and not isinstance(outputs, list):
@@ -1736,7 +1829,7 @@ def _validated_batch_metadata(metadata_file: Path, decoded: Any) -> tuple[dict[s
         if not isinstance(output, dict):
             refuse(f"'outputs[{position}]'", output, "an object")
         # Read off the builder's own inclusion test rather than restated beside it.
-        # `_record_batch_in_index` records every signal output whose `path` key is *present*, so
+        # `_record_batch_in_index` records every matching output whose `path` key is *present*, so
         # every present key has to be a string. An earlier version restated the rule as
         # `path is not None`, which is a different condition: an explicit `"path": null` is present,
         # so the builder took it, and the rebuilt index carried `frames: [null]` -- which
@@ -1770,7 +1863,7 @@ def _require_fresh_index_read(index_file: Path, lock_file: Path) -> None:
     predates the release carrying this.
 
     Args:
-        index_file: Path to ``signal_index.yaml``.
+        index_file: Path to the index file.
         lock_file: The sidecar holding the digest of the last committed index.
 
     Raises:
@@ -1782,10 +1875,11 @@ def _require_fresh_index_read(index_file: Path, lock_file: Path) -> None:
             # A fresh directory, not a legacy one: the lock creates the sidecar empty, so the
             # first write into any new directory would otherwise warn that an index which does
             # not exist "predates the staleness guard". Warning on every clean run is how the
-            # message that matters gets ignored.
+            # message that matters gets ignored. A directory whose runs have no glitches reaches
+            # this on every batch, since the glitch index is never created there.
             return
         logger.warning(
-            "The signal index at %s has no digest recorded in %s, so this write cannot verify it "
+            "The index at %s has no digest recorded in %s, so this write cannot verify it "
             "is reading the current index. Predates the staleness guard; accepted until a digest "
             "is recorded -- on a directory shared by several hosts each unprotected writer gets "
             "one such pass, so the first post-upgrade write is the one to run from a single host.",
@@ -1818,6 +1912,7 @@ def _require_fresh_index_read(index_file: Path, lock_file: Path) -> None:
 
 
 def _record_batch_in_index(
+    spec: IndexSpec,
     index: dict[str, Any],
     injections: list[dict[str, Any]],
     metadata: dict[str, Any],
@@ -1825,20 +1920,23 @@ def _record_batch_in_index(
 ) -> None:
     """Add one batch's contribution to *index*, in place.
 
-    Shared by the incremental update and by :func:`rebuild_signal_index`, deliberately. The two
-    have to agree on what an entry looks like -- a rebuild that produced a subtly different shape
-    would be a repair that corrupts -- and one implementation is the only way to say that which
-    cannot drift. The rebuild test asserts the two paths produce the same mapping, so a change
-    here that only suits one of them fails.
+    Shared by the incremental update and by the rebuild, deliberately. The two have to agree on
+    what an entry looks like -- a rebuild that produced a subtly different shape would be a repair
+    that corrupts -- and one implementation is the only way to say that which cannot drift. The
+    rebuild test asserts the two paths produce the same mapping, so a change here that only suits
+    one of them fails.
 
     Args:
+        spec: Which index is being built, and how its entries are shaped.
         index: The index being built or updated; mutated in place.
-        injections: The batch's injected signals.
+        injections: The batch's events -- injected signals, or injected glitches.
         metadata: The batch metadata record.
         metadata_file_name: File name of that batch metadata record.
     """
-    signal_frames = [
-        output["path"] for output in metadata.get("outputs", []) if output.get("kind") == "signal" and "path" in output
+    frames = [
+        output["path"]
+        for output in metadata.get("outputs", [])
+        if output.get("kind") == spec.output_kind and "path" in output
     ]
     for injection in injections:
         event_id = injection.get("event_id")
@@ -1851,12 +1949,13 @@ def _record_batch_in_index(
         # was one of three, and not the one holding the merger.
         entry = index.setdefault(
             str(event_id),
-            {"batches": [], "coa_time": (injection.get("parameters") or {}).get("coa_time")},
+            {"batches": [], spec.time_key: spec.event_time(injection)},
         )
-        entry["batches"].append({"metadata": metadata_file_name, "frames": signal_frames})
+        entry["batches"].append({"metadata": metadata_file_name, "frames": frames})
 
 
-def _update_signal_index_locked(
+def _update_index_locked(
+    spec: IndexSpec,
     index_file: Path,
     injections: list[dict[str, Any]],
     metadata: dict[str, Any],
@@ -1866,12 +1965,13 @@ def _update_signal_index_locked(
     """Do the read-modify-write, with the caller holding the index lock.
 
     Split out so the critical section is a single named span: the read, the withdrawal and the
-    write must all be inside one lock, and a reader of :func:`update_signal_index` should not have
+    write must all be inside one lock, and a reader of :func:`_update_index` should not have
     to trace an indented block to confirm it.
 
     Args:
-        index_file: Path to ``signal_index.yaml``.
-        injections: The batch's injected signals.
+        spec: Which index is being updated.
+        index_file: Path to the index file.
+        injections: The batch's events.
         metadata: The batch metadata record just written.
         metadata_file_name: File name of that batch metadata record.
         encoding: File encoding for reading the index file.
@@ -1885,7 +1985,7 @@ def _update_signal_index_locked(
             with index_file.open(encoding=encoding) as f:
                 index = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError) as e:
-            logger.warning("Failed to load signal index: %s. Creating new index.", e)
+            logger.warning("Failed to load %s: %s. Creating new index.", index_file.name, e)
             index = {}
     else:
         index = {}
@@ -1894,14 +1994,14 @@ def _update_signal_index_locked(
     # now inject different or no events) cannot leave stale id -> frame rows the fast path would
     # trust. This used to drop whole entries whose `metadata` matched, which was equivalent only
     # while an entry belonged to exactly one batch -- and that is the assumption being removed here.
-    index = _withdraw_batch(index, metadata_file_name)
+    index = _withdraw_batch(spec, index, metadata_file_name)
 
-    _record_batch_in_index(index, injections, metadata, metadata_file_name)
+    _record_batch_in_index(spec, index, injections, metadata, metadata_file_name)
 
     try:
         return _atomically_write_index(index_file, index)
     except (OSError, yaml.YAMLError) as e:
-        logger.error("Failed to save signal index: %s", e)
+        logger.error("Failed to save %s: %s", index_file.name, e)
         raise
 
 
@@ -2195,8 +2295,11 @@ def save_batch_metadata(
     # Update the metadata index for quick lookup
     update_metadata_index(metadata_directory, output_files, metadata_file_name)
 
-    # Update the signal index (event id -> containing frame file(s)) for signal->frame lookup
+    # Update the truth indexes (event id -> containing frame file(s)) for event->frame lookup.
+    # One per producer: signals into `signal_index.yaml`, glitches into `glitch_index.yaml`. A
+    # batch that injected neither writes neither.
     update_signal_index(metadata_directory, metadata, metadata_file_name)
+    update_glitch_index(metadata_directory, metadata, metadata_file_name)
 
 
 def process_batch(

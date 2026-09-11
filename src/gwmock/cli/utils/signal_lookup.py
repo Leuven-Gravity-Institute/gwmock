@@ -1,8 +1,14 @@
-"""Look up which frame file(s) contain a given simulated signal.
+"""Look up which frame file(s) contain a given simulated signal or injected glitch.
 
-Signals are recorded per batch in the metadata files (``signal.injections``,
-the source of truth) and mirrored into ``signal_index.yaml`` for O(1) lookup by
-``event_id``. Parameter-based lookup scans the injections in the metadata files.
+Both are recorded per batch in the metadata files -- ``signal.injections`` and
+``noise.glitch_injections``, the source of truth -- and mirrored into
+``signal_index.yaml`` and ``glitch_index.yaml`` for O(1) lookup by ``event_id``.
+Parameter-based lookup scans the events in the metadata files.
+
+One implementation over both, parameterised by
+:class:`~gwmock.cli.utils.truth_index.IndexSpec`: the two indexes have the same
+shape and the same fallback from the id shortcut to the metadata files, and a
+second copy of that would be a second place for a fix to be missing from.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, IndexSpec
 
 # Relative tolerance for numeric == / != filters, so representation noise (e.g.
 # a float round-tripped through JSON) does not cause a scientifically-equal
@@ -125,12 +133,62 @@ def find_signals(
     recorded by every batch whose frames it reaches), and ``coa_time``;
     parameter-filtered results also carry ``parameters``.
     """
+    return find_events(SIGNAL_INDEX, metadata_directory, event_id=event_id, param_filters=param_filters)
+
+
+def find_glitches(
+    metadata_directory: Path | str,
+    *,
+    event_id: str | int | None = None,
+    param_filters: list[tuple[str, str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the injected glitches matching an id and/or filters with their frame file(s).
+
+    The glitch counterpart of :func:`find_signals`, answering "which frame holds glitch X"
+    for the other producer. With only ``event_id`` set the fast ``glitch_index.yaml`` path is
+    used; filters scan the batch metadata files, whose ``noise.glitch_injections`` are the
+    source of truth.
+
+    A glitch row is flat, so a filter names a catalogue column directly --
+    ``detector==H1``, ``glitch_class==Koi_Fish``, ``realized_snr>=8``,
+    ``gps_start_time>=1256655618`` -- where a signal filter names a source parameter.
+
+    ``gps_start_time`` is the GPS time of the injected waveform's **first sample**, not its
+    peak: a filter or a window built around it has to allow for the waveform's own length,
+    which the catalogue records as ``duration_seconds``.
+
+    Unlike a signal, a glitch appears in the record of the batch it *starts* in and no other,
+    so its ``metadata`` list holds one file even where its samples reach the next frame.
+    """
+    return find_events(GLITCH_INDEX, metadata_directory, event_id=event_id, param_filters=param_filters)
+
+
+def find_events(
+    spec: IndexSpec,
+    metadata_directory: Path | str,
+    *,
+    event_id: str | int | None = None,
+    param_filters: list[tuple[str, str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the events of one truth catalogue matching an id and/or parameter filters.
+
+    Args:
+        spec: Which catalogue to search, and which index caches it.
+        metadata_directory: Directory holding the batch metadata files and the index.
+        event_id: Event id to look up, or ``None`` to match on filters alone.
+        param_filters: Parsed ``(key, op, value)`` predicates, combined with AND.
+
+    Returns:
+        One mapping per match, carrying ``event_id``, ``frames``, ``metadata`` (a list of
+        batch metadata file names) and the catalogue's time column; filtered results also
+        carry ``parameters``.
+    """
     metadata_directory = Path(metadata_directory)
     param_filters = param_filters or []
     results: list[dict[str, Any]] = []
 
     if event_id is not None and not param_filters:
-        index_file = metadata_directory / "signal_index.yaml"
+        index_file = metadata_directory / spec.index_file_name
         if not index_file.exists():
             return results
         with index_file.open(encoding="utf-8") as f:
@@ -145,7 +203,7 @@ def find_signals(
                     # A list now, because one signal spans the frames of several batches. Kept as a
                     # list even when there is one, so a consumer never has to branch on the type.
                     "metadata": metadata_files,
-                    "coa_time": entry.get("coa_time"),
+                    spec.time_key: entry.get(spec.time_key),
                 }
             )
         return results
@@ -156,18 +214,18 @@ def find_signals(
                 metadata = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
-        injections = (metadata.get("signal") or {}).get("injections") or []
+        injections = spec.events(metadata) or []
         if not injections:
             continue
         frames = [
             output["path"]
             for output in metadata.get("outputs", [])
-            if output.get("kind") == "signal" and "path" in output
+            if output.get("kind") == spec.output_kind and "path" in output
         ]
         for injection in injections:
             if event_id is not None and injection.get("event_id") != event_id:
                 continue
-            parameters = injection.get("parameters") or {}
+            parameters = spec.parameters(injection)
             if not _matches(parameters, param_filters):
                 continue
             results.append(
@@ -179,7 +237,7 @@ def find_signals(
                     # reading both paths should not have to know which one it asked.
                     "metadata": [meta_path.name],
                     "parameters": parameters,
-                    "coa_time": parameters.get("coa_time"),
+                    spec.time_key: parameters.get(spec.time_key),
                 }
             )
     return results

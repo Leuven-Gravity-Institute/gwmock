@@ -117,12 +117,14 @@ above, which writes neither.
 What the file carries is the same record the sidecar holds, with three
 deliberate omissions:
 
-- **The injection parameters**, unless the run that wrote the file set
-  `orchestration.include-injection-parameters: true`. The default excludes them
-  so that a blind mock data challenge can be released as the data files
-  themselves. `record["signal"]["injections"]` is simply absent, rather than
+- **The injection parameters and the glitch truth**, unless the run that wrote
+  the file set `orchestration.include-injection-parameters: true`. The default
+  excludes them so that a blind mock data challenge can be released as the data
+  files themselves -- which transients a file holds is an answer too, for a
+  challenge whose task is to find or veto them. `record["signal"]["injections"]`
+  and `record["noise"]["glitch_injections"]` are simply absent, rather than
   empty -- an empty list would be indistinguishable from a segment that holds no
-  signal.
+  signal, or a run that injected no glitches.
 - **The file hashes.** A file cannot carry its own digest: `file_hashes`,
   `content_hashes` and the `sha256`/`content_sha256` of each entry in `outputs`
   are recorded in the sidecar, which is taken after the record is written into

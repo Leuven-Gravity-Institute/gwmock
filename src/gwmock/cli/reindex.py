@@ -1,5 +1,5 @@
 # ruff: noqa: PLC0415
-"""CLI command to rebuild ``signal_index.yaml`` from the batch metadata files."""
+"""CLI command to rebuild the truth indexes from the batch metadata files."""
 
 from __future__ import annotations
 
@@ -12,20 +12,27 @@ import typer
 def reindex_command(
     metadata_dir: Annotated[
         Path,
-        typer.Option("--metadata-dir", help="Directory with batch metadata files and signal_index.yaml."),
+        typer.Option(
+            "--metadata-dir",
+            help="Directory with batch metadata files, signal_index.yaml and glitch_index.yaml.",
+        ),
     ],
 ) -> None:
-    """Rebuild the signal index from the batch metadata files.
+    """Rebuild the signal and glitch indexes from the batch metadata files.
 
-    ``signal_index.yaml`` is a cache of the injections recorded in the
-    ``*.metadata.json`` files, which are the source of truth. Rebuilding it
-    discards whatever the index held and derives it again from those files, so an
-    index that lost entries -- concurrent runs sharing this directory on a
-    filesystem without working ``flock``, or writers on different hosts -- is
+    ``signal_index.yaml`` and ``glitch_index.yaml`` are caches of the injections
+    recorded in the ``*.metadata.json`` files, which are the source of truth.
+    Rebuilding discards whatever an index held and derives it again from those
+    files, so an index that lost entries -- concurrent runs sharing this directory
+    on a filesystem without working ``flock``, or writers on different hosts -- is
     repaired without rerunning any simulation.
 
+    Both are rebuilt together, and a directory whose runs injected no glitches
+    simply gets an empty glitch index; a directory holding no batch metadata files
+    at all is refused, because that means the wrong path was given.
+
     The rebuild takes the same exclusive lock a running batch does, and it
-    re-baselines the digest recorded beside the index, so a directory whose writes
+    re-baselines the digest recorded beside each index, so a directory whose writes
     were being refused as stale accepts them again afterwards.
 
     Stop writers on other hosts first: a rebuild indexes the batch metadata files
@@ -34,13 +41,14 @@ def reindex_command(
     """
     from gwmock.cli.simulate_utils import (
         IndexDigestNotRecordedError,
-        SignalIndexRebuildError,
+        IndexRebuildError,
+        rebuild_glitch_index,
         rebuild_signal_index,
     )
 
     try:
-        rebuilt = rebuild_signal_index(metadata_dir)
-    except (SignalIndexRebuildError, IndexDigestNotRecordedError) as error:
+        rebuilt_indexes = [rebuild_signal_index(metadata_dir), rebuild_glitch_index(metadata_dir)]
+    except (IndexRebuildError, IndexDigestNotRecordedError) as error:
         # Both carry a message written for whoever is holding the terminal -- what stopped, what
         # state that leaves the directory in, and what to do next -- so printing it beats a
         # traceback that buries it. They are not the same outcome: the first means nothing was
@@ -54,6 +62,7 @@ def reindex_command(
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error
 
-    typer.echo(
-        f"Rebuilt {rebuilt.index_file} from {rebuilt.batches} batch metadata file(s): {rebuilt.events} event(s)."
-    )
+    for rebuilt in rebuilt_indexes:
+        typer.echo(
+            f"Rebuilt {rebuilt.index_file} from {rebuilt.batches} batch metadata file(s): {rebuilt.events} event(s)."
+        )

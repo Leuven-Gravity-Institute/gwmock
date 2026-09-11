@@ -558,18 +558,22 @@ class TestWhatAConsumerSees:
     def test_the_schema_version_records_that_the_attribution_changed(self):
         """No field was added or removed, so nothing but the version tells the conventions apart.
 
-        Two changes now ride on this version, and both are invisible in the shape of a record.
-        1.4.0: ``injections`` lists an event against the frame its waveform *starts* in rather than
-        the frame holding its coalescence. 1.5.0: ``injections`` lists every event *present* in the
-        frame, including one generated for an earlier segment, and ``signal_index.yaml`` stores
-        contributions per batch so one event can name the frames of several.
+        Three changes now ride on this version, and the first two are invisible in the shape of a
+        record. 1.4.0: ``injections`` lists an event against the frame its waveform *starts* in
+        rather than the frame holding its coalescence. 1.5.0: ``injections`` lists every event
+        *present* in the frame, including one generated for an earlier segment, and
+        ``signal_index.yaml`` stores contributions per batch so one event can name the frames of
+        several. 1.6.0: ``noise.glitch_injections`` records the per-event glitch truth, which an
+        older record simply lacks -- and lacking the key is not the same fact as having injected no
+        glitches.
 
-        A consumer reading an old record and a new one sees the same shape while ``injections`` means
-        something different in each. The version is the only signal available, so it has to move.
+        A consumer reading an old record and a new one sees the same shape while ``injections``
+        means something different in each. The version is the only signal available, so it has to
+        move.
         """
         from gwmock.cli.utils.metadata import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.5.0"
+        assert SCHEMA_VERSION == "1.6.0"
 
     def test_an_older_record_still_loads(self):
         """Bumping the minor must not orphan archived runs: the major is what gates parsing."""

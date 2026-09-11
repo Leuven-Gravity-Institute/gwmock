@@ -106,7 +106,7 @@ def _writer(
 
     original = module._withdraw_batch
 
-    def _rendezvous_then_withdraw(index: dict, metadata_file_name: str) -> dict:
+    def _rendezvous_then_withdraw(spec: Any, index: dict, metadata_file_name: str) -> dict:
         # A broken barrier is expected under the fix: the other process is blocked on the lock
         # and cannot arrive, which is the whole point -- the critical section is exclusive.
         try:
@@ -114,7 +114,7 @@ def _writer(
             evidence["rendezvous"] = True
         except threading.BrokenBarrierError:
             pass
-        return original(index, metadata_file_name)
+        return original(spec, index, metadata_file_name)
 
     module._withdraw_batch = _rendezvous_then_withdraw
 

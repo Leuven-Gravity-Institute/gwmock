@@ -307,7 +307,8 @@ written by `gwmock merge --force`, which was given no metadata to carry. A
 consumer reads the sidecar whenever there is one — see
 [Reading data](reading-data.md) for how to read the embedded record back.
 
-The embedded copy leaves out the source parameters of the injected signals:
+The embedded copy leaves out the source parameters of the injected signals, and
+the per-event glitch truth beside them:
 
 ```yaml
 orchestration:
@@ -316,9 +317,12 @@ orchestration:
 
 A blind mock data challenge is released as the strain files alone, and those
 parameters are the answer its participants are asked to find, so excluding them
-is the default and including them has to be asked for. Set the flag to `true`
-for data generated for a different purpose — a training or inference set, a
-benchmark, a released "solved" challenge.
+is the default and including them has to be asked for. Which transients a file
+holds — a glitch's time, class and SNR, recorded under `noise.glitch_injections`
+— is as much an answer, for a challenge whose task is to find or veto them, so
+the flag governs both together. Set the flag to `true` for data generated for a
+different purpose — a training or inference set, a benchmark, a released
+"solved" challenge.
 
 It changes the data files only. The metadata sidecar always records the
 injection parameters, whatever the flag says; it is the producer's copy and is
