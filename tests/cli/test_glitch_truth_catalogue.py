@@ -33,7 +33,14 @@ import yaml
 from typer.testing import CliRunner
 
 from gwmock.cli.main import app
-from gwmock.cli.simulate_utils import rebuild_glitch_index, update_glitch_index, update_signal_index
+from gwmock.cli.simulate_utils import (
+    IndexRebuildError,
+    PartialIndexRebuildError,
+    rebuild_glitch_index,
+    rebuild_truth_indexes,
+    update_glitch_index,
+    update_signal_index,
+)
 from gwmock.cli.utils.metadata import SCHEMA_VERSION, MetadataRecord, embeddable_metadata
 from gwmock.cli.utils.signal_lookup import find_glitches, parse_param_filter
 
@@ -382,3 +389,98 @@ def test_a_glitch_row_survives_the_json_normalisation_the_sidecar_applies(tmp_pa
     assert written["gps_start_time"] == O3_EPOCH + 3.0
     assert written["n_samples"] == 8192
     assert written["realized_snr"] == 8.0
+
+
+def test_a_record_only_one_index_can_read_leaves_both_untouched(tmp_path: Path) -> None:
+    """A rebuild of the pair must not replace one index and then refuse the other.
+
+    Validation is per catalogue -- one index reads `signal.injections`, the other
+    `noise.glitch_injections` -- so a record whose shape one accepts and the other refuses
+    passes the first rebuild and stops the second. Rebuilding them in sequence left the
+    signal index replaced and its digest re-recorded, with the glitch index still holding
+    whatever needed repairing and nothing in the output saying so.
+    """
+    _populate(tmp_path)
+    signal_index = tmp_path / "signal_index.yaml"
+    glitch_index = tmp_path / "glitch_index.yaml"
+    before = (signal_index.read_bytes(), glitch_index.read_bytes())
+
+    # Readable JSON, a valid `signal` section, and a `noise.glitch_injections` that is a
+    # string rather than a list -- accepted by the signal rebuild, refused by the glitch one.
+    broken = _batch(3, [], ["noise/noise-3.gwf"])
+    broken["noise"]["glitch_injections"] = "not a list"
+    (tmp_path / "orchestration-3.metadata.json").write_text(json.dumps(broken), encoding="utf-8")
+
+    with pytest.raises(IndexRebuildError, match=re.escape("orchestration-3.metadata.json")):
+        rebuild_truth_indexes(tmp_path)
+
+    # Neither file replaced: the refusal came before anything was published.
+    assert (signal_index.read_bytes(), glitch_index.read_bytes()) == before
+
+
+def test_reindex_refuses_such_a_directory_without_writing(tmp_path: Path) -> None:
+    """The same through the command, which reports it rather than raising a traceback."""
+    _populate(tmp_path)
+    before = (tmp_path / "signal_index.yaml").read_bytes()
+    broken = _batch(3, [], ["noise/noise-3.gwf"])
+    broken["noise"]["glitch_injections"] = "not a list"
+    (tmp_path / "orchestration-3.metadata.json").write_text(json.dumps(broken), encoding="utf-8")
+
+    result = runner.invoke(app, ["reindex", "--metadata-dir", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "orchestration-3.metadata.json" in _plain(result.output)
+    assert (tmp_path / "signal_index.yaml").read_bytes() == before
+
+
+def test_a_write_that_fails_part_way_names_the_index_it_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two files cannot be replaced atomically, so the residual case is reported, not hidden.
+
+    A full disk between the two writes is not preventable here. What is preventable is an
+    operator being told only that the command failed, when in fact one index of the pair is
+    now current and the other is not.
+    """
+    _populate(tmp_path)
+    import gwmock.cli.simulate_utils as module
+
+    real_rebuild = module._rebuild_index
+
+    def _fail_on_the_glitch_index(spec, metadata_directory, encoding="utf-8"):
+        if spec.index_file_name == "glitch_index.yaml":
+            raise OSError("No space left on device")
+        return real_rebuild(spec, metadata_directory, encoding)
+
+    monkeypatch.setattr(module, "_rebuild_index", _fail_on_the_glitch_index)
+
+    with pytest.raises(PartialIndexRebuildError) as raised:
+        module.rebuild_truth_indexes(tmp_path)
+
+    message = str(raised.value)
+    assert "signal_index.yaml" in message
+    assert "glitch_index.yaml" in message
+    assert "No space left on device" in message
+    # The indexes that were replaced are reported as data, not only inside the message, so a
+    # caller can act on them.
+    assert [result.index_file.name for result in raised.value.rebuilt] == ["signal_index.yaml"]
+
+    result = runner.invoke(app, ["reindex", "--metadata-dir", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "signal_index.yaml" in _plain(result.output)
+
+
+def test_rebuild_truth_indexes_rebuilds_both_on_the_happy_path(tmp_path: Path) -> None:
+    """The pre-validation pass must not change what a successful rebuild produces."""
+    _populate(tmp_path)
+    incremental = {
+        name: yaml.safe_load((tmp_path / name).read_text()) for name in ("signal_index.yaml", "glitch_index.yaml")
+    }
+    for name in incremental:
+        (tmp_path / name).unlink()
+
+    rebuilt = rebuild_truth_indexes(tmp_path)
+
+    assert [result.index_file.name for result in rebuilt] == ["signal_index.yaml", "glitch_index.yaml"]
+    for name, expected in incremental.items():
+        assert yaml.safe_load((tmp_path / name).read_text()) == expected

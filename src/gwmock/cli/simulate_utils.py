@@ -51,7 +51,7 @@ from gwmock.cli.utils.simulation_plan import (
     create_batch_metadata,
 )
 from gwmock.cli.utils.template import expand_template_variables
-from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, IndexSpec
+from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, TRUTH_INDEXES, IndexSpec
 from gwmock.cli.utils.utils import handle_signal
 from gwmock.simulator.base import Simulator
 
@@ -559,6 +559,27 @@ class IndexRebuildError(RuntimeError):
 #: The name this error carried while the signal index was the only one. Kept because it is caught
 #: by name outside this module.
 SignalIndexRebuildError = IndexRebuildError
+
+
+class PartialIndexRebuildError(RuntimeError):
+    """Some truth indexes were rebuilt and at least one was not.
+
+    A run writes one index per catalogue, and two files cannot be replaced as a single atomic
+    act. The failure that *can* be removed is removed -- see :func:`rebuild_truth_indexes`,
+    which validates every index's sources before publishing any of them -- so what reaches this
+    is a write that failed part-way: a full disk, a revoked permission. Raised rather than
+    letting the original error through unqualified, because "the command failed" and "the
+    command failed after replacing one of the two indexes, and re-recording its digest" call for
+    different next steps.
+
+    Attributes:
+        rebuilt: The indexes that were replaced before the failure, in the order they were.
+    """
+
+    def __init__(self, message: str, *, rebuilt: list[RebuiltIndex]) -> None:
+        """Record which indexes had already been replaced when the rebuild failed."""
+        super().__init__(message)
+        self.rebuilt = rebuilt
 
 
 class IndexDigestNotRecordedError(RuntimeError):
@@ -1592,6 +1613,72 @@ def rebuild_glitch_index(metadata_directory: Path, encoding: str = "utf-8") -> R
         The index written, and how much went into it.
     """
     return _rebuild_index(GLITCH_INDEX, metadata_directory, encoding)
+
+
+def rebuild_truth_indexes(metadata_directory: Path, encoding: str = "utf-8") -> list[RebuiltIndex]:
+    """Rebuild every truth index from the batch metadata files, discarding what they held.
+
+    One index per catalogue -- signals and glitches -- so this replaces two files, and two
+    files cannot be replaced as a single atomic act. Rebuilding them one after the other
+    naively means a failure on the second leaves the pair half rebuilt, with the first
+    index replaced, its digest re-recorded, and a message that says only that the command
+    failed.
+
+    So the failure that *can* be avoided is avoided. Every index's sources are derived
+    first, writing nothing, and a directory that cannot produce all of them is refused
+    before any of them is touched. That covers the case a pair is actually exposed to:
+    validation is per catalogue -- one index reads ``signal.injections`` and the other
+    ``noise.glitch_injections`` -- so a record whose shape one accepts and the other
+    refuses would otherwise pass the first rebuild and stop the second.
+
+    The pre-pass is an extra read, not a substitute for the authoritative one. Each
+    rebuild still scans the metadata files inside its own lock, which is load-bearing:
+    a batch writes its metadata file and only then takes the lock to add its index entry,
+    so a scan taken outside would miss a batch mid-update.
+
+    What remains is a write that fails part-way -- a full disk, a revoked permission --
+    which is reported rather than hidden: :class:`PartialIndexRebuildError` names the
+    indexes that were rebuilt, so an operator knows which half of the pair is current.
+
+    Args:
+        metadata_directory: Directory holding ``*.metadata.json`` and the indexes.
+        encoding: File encoding for reading the metadata files.
+
+    Returns:
+        One result per index, in the order they were rebuilt.
+
+    Raises:
+        IndexRebuildError: If the directory holds no batch metadata files, or one of them
+            cannot be read, parsed, or decoded into the shape any index reads. Nothing has
+            been written.
+        PartialIndexRebuildError: If an index was written and a later one could not be.
+        IndexDigestNotRecordedError: If the first index was written but its digest could
+            not be recorded.
+        OSError: If the first index cannot be written.
+    """
+    for spec in TRUTH_INDEXES:
+        # Read-only: builds the mapping each index would hold and throws it away. The point
+        # is the validation it performs on the way.
+        _index_from_batch_metadata(spec, metadata_directory, encoding)
+
+    rebuilt: list[RebuiltIndex] = []
+    for spec in TRUTH_INDEXES:
+        try:
+            rebuilt.append(_rebuild_index(spec, metadata_directory, encoding))
+        except (IndexRebuildError, IndexDigestNotRecordedError, OSError, yaml.YAMLError) as error:
+            if not rebuilt:
+                raise
+            replaced = ", ".join(str(result.index_file) for result in rebuilt)
+            remaining = ", ".join(other.index_file_name for other in TRUTH_INDEXES[TRUTH_INDEXES.index(spec) :])
+            raise PartialIndexRebuildError(
+                f"Rebuilt {replaced}, then could not rebuild {spec.index_file_name}: {error} "
+                f"The indexes named first are current and their digests are recorded; "
+                f"{remaining} still hold whatever they held before, which may be what needed "
+                f"repairing. Fix the cause and run the command again -- a rebuild is idempotent, "
+                f"so repeating it on the ones already done costs nothing.",
+                rebuilt=rebuilt,
+            ) from error
+    return rebuilt
 
 
 def _rebuild_index(spec: IndexSpec, metadata_directory: Path, encoding: str = "utf-8") -> RebuiltIndex:

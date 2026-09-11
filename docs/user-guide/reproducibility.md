@@ -251,13 +251,21 @@ batch wrote — so either index can always be derived again from them:
 gwmock reindex --metadata-dir metadata/
 ```
 
-One command rebuilds both. Reach for it when an id fast path disagrees with the
-frames: `find-signal --id` or `find-glitch --id` reports nothing (or too little)
-for an event whose samples are in the data, or a run refuses to write the index
-because it "is not the one last committed". Both are symptoms of a lost or
-hand-edited index, and neither needs the simulation rerunning. A directory whose
-runs injected no glitches rebuilds to an empty glitch index; a directory holding
-no batch metadata files at all is refused, because that means the wrong path.
+One command rebuilds both, and neither index is replaced until the sources of
+both have been checked — a metadata file that one index can read and the other
+cannot stops the command with both files untouched rather than half way through.
+A write that fails part-way, such as a full disk, cannot be made atomic across
+two files; it is reported naming the index that was replaced, so it is clear
+which half of the pair is current. Re-running after fixing the cause is safe: a
+rebuild is idempotent.
+
+Reach for it when an id fast path disagrees with the frames: `find-signal --id`
+or `find-glitch --id` reports nothing (or too little) for an event whose samples
+are in the data, or a run refuses to write the index because it "is not the one
+last committed". Both are symptoms of a lost or hand-edited index, and neither
+needs the simulation rerunning. A directory whose runs injected no glitches
+rebuilds to an empty glitch index; a directory holding no batch metadata files
+at all is refused, because that means the wrong path.
 
 Updates to the index are serialised by an exclusive lock on a sidecar file, so
 concurrent runs sharing one metadata directory on one host do not overwrite each

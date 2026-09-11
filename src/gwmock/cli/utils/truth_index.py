@@ -99,3 +99,9 @@ GLITCH_INDEX = IndexSpec(
     time_key="gps_start_time",
     parameters_key=None,
 )
+
+
+#: Every truth index a run writes, in the order a rebuild visits them. Iterated rather
+#: than named one by one so a third catalogue cannot be added to one of the two places
+#: that have to know about all of them.
+TRUTH_INDEXES = (SIGNAL_INDEX, GLITCH_INDEX)

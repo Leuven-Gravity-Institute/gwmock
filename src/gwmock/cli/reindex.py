@@ -31,6 +31,12 @@ def reindex_command(
     simply gets an empty glitch index; a directory holding no batch metadata files
     at all is refused, because that means the wrong path was given.
 
+    Neither index is replaced until the sources of both have been checked, so a
+    metadata file that one index can read and the other cannot stops the command
+    with both files untouched rather than half way through. A write that fails
+    part-way -- a full disk, say -- cannot be made atomic across two files, and is
+    reported naming the index that was replaced.
+
     The rebuild takes the same exclusive lock a running batch does, and it
     re-baselines the digest recorded beside each index, so a directory whose writes
     were being refused as stale accepts them again afterwards.
@@ -42,18 +48,19 @@ def reindex_command(
     from gwmock.cli.simulate_utils import (
         IndexDigestNotRecordedError,
         IndexRebuildError,
-        rebuild_glitch_index,
-        rebuild_signal_index,
+        PartialIndexRebuildError,
+        rebuild_truth_indexes,
     )
 
     try:
-        rebuilt_indexes = [rebuild_signal_index(metadata_dir), rebuild_glitch_index(metadata_dir)]
-    except (IndexRebuildError, IndexDigestNotRecordedError) as error:
-        # Both carry a message written for whoever is holding the terminal -- what stopped, what
+        rebuilt_indexes = rebuild_truth_indexes(metadata_dir)
+    except (IndexRebuildError, IndexDigestNotRecordedError, PartialIndexRebuildError) as error:
+        # Each carries a message written for whoever is holding the terminal -- what stopped, what
         # state that leaves the directory in, and what to do next -- so printing it beats a
         # traceback that buries it. They are not the same outcome: the first means nothing was
-        # written, the second that the index is committed and correct while the sidecar is behind
-        # it. Each message says which, and both need the operator, so both exit non-zero.
+        # written, the second that an index is committed and correct while its sidecar is behind
+        # it, and the third that one index of the pair was replaced and another was not. Each
+        # message says which, and all need the operator, so all exit non-zero.
         #
         # `OSError` is deliberately not caught, though `rebuild_signal_index` documents raising it
         # too. A full disk or an unwritable directory has no repair this command can prescribe, and
