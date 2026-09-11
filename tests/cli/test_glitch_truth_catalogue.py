@@ -23,6 +23,7 @@ record in the batch metadata, the ``glitch_index.yaml`` cache over it, the looku
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,28 @@ pytestmark = pytest.mark.unit
 runner = CliRunner()
 
 O3_EPOCH = 1256655618.0
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_BOX = re.compile(r"[\u2500-\u257f]")
+
+
+def _plain(output: str) -> str:
+    """Flatten a Rich-rendered CLI message into one unstyled, unwrapped line.
+
+    A plain ``"Provide --id" in result.output`` passed on a developer machine and failed
+    on every CI job. The cause is not the wording: Rich highlights an option name inside
+    the sentence, so with colour enabled -- which a CI runner has and an ordinary local
+    run does not -- the rendered bytes are
+    ``Provide \x1b[1;36m-\x1b[0m\x1b[1;36m-id\x1b[0m and/or ...`` and the phrase the test
+    looked for does not occur in them at all. Reproduced locally with ``FORCE_COLOR=1``.
+
+    Stripping the styling and the box drawing, then collapsing whitespace, also removes
+    the second, latent version of the same trap: the panel's width follows the terminal,
+    so a longer message word-wraps at a different point in each environment. Matching a
+    fragment short enough to survive both would stop discriminating between this refusal
+    and any other non-zero exit, which is what the assertion is for.
+    """
+    return " ".join(_BOX.sub(" ", _ANSI.sub("", output)).split())
 
 
 def _glitch(event_id: str, gps_start_time: float, **overrides: Any) -> dict[str, Any]:
@@ -209,8 +232,9 @@ def test_reindex_rebuilds_both_indexes(tmp_path: Path) -> None:
     result = runner.invoke(app, ["reindex", "--metadata-dir", str(tmp_path)])
 
     assert result.exit_code == 0, result.output
-    assert "signal_index.yaml" in result.output
-    assert "glitch_index.yaml" in result.output
+    reported = _plain(result.output)
+    assert "signal_index.yaml" in reported
+    assert "glitch_index.yaml" in reported
     assert set(yaml.safe_load((tmp_path / "glitch_index.yaml").read_text())) == {"H1-0-0", "L1-0-0", "H1-0-1"}
     assert set(yaml.safe_load((tmp_path / "signal_index.yaml").read_text())) == {"0", "1", "2"}
 
@@ -232,11 +256,12 @@ def test_find_glitch_command_names_the_start_time(tmp_path: Path) -> None:
     result = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path), "--id", "H1-0-1"])
 
     assert result.exit_code == 0, result.output
-    assert "H1-0-1" in result.output
-    assert "noise/noise-1.gwf" in result.output
+    reported = _plain(result.output)
+    assert "H1-0-1" in reported
+    assert "noise/noise-1.gwf" in reported
     # "starts at", not a bare "gps=", which reads as the peak -- the reading that cuts the window
     # in the wrong place and loses the glitch.
-    assert "starts at" in result.output
+    assert "waveform starts at" in reported
 
 
 def test_find_glitch_command_filters_by_column(tmp_path: Path) -> None:
@@ -251,14 +276,14 @@ def test_find_glitch_command_filters_by_column(tmp_path: Path) -> None:
 
     missing = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path), "--param", "glitch_class==Whistle"])
     assert missing.exit_code == 1
-    assert "No matching glitches found." in missing.output
+    assert "No matching glitches found." in _plain(missing.output)
 
 
 def test_find_glitch_requires_something_to_look_for(tmp_path: Path) -> None:
     """Neither an id nor a filter would match every glitch in the directory by accident."""
     result = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path)])
     assert result.exit_code != 0
-    assert "Provide --id" in result.output
+    assert "Provide --id and/or at least one --param filter." in _plain(result.output)
 
 
 def test_the_record_carries_the_catalogue_and_says_so_in_its_version(tmp_path: Path) -> None:
