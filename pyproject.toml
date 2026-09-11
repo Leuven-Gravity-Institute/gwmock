@@ -105,7 +105,7 @@ dev = [
   "pytest-github-actions-annotate-failures>=0.4.2",
   "mutmut>=3.7.0",
 ]
-docs = ["zensical>=0.0.59", "mkdocstrings-python>=2.0.8"]
+docs = ["zensical>=0.0.60", "mkdocstrings-python>=2.0.8"]
 build = ["hatch>=1.18.0"]
 release = ["git-cliff>=2.13.1"]
 
