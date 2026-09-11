@@ -214,6 +214,13 @@ def find_events(
                 metadata = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
+        if not isinstance(metadata, dict):
+            # Parsing as JSON is not the same as being a batch metadata record: `[]`, `"x"`
+            # and `null` all parse, and `.get` on any of them raises out of the loop, so one
+            # such file made every event in the directory unfindable -- through both lookups,
+            # since they share this one. The round of hardening before this guarded the
+            # section and the item shapes and stopped short of the document itself.
+            continue
         injections = spec.events(metadata)
         if not isinstance(injections, list) or not injections:
             # Skipped rather than refused, and that asymmetry with the rebuild is deliberate:

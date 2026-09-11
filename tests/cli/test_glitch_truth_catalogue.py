@@ -558,6 +558,12 @@ def test_a_malformed_record_does_not_stop_the_other_batches_answering(tmp_path: 
         ("orchestration-91.metadata.json", {"noise": {"glitch_injections": ["not a mapping"]}, "outputs": []}),
         ("orchestration-92.metadata.json", {"noise": {"glitch_injections": [_glitch("X1-0-0", 1.0)]}, "outputs": "x"}),
         ("orchestration-93.metadata.json", {"noise": "not a mapping", "outputs": []}),
+        # The document itself, not just its sections: each of these parses as JSON and then
+        # raises on `.get`. Guarding the sections and the items stopped one level short.
+        ("orchestration-94.metadata.json", []),
+        ("orchestration-95.metadata.json", "a string"),
+        ("orchestration-96.metadata.json", None),
+        ("orchestration-97.metadata.json", 7),
     ):
         (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
 
@@ -604,3 +610,39 @@ def test_an_output_with_a_null_path_is_not_reported_as_a_frame(tmp_path: Path) -
     result = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path), "--param", "detector==H1"])
     assert result.exit_code == 0, result.output
     assert "(no frame recorded)" in _plain(result.output)
+
+
+def test_the_signal_lookup_survives_the_same_malformed_records(tmp_path: Path) -> None:
+    """Both lookups share one implementation, so the guard has to hold for signals too.
+
+    Worth asserting separately rather than trusting the shared code path: the reason this
+    matters is that a single unreadable file used to make *every* event in the directory
+    unfindable, and `find-signal` is the older, more used of the two commands.
+    """
+    _populate(tmp_path)
+    for name, payload in (
+        ("orchestration-94.metadata.json", []),
+        ("orchestration-95.metadata.json", "a string"),
+        ("orchestration-96.metadata.json", None),
+    ):
+        (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    from gwmock.cli.utils.signal_lookup import find_signals
+
+    found = find_signals(tmp_path, param_filters=[parse_param_filter("coa_time>=0")])
+
+    assert sorted(match["event_id"] for match in found) == [0, 1, 2]
+
+
+def test_the_documented_schema_version_matches_the_code(tmp_path: Path) -> None:
+    """The user guide advertises the schema version, so it must not lag behind the bump.
+
+    A consumer reads the documented version to decide whether it can parse a record; the
+    guide said 1.5.0 and its example record carried `"schema_version": "1.5.0"` after the
+    code had moved to 1.6.0.
+    """
+    guide = Path(__file__).resolve().parents[2] / "docs" / "user-guide" / "reproducibility.md"
+    text = guide.read_text(encoding="utf-8")
+
+    assert f"uses schema version `{SCHEMA_VERSION}`" in text
+    assert f'"schema_version": "{SCHEMA_VERSION}"' in text

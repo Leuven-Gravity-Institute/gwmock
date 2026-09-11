@@ -5,12 +5,12 @@
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.5.0`.
+Each record is validated at write time and uses schema version `1.6.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.5.0",
+    "schema_version": "1.6.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -45,6 +45,24 @@ Consumers must reject unknown major versions.
     "noise": {
         "backend": "module:Class",
         "psd": "ET_10_full_cryo_psd",
+        "glitch_injections": [
+            {
+                "event_id": "ET1_SARD-0-3",
+                "detector": "ET1_SARD",
+                "model_index": 0,
+                "kind": "deepextractor",
+                "glitch_class": "Koi_Fish",
+                "gps_start_time": 1577491261.5,
+                "gps_peak_time": 1577491262.47,
+                "duration_seconds": 2.0,
+                "n_samples": 8192,
+                "segment_index": 10,
+                "sample_index": 1638,
+                "target_snr": 8.0,
+                "realized_snr": 8.0,
+                "amplitude": 1.0
+            }
+        ],
         "metadata": {}
     },
     "outputs": [
