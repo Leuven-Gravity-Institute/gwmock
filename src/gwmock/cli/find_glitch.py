@@ -42,7 +42,13 @@ def find_glitch_command(
     """
     from gwmock.cli.utils.signal_lookup import find_glitches, parse_param_filter
 
-    filters = [parse_param_filter(spec) for spec in (param or [])]
+    try:
+        filters = [parse_param_filter(spec) for spec in (param or [])]
+    except ValueError as error:
+        # A malformed filter is a mistake in the invocation, so it gets the usage error the
+        # rest of the command's input mistakes get. Left to propagate, `parse_param_filter`'s
+        # `ValueError` reached the user as a traceback.
+        raise typer.BadParameter(str(error), param_hint="--param") from error
     if event_id is None and not filters:
         raise typer.BadParameter("Provide --id and/or at least one --param filter.")
 

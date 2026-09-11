@@ -568,3 +568,39 @@ def test_a_malformed_record_does_not_stop_the_other_batches_answering(tmp_path: 
     by_x1 = find_glitches(tmp_path, param_filters=[parse_param_filter("detector==X1")])
     assert [match["event_id"] for match in by_x1] == ["X1-0-0"]
     assert by_x1[0]["frames"] == []
+
+
+def test_a_malformed_param_filter_is_a_usage_error_not_a_traceback(tmp_path: Path) -> None:
+    """`parse_param_filter` raises ValueError, which reached the user as a traceback."""
+    _populate(tmp_path)
+
+    result = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path), "--param", "glitch_class"])
+
+    assert result.exit_code != 0
+    # A usage error, the way every other input mistake in this command is reported.
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    reported = _plain(result.output)
+    assert "--param" in reported
+    assert "Invalid parameter filter" in reported
+
+
+def test_an_output_with_a_null_path_is_not_reported_as_a_frame(tmp_path: Path) -> None:
+    """A present-but-null path put `None` into `frames`, which the command could not print.
+
+    `"path": null` satisfies `"path" in output`, so the row was taken and the command handed
+    `None` to `", ".join(...)`. The rebuild already carries a note about the same shape
+    putting `frames: [null]` into an index; this is the read side of it.
+    """
+    batch = _batch(0, [_glitch("H1-0-0", O3_EPOCH + 1.0)], [])
+    batch["outputs"] = [{"kind": "noise", "path": None}, {"kind": "noise"}]
+    (tmp_path / "orchestration-0.metadata.json").write_text(json.dumps(batch), encoding="utf-8")
+
+    found = find_glitches(tmp_path, param_filters=[parse_param_filter("detector==H1")])
+
+    assert [match["event_id"] for match in found] == ["H1-0-0"]
+    assert found[0]["frames"] == []
+
+    # And the command prints it rather than raising on the join.
+    result = runner.invoke(app, ["find-glitch", "--metadata-dir", str(tmp_path), "--param", "detector==H1"])
+    assert result.exit_code == 0, result.output
+    assert "(no frame recorded)" in _plain(result.output)

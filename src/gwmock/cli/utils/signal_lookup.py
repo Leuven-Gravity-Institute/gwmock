@@ -226,7 +226,14 @@ def find_events(
         frames = [
             output["path"]
             for output in (outputs if isinstance(outputs, list) else [])
-            if isinstance(output, dict) and output.get("kind") == spec.output_kind and "path" in output
+            # The path has to be a *string*, not merely present. An explicit `"path": null`
+            # satisfies `"path" in output`, so it put `None` into `frames`, which the command
+            # then handed to `", ".join(...)` for a `TypeError`. The rebuild carries a note
+            # about the same shape putting `frames: [null]` into an index -- same trap, and
+            # this is the read side of it.
+            if isinstance(output, dict)
+            and output.get("kind") == spec.output_kind
+            and isinstance(output.get("path"), str)
         ]
         for injection in injections:
             if not isinstance(injection, dict):
