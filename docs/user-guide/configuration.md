@@ -379,6 +379,86 @@ each waveform model on first use — measured on a single 8-second segment,
 `IMRPhenomXPHM` ~72 s. The cost is paid once per process, so it amortises over a
 long run.
 
+### Choosing the projection implementation
+
+`signal.projection-backend` selects **which implementation projects** the
+polarizations onto the detectors, independently of which library generated them:
+
+| Value     | Behaviour                                                              |
+| --------- | ---------------------------------------------------------------------- |
+| _omitted_ | Leave the choice to the backend. **This is the default.**              |
+| `numpy`   | Project on the host, asking Astropy for sidereal time at every sample. |
+| `jax`     | The same algorithm, compiled into one fused kernel.                    |
+
+```yaml
+orchestration:
+    signal:
+        projection-backend: jax
+        earth-rotation: true
+```
+
+**Omitting the key is not the same as writing `numpy`.** Omitted, each
+gwmock-signal backend keeps its own choice — the host path for compact binaries,
+so a CBC run behaves exactly as it did before this key existed, and the _device_
+path for continuous waves, where projection is 99% of a segment. Writing `numpy`
+explicitly overrides that, which for a continuous-wave run means giving up the
+faster path. Set it only when you mean to choose.
+
+**What it buys.** Projection is where a long segment spends its time. Measured
+at 1024 s and 8192 Hz across five ET detectors, a single-event `gwmock simulate`
+run cost 620.3 CPU s, of which the projection alone was 604.3 s — **97%** — and
+the same projection on the device path took 224.5 s. That is **2.7x off the
+generation cost of the whole run**, which for a large dataset is most of the
+compute bill. A short segment will show much less, because the one-off
+compilation is then a larger share of the total.
+
+**It is CPU or GPU depending on the JAX you installed**, exactly as for
+[`execution`](#choosing-the-execution-mode):
+
+- `pip install 'gwmock[jax]'` — the device path, on the CPU. This is where the
+  2.7x above was measured.
+- `pip install 'gwmock[cuda]'` — on a GPU when a compatible device and driver
+  are present, and silently on the CPU when they are not.
+
+Unlike `execution: batched`, this needs **only JAX** — not `ripple`. The two
+keys are unrelated: `batched` chooses the batched _waveform_ entry point (which
+projects on device unconditionally, and therefore refuses this key), while this
+one changes nothing about how the waveforms are generated.
+
+**It is not a different answer.** The two implementations agree to ~1e-10 of
+peak — 2.5e-10 worst case across five ET detectors at the configuration above,
+and 8.0e-13 through a 32 s segment at 256 Hz. The difference is floating-point
+reassociation, so this is a substitution rather than a change of model.
+
+Three things are refused when the configuration is loaded rather than part-way
+through a run:
+
+- `projection-backend: jax` with `earth-rotation: false`. The constant-pattern
+  branch is a single frequency-domain phase shift with no device implementation
+  — and it is already the cheap branch, being the one that skips the resampler.
+- `projection-backend: jax` without JAX installed, or with JAX unable to run in
+  64-bit mode. In 32-bit mode the GPS times and sidereal angles lose the
+  precision the delays depend on, and the projection is wrong by of order a
+  percent of peak while still looking like strain, so it refuses rather than
+  degrading. gwmock turns 64-bit mode on for you; it only fails if something in
+  the environment forces it off.
+- A `globals.simulator-arguments.duration` longer than 86400 s. The device path
+  extrapolates sidereal time linearly from one Astropy anchor and is validated
+  to a day. A run of any total length is unaffected — each segment re-anchors —
+  so the fix is shorter segments. Note this check is the segment, not the whole
+  condition: a compact binary's waveform buffer starts well before its
+  coalescence and can be longer than the segment it lands in, and that case is
+  still reported by gwmock-signal at generation time.
+
+One more is refused a moment later, when the signal backend is built: a backend
+whose constructor does not **name** a `projection_backend` parameter. That
+covers a gwmock-signal older than the release which added it, and it covers a
+custom backend of your own — including one whose constructor ends in `**kwargs`.
+Taking arbitrary keywords is not evidence of using them: such a backend would
+accept `projection-backend: jax`, discard it, and produce host output from a run
+whose configuration and metadata both record `jax`. Naming the parameter is how
+a backend says it honours the setting, so that is what is required.
+
 ### Choosing the execution mode
 
 `signal.execution` selects **how** a segment's events are computed,

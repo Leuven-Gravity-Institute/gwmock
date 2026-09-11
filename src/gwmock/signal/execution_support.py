@@ -56,6 +56,11 @@ _BATCHED_REASONS: dict[str, str] = {
         "these are fixed parameters for the simulator's simulate() call, which the batched path "
         "does not use; note they are also ignored by the per-event path for CBC sources"
     ),
+    "projection_backend": (
+        "the batched entry point projects on device unconditionally, so there is no host/device "
+        "choice left for it to make; the setting exists for the per-event path, where the "
+        "projection would otherwise run on the host"
+    ),
     "waveform_options": (
         "the batched entry point has no equivalent parameter, so LAL dictionary options such as "
         "ModeArray cannot be applied"
