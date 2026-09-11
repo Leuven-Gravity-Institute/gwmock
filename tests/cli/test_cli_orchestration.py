@@ -335,7 +335,7 @@ def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path
     assert (tmp_path / "output" / "signal" / "signal-1.gwf").exists()
     _assert_noise_outputs_exist(tmp_path / "output" / "noise")
     metadata = yaml.safe_load((tmp_path / "metadata" / "orchestration-0.metadata.json").read_text())
-    assert metadata["schema_version"] == "1.5.0"
+    assert metadata["schema_version"] == "1.6.0"
     assert metadata["config"]["orchestration"]["population"]["backend"] == FAKE_POPULATION_BACKEND
     assert metadata["config"]["orchestration"]["signal"]["backend"] == FAKE_SIGNAL_BACKEND
     assert metadata["config"]["orchestration"]["noise"]["backend"] == FAKE_NOISE_BACKEND

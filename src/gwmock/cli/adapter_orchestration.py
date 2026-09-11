@@ -150,6 +150,10 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         self._active_overwrite = False
         self._noise_stream: Iterator[dict[str, Any]] | None = None
         self._noise_stream_position = 0
+        # The glitch truth rows for the chunk this batch writes, read off the injector when
+        # the chunk is generated. Per-batch and derived, like `_batch_injections`, so it is
+        # not simulator state: a resumed run regenerates the chunk and reads them again.
+        self._batch_glitches: list[dict[str, Any]] = []
         # Source parameters of the signals injected into the current batch, in
         # injection order: [{"event_id": <population index>, "parameters": {...}}].
         # An event is attributed to the batch whose segment its *waveform starts* in,
@@ -530,6 +534,19 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     "arguments": self.noise_arguments,
                     "stream_seed": self._noise_stream_seed(),
                     "state_model": "gwmock consumes one shared gwmock_noise.open_stream() iterator across batches.",
+                    # The per-event glitch truth for this batch, and what its columns mean.
+                    # `glitches` under `arguments` above is the configuration -- which models at
+                    # which rates -- and this is what those models actually injected.
+                    #
+                    # Spelled `glitch_injections` here and in `noise.glitch_injections`, the same
+                    # name at both depths, because that is the name a released file's sanitiser
+                    # strips: this blob is copied verbatim into the record, so a second spelling
+                    # would be a second copy of the truth that the strip did not reach -- which is
+                    # exactly how the signal parameters once leaked.
+                    "glitch_injections": list(self._batch_glitches),
+                    "glitch_catalogue": (
+                        None if self.noise_adapter is None else self.noise_adapter.glitch_catalogue_description()
+                    ),
                 },
                 "segment_seeds": self.segment_seeds(),
             },
@@ -1333,6 +1350,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         self.counter = cast(int, self.counter) + 1
         self.start_time += self.duration
         self._pending_noise_chunk = None
+        # Cleared with the chunk they describe, so a batch that writes no noise cannot record the
+        # previous batch's glitches as its own.
+        self._batch_glitches = []
 
     def signal_output_directory(self) -> Path:
         """Return the active signal output directory."""
@@ -1446,7 +1466,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     "Use overwrite=True to overwrite them."
                 )
 
-        chunk = self._next_noise_chunk()
+        # The batch's epoch reaches the injector before the chunk is drawn, so each glitch is
+        # recorded against the GPS time of the frame it lands in rather than a time the injector
+        # accumulated for itself. It has to be after `_ensure_noise_stream` has realigned the
+        # stream -- a resumed run replays the chunks before this one, and each replay advances the
+        # injector's epoch -- which is why `_next_noise_chunk` takes it rather than this function
+        # setting it here.
+        chunk = self._next_noise_chunk(gps_start=gps_start)
         output_paths_by_detector: dict[str, Path] = {}
 
         for i, detector in enumerate(noise_detectors):
@@ -1590,19 +1616,35 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         configured_path = Path(configured_directory)
         return configured_path if configured_path.is_absolute() else base_output_directory / configured_path
 
-    def _next_noise_chunk(self) -> dict[str, Any]:
-        """Return the chunk for the current batch, reusing it across retries."""
+    def _next_noise_chunk(self, gps_start: float | None = None) -> dict[str, Any]:
+        """Return the chunk for the current batch, reusing it across retries.
+
+        Args:
+            gps_start: GPS time of the chunk's first sample, handed to the glitch injector so
+                its truth catalogue is timed against the frame this batch writes. Passed here
+                rather than set by the caller because the stream may first be realigned to this
+                batch by replaying earlier chunks, each of which advances the injector's own
+                epoch. Omitted by callers that only need the samples.
+
+        Returns:
+            The chunk, one array per detector.
+        """
         if self._pending_noise_chunk is not None:
+            # Already drawn for this batch, so its rows are already recorded and its epoch was
+            # applied when it was drawn.
             return self._pending_noise_chunk
 
         self._ensure_noise_stream()
         if self._noise_stream is None:
             raise RuntimeError("Noise stream was not initialized.")
+        if gps_start is not None and self.noise_adapter is not None:
+            self.noise_adapter.set_segment_gps_start(gps_start)
         try:
             self._pending_noise_chunk = next(self._noise_stream)
         except StopIteration as error:
             raise ValueError("Noise stream ended before all orchestration batches were generated.") from error
         self._noise_stream_position += 1
+        self._batch_glitches = [] if self.noise_adapter is None else self.noise_adapter.segment_glitch_events()
         return self._pending_noise_chunk
 
     def _ensure_noise_stream(self) -> None:

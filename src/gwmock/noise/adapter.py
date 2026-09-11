@@ -315,6 +315,10 @@ class NoiseAdapter:
         # config-shaped state (e.g. a pinned dataset revision) can be reported
         # for replayable metadata. None until a stream with glitches is opened.
         self._glitch_models: list[Any] | None = None
+        # The injector wrapping the active stream, retained so each batch can read
+        # the truth catalogue of the chunk it is about to write and stamp it with
+        # that chunk's GPS epoch. None until a stream with glitches is opened.
+        self._glitch_injector: Any | None = None
         # Memoized resolved_config() payload for the active stream, so per-batch
         # metadata writes across one open_stream() reuse a single resolution
         # (and one pinned revision) instead of re-resolving every batch. Reset
@@ -822,6 +826,7 @@ class NoiseAdapter:
         # never reports stale models when this adapter is reused for a later
         # stream that has no glitches.
         self._glitch_models = None
+        self._glitch_injector = None
         self._resolved_config_cache = None
 
         normalized_psd_files = _coerce_path_mapping(psd_files)
@@ -883,6 +888,7 @@ class NoiseAdapter:
             glitch_models = normalize_glitch_models(resolved_glitches)
             self._glitch_models = glitch_models
             simulator = InjectGlitches(simulator, glitch_models)
+            self._glitch_injector = simulator
 
         return simulator
 
@@ -907,6 +913,69 @@ class NoiseAdapter:
             model.resolve()
         self._resolved_config_cache = {"glitches": [model.serialize() for model in self._glitch_models]}
         return self._resolved_config_cache
+
+    def set_segment_gps_start(self, gps_start: float) -> None:
+        """Tell the active glitch injector where the next chunk sits in GPS time.
+
+        gwmock owns the epoch of each batch -- it is what the frame's name, its ``t0``
+        and its metadata record carry -- so the injector is handed that number rather
+        than left to accumulate its own. Threading the one value through is what keeps
+        a glitch's recorded time and the frame it was written into describing the same
+        instant, including for a resumed run whose batches are not generated in order.
+
+        A no-op when the active stream has no glitches, and when the installed
+        ``gwmock-noise`` predates the truth catalogue: the epoch is only consumed by the
+        catalogue, so there is nothing to set and nothing to warn about here.
+
+        Args:
+            gps_start: GPS time of the first sample of the chunk generated next.
+        """
+        if self._glitch_injector is None:
+            return
+        if hasattr(self._glitch_injector, "gps_start"):
+            self._glitch_injector.gps_start = float(gps_start)
+
+    def segment_glitch_events(self) -> list[dict[str, Any]]:
+        """Return the glitches the most recently generated chunk injected.
+
+        Read per batch rather than accumulated here, because the injector already keeps
+        the run's catalogue and a second copy alongside it would be a second thing to
+        keep correct. Each row describes a glitch the last chunk *started*, so a batch's
+        rows are the events attributable to the frame(s) it is about to write.
+
+        Returns:
+            One mapping per injected glitch, in time order. Empty when the active stream
+            has no glitches, when the last chunk fired none, or when the installed
+            ``gwmock-noise`` is too old to report them -- see
+            :meth:`glitch_catalogue_description`, which is what tells the last case apart
+            from the first two.
+        """
+        if self._glitch_injector is None:
+            return []
+        events = getattr(self._glitch_injector, "segment_glitch_events", None)
+        if events is None:
+            return []
+        return [dict(event) for event in events]
+
+    def glitch_catalogue_description(self) -> dict[str, Any] | None:
+        """Return the catalogue's schema version, time convention and column descriptions.
+
+        Recorded beside the rows so a file says what its own columns mean -- in particular
+        which of the two time columns is the waveform's start and which its peak, a
+        distinction no column name carries on its own.
+
+        Returns:
+            The description reported by the active injector, or ``None`` when the stream
+            has no glitches or the installed ``gwmock-noise`` predates the catalogue. A
+            ``None`` here beside an empty row list is how a consumer tells "this run could
+            not record its glitches" from "this run injected none".
+        """
+        if self._glitch_injector is None:
+            return None
+        catalogue = (self._glitch_injector.metadata.get("glitches") or {}).get("catalogue")
+        if catalogue is None:
+            return None
+        return {key: value for key, value in catalogue.items() if key != "events"}
 
 
 class _ChunkNoiseSimulator:

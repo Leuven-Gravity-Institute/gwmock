@@ -35,7 +35,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: was already a list, so its *cardinality* changed without its type: a consumer that sums
 #: ``injections`` across a run to count events will now overcount, and only ``schema_version`` says
 #: so. ``signal_index.yaml`` changed shape in the same release.
-SCHEMA_VERSION = "1.5.0"
+#:
+#: 1.6.0: ``noise.glitch_injections`` records every injected glitch -- its time, detector, class,
+#: target and realized SNR and amplitude -- where a run previously recorded only the glitch
+#: *configuration* and a per-model count. ``glitch_index.yaml`` arrives in the same release. A
+#: record written by an older gwmock has no such key, which is not the same fact as a run that
+#: injected no glitches; only ``schema_version`` tells the two apart.
+SCHEMA_VERSION = "1.6.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 #: The key the source parameters of the injected signals are recorded under. Removed from an embedded
@@ -45,6 +51,17 @@ _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)
 #: removed the documented one would leave two intact, and a test written against the same documented
 #: one would agree with it.
 INJECTION_PARAMETERS_KEY = "injections"
+
+#: The key holding the per-event glitch truth catalogue, dropped from an embedded copy alongside the
+#: signal injections and for the same reason: a glitch's time, class and SNR are answers in a blind
+#: challenge whose task is to find or veto transients, so a released data file must not carry them
+#: unless the run said it is not blind.
+#:
+#: Named apart from the ``glitches`` key carrying the glitch *configuration* -- the models, rates and
+#: target SNRs -- deliberately. That configuration is part of the config an embedded copy already
+#: includes, and stripping every key called ``glitches`` at every depth would have taken it too while
+#: reading as though it removed only the truth.
+GLITCH_INJECTIONS_KEY = "glitch_injections"
 
 #: The key holding the simulator's RNG state, kept for replay. Dropped from an embedded copy at
 #: **every depth**, for the same reason as the injections and then one more.
@@ -119,6 +136,22 @@ class NoiseSection(BaseModel):
 
     backend: str
     psd: str | None = None
+    # Every glitch injected into this batch's noise output(s), in time order:
+    # [{"event_id": str, "detector": str, "gps_start_time": float, ...}]. The counterpart of
+    # `SignalSection.injections` for the other producer, and what makes a glitch frame set scorable
+    # -- a detection-efficiency curve, a classifier's labels and a veto study all need the times and
+    # classes, and none of them can be recovered from the strain once a Gaussian background sits on
+    # top of it.
+    #
+    # A row is written for the batch a glitch *starts* in, so a waveform straddling a segment
+    # boundary appears once, at its true time, rather than in every frame its samples reach. That is
+    # deliberately unlike `SignalSection.injections`, which lists every event *present*: a signal's
+    # parameters describe an event an analyst is looking for in this frame, while a glitch row is the
+    # record of an injection, and counting rows across a run has to give the number injected.
+    #
+    # Empty for a run with no glitches -- and also for one whose installed gwmock-noise is too old to
+    # report them, which `noise.metadata.glitch_catalogue` tells apart.
+    glitch_injections: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -349,7 +382,11 @@ def _without_key(document: Any, name: str) -> Any:
 
 
 def without_injection_parameters(document: Any) -> Any:
-    """Return *document* with every ``injections`` entry removed, at any depth.
+    """Return *document* with the injection truth removed, at any depth.
+
+    Both kinds of it: the signals' source parameters and the glitches' per-event catalogue. Which
+    transients a released file holds is as much an answer to a blind challenge as the parameters of
+    the signals in it, so the two are withheld together and released together.
 
     Depth matters: see :data:`INJECTION_PARAMETERS_KEY`.
 
@@ -357,9 +394,9 @@ def without_injection_parameters(document: Any) -> Any:
         document: The record, or any part of one.
 
     Returns:
-        The same structure without any ``injections`` key.
+        The same structure without either key.
     """
-    return _without_key(document, INJECTION_PARAMETERS_KEY)
+    return _without_key(_without_key(document, INJECTION_PARAMETERS_KEY), GLITCH_INJECTIONS_KEY)
 
 
 def embeddable_metadata(metadata: dict[str, Any], *, include_injection_parameters: bool = False) -> dict[str, Any]:

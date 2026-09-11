@@ -88,6 +88,7 @@ def register_commands() -> None:
     # Fast imports
     from gwmock.cli.batch import batch_command
     from gwmock.cli.config import config_command
+    from gwmock.cli.find_glitch import find_glitch_command
     from gwmock.cli.find_signal import find_signal_command
     from gwmock.cli.merge import merge_command
     from gwmock.cli.reindex import reindex_command
@@ -101,6 +102,7 @@ def register_commands() -> None:
     app.command("validate")(validate_command)
     app.command("batch")(batch_command)
     app.command("find-signal")(find_signal_command)
+    app.command("find-glitch")(find_glitch_command)
     app.command("reindex")(reindex_command)
 
     app.add_typer(repository_app, name="repository", help="Manage Zenodo repositories")

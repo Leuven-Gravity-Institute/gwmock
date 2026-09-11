@@ -5,12 +5,12 @@
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.5.0`.
+Each record is validated at write time and uses schema version `1.6.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.5.0",
+    "schema_version": "1.6.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -45,6 +45,24 @@ Consumers must reject unknown major versions.
     "noise": {
         "backend": "module:Class",
         "psd": "ET_10_full_cryo_psd",
+        "glitch_injections": [
+            {
+                "event_id": "ET1_SARD-0-3",
+                "detector": "ET1_SARD",
+                "model_index": 0,
+                "kind": "deepextractor",
+                "glitch_class": "Koi_Fish",
+                "gps_start_time": 1577491261.5,
+                "gps_peak_time": 1577491262.47,
+                "duration_seconds": 2.0,
+                "n_samples": 8192,
+                "segment_index": 10,
+                "sample_index": 1638,
+                "target_snr": 8.0,
+                "realized_snr": 8.0,
+                "amplitude": 1.0
+            }
+        ],
         "metadata": {}
     },
     "outputs": [
@@ -115,7 +133,8 @@ A copy of the record is written into each HDF5 output as well, at the file root,
 so a data file that reaches a consumer without its sidecar still describes the
 run. It is the same record with three omissions: the file hashes (a file cannot
 carry its own digest), `pre_batch_state` (stored as separate `.npy` files an
-embedded copy could not point at), and `signal.injections` unless the run set
+embedded copy could not point at), and the injection truth -- both
+`signal.injections` and `noise.glitch_injections` -- unless the run set
 `orchestration.include-injection-parameters: true`. The sidecar described above
 is always complete.
 
@@ -195,21 +214,79 @@ gwmock find-signal --metadata-dir metadata/ --id 42 --json
 Filters accept `==`, `!=`, `>`, `<`, `>=`, `<=`; numeric values are compared
 numerically. The command exits non-zero when no signal matches.
 
-## Rebuilding the signal index
+## Finding which frame contains a glitch
 
-`signal_index.yaml` is a cache. The `*.metadata.json` files are the source of
-truth — they record every injection and every frame the batch wrote — so the
-index can always be derived again from them:
+Injected glitches get the same treatment as signals. Each batch's metadata
+records `noise.glitch_injections`, one row per glitch the batch injected, and a
+run writes `glitch_index.yaml` mapping each glitch's `event_id` — such as
+`H1-0-3`, being the detector, the model's position in the configured list, and
+the event's ordinal — to the noise frame for the batch where it **starts**. That
+is not the same as every frame holding its samples: a glitch crossing a segment
+boundary is indexed once, against the frame it begins in, and `duration_seconds`
+on its catalogue row is what tells you how far it spills into the next one.
+
+```bash
+# By id (fast path via glitch_index.yaml)
+gwmock find-glitch --metadata-dir metadata/ --id H1-0-3
+
+# By catalogue column; combine with AND
+gwmock find-glitch --metadata-dir metadata/ --param glitch_class==Koi_Fish --param realized_snr>=8
+
+# Machine-readable
+gwmock find-glitch --metadata-dir metadata/ --id H1-0-3 --json
+```
+
+A glitch row is flat, so a `--param` filter names a catalogue column directly:
+`detector`, `kind`, `glitch_class`, `target_snr`, `realized_snr`, `amplitude`,
+`gps_start_time`, `gps_peak_time`, `duration_seconds`, `n_samples`.
+
+**`gps_start_time` is where the waveform starts, not where it peaks.** The
+producer's Poisson process draws the time of the waveform's first sample, so for
+a 2 s glitch reconstruction the visible transient sits about a second later;
+`gps_peak_time` is that instant. A window cut around the wrong one of the two
+misses the glitch. The row's own schema says which is which, under
+`noise.metadata.glitch_catalogue`.
+
+Unlike a signal, a glitch is recorded against the batch it _starts_ in and no
+other, so its `metadata` list holds one file even when its samples run into the
+next frame — `duration_seconds` is what says how far. Counting rows across a run
+therefore gives the number of glitches injected.
+
+The rows are injection truth, so they are withheld from the metadata embedded
+**inside** a data file exactly as the signal parameters are: which transients a
+released file holds is as much an answer to a blind challenge as the parameters
+of the signals in it. Set `include-injection-parameters: true` for a run whose
+data is not blind. The sidecar metadata always carries them.
+
+A run whose installed `gwmock-noise` predates the truth catalogue records no
+rows and no `glitch_catalogue` description; an absent description beside an
+empty row list is how that is told apart from a run that injected no glitches.
+
+## Rebuilding the signal and glitch indexes
+
+`signal_index.yaml` and `glitch_index.yaml` are caches. The `*.metadata.json`
+files are the source of truth — they record every injection and every frame the
+batch wrote — so either index can always be derived again from them:
 
 ```bash
 gwmock reindex --metadata-dir metadata/
 ```
 
-Reach for it when the id fast path disagrees with the frames: `find-signal --id`
-reports nothing (or too little) for a signal whose samples are in the data, or a
-run refuses to write the index because it "is not the one last committed". Both
-are symptoms of a lost or hand-edited index, and neither needs the simulation
-rerunning.
+One command rebuilds both, and neither index is replaced until the sources of
+both have been checked — a metadata file that one index can read and the other
+cannot stops the command with both files untouched rather than half way through.
+A write that fails part-way, such as a full disk, cannot be made atomic across
+two files; it is reported naming the index that was replaced, so it is clear
+which half of the pair is current. Re-running after fixing the cause is safe: a
+rebuild is idempotent.
+
+Reach for it when an id fast path disagrees with the frames: `find-signal --id`
+or `find-glitch --id` reports nothing (or too little) for an event whose samples
+are in the data, or a run refuses to write the index because it "is not the one
+last committed". Both are symptoms of a lost or hand-edited index, and neither
+needs the simulation rerunning. A directory whose runs injected no glitches
+rebuilds to an empty glitch index; a directory holding no batch metadata files
+at all is refused, because that means the wrong path.
 
 Updates to the index are serialised by an exclusive lock on a sidecar file, so
 concurrent runs sharing one metadata directory on one host do not overwrite each
