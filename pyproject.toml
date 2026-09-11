@@ -39,7 +39,13 @@ dependencies = [
   # ascension with an Earth rotation measured from the mean equinox of date -- 0.43 degrees in right
   # ascension by 2030. It changes continuous-wave output, which is why the bump landed with
   # regenerated e2e references rather than inside this change.
-  "gwmock-signal>=0.16.5",
+  #
+  # 0.17.0 is what makes `orchestration.signal.projection-backend` reachable: it is the first
+  # release whose `CBCSimulator` takes a `projection_backend` argument, and the setting is
+  # threaded to gwmock-signal as exactly that. Below this floor the key is still validated and
+  # then refused when the backend is built -- never silently ignored -- but it cannot be used, so
+  # the floor is what turns an actionable error into a working configuration.
+  "gwmock-signal>=0.17.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -58,7 +64,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.16.5"]
+sgwb = ["gwmock-signal[sgwb]>=0.17.0"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -74,10 +80,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.16.5"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.16.5"]
+jax = ["gwmock-signal[jax]>=0.17.0"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.16.5", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.17.0", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
