@@ -195,6 +195,32 @@ class TestWhatIsRefusedWhileParsing:
         config = _load(tmp_path, duration=int(MAX_PROJECTION_SPAN_SECONDS) + 1)
         assert config.orchestration.signal is not None
 
+    def test_a_configuration_without_a_duration_is_left_alone(self, tmp_path):
+        """Nothing to measure the span against, so this check has nothing to say about it.
+
+        The run takes its own default duration elsewhere; refusing here, or guessing that
+        default, would make the projection setting the thing that reports an unrelated omission.
+        """
+        raw = _config_dict(tmp_path, **{"projection-backend": "jax"})
+        del raw["globals"]["simulator-arguments"]["duration"]
+
+        config = Config.model_validate(raw)
+
+        assert config.orchestration.signal is not None
+
+    def test_an_unparsable_duration_is_not_this_check_s_error_to_report(self, tmp_path):
+        """A duration that is not a number fails where the simulation is set up, not here.
+
+        Raising here would answer a malformed duration with a message about a projection backend
+        the author may not even have connected to it, and would hide the real mistake behind it.
+        """
+        raw = _config_dict(tmp_path, **{"projection-backend": "jax"})
+        raw["globals"]["simulator-arguments"]["duration"] = "not-a-number"
+
+        config = Config.model_validate(raw)
+
+        assert config.orchestration.signal is not None
+
     def test_an_ordinary_segment_on_the_device_path_is_accepted(self, tmp_path):
         """The whole point is that this configuration loads; a refusal here refuses the feature."""
         config = _load(tmp_path, duration=1024, **{"projection-backend": "jax"})
