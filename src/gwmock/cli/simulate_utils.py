@@ -573,13 +573,26 @@ class PartialIndexRebuildError(RuntimeError):
     different next steps.
 
     Attributes:
-        rebuilt: The indexes that were replaced before the failure, in the order they were.
+        rebuilt: The indexes that were replaced, digest recorded, before the failure, in the
+            order they were.
+        committed_without_digest: The index that was replaced but whose digest could not be
+            recorded, or ``None``. Reported apart from ``rebuilt`` because it needs a
+            different repair: the index is current and correct, and the sidecar behind it
+            refuses every later write until it is re-baselined. Treating it as "not written"
+            tells an operator to expect previous contents that are gone.
     """
 
-    def __init__(self, message: str, *, rebuilt: list[RebuiltIndex]) -> None:
-        """Record which indexes had already been replaced when the rebuild failed."""
+    def __init__(
+        self,
+        message: str,
+        *,
+        rebuilt: list[RebuiltIndex],
+        committed_without_digest: Path | None = None,
+    ) -> None:
+        """Record what had already been written when the rebuild failed."""
         super().__init__(message)
         self.rebuilt = rebuilt
+        self.committed_without_digest = committed_without_digest
 
 
 class IndexDigestNotRecordedError(RuntimeError):
@@ -1651,9 +1664,11 @@ def rebuild_truth_indexes(metadata_directory: Path, encoding: str = "utf-8") -> 
         IndexRebuildError: If the directory holds no batch metadata files, or one of them
             cannot be read, parsed, or decoded into the shape any index reads. Nothing has
             been written.
-        PartialIndexRebuildError: If an index was written and a later one could not be.
-        IndexDigestNotRecordedError: If the first index was written but its digest could
-            not be recorded.
+        PartialIndexRebuildError: If an index was written -- with or without its digest --
+            and a later one was not. Its ``rebuilt`` and ``committed_without_digest``
+            attributes say which is which, because the two need different repairs.
+        IndexDigestNotRecordedError: If the last index was written but its digest could not
+            be recorded, in which case every index is current and only a sidecar is behind.
         OSError: If the first index cannot be written.
     """
     for spec in TRUTH_INDEXES:
@@ -1662,14 +1677,35 @@ def rebuild_truth_indexes(metadata_directory: Path, encoding: str = "utf-8") -> 
         _index_from_batch_metadata(spec, metadata_directory, encoding)
 
     rebuilt: list[RebuiltIndex] = []
-    for spec in TRUTH_INDEXES:
+    for position, spec in enumerate(TRUTH_INDEXES):
+        untouched = TRUTH_INDEXES[position + 1 :]
         try:
             rebuilt.append(_rebuild_index(spec, metadata_directory, encoding))
-        except (IndexRebuildError, IndexDigestNotRecordedError, OSError, yaml.YAMLError) as error:
+        except IndexDigestNotRecordedError as error:
+            # A different outcome from the one below, and telling them apart is the whole
+            # point of reporting: `_record_digest` runs *after* the index is committed, so
+            # this index has been replaced. Saying it "still holds whatever it held before"
+            # would send an operator looking for contents that no longer exist -- which is
+            # what the first version of this reporting did say.
+            if not untouched:
+                # Nothing was skipped, so the error already describes the whole outcome, and
+                # its message carries re-baselining advice this one could only restate.
+                raise
+            raise PartialIndexRebuildError(
+                f"Replaced {spec.index_file_name}, but could not record its digest: {error} "
+                f"That index is current and correct; its sidecar is behind it and will refuse "
+                f"every later write until it is re-baselined, as the message above describes. "
+                f"{', '.join(other.index_file_name for other in untouched)} was not rebuilt at "
+                f"all and still holds whatever it held before, which may be what needed "
+                f"repairing.",
+                rebuilt=rebuilt,
+                committed_without_digest=metadata_directory / spec.index_file_name,
+            ) from error
+        except (IndexRebuildError, OSError, yaml.YAMLError) as error:
             if not rebuilt:
                 raise
             replaced = ", ".join(str(result.index_file) for result in rebuilt)
-            remaining = ", ".join(other.index_file_name for other in TRUTH_INDEXES[TRUTH_INDEXES.index(spec) :])
+            remaining = ", ".join(other.index_file_name for other in TRUTH_INDEXES[position:])
             raise PartialIndexRebuildError(
                 f"Rebuilt {replaced}, then could not rebuild {spec.index_file_name}: {error} "
                 f"The indexes named first are current and their digests are recorded; "

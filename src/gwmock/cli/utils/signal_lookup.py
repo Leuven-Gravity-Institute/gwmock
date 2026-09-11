@@ -214,15 +214,23 @@ def find_events(
                 metadata = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
-        injections = spec.events(metadata) or []
-        if not injections:
+        injections = spec.events(metadata)
+        if not isinstance(injections, list) or not injections:
+            # Skipped rather than refused, and that asymmetry with the rebuild is deliberate:
+            # a query returns what it can find, while a rebuild replaces the index, so a file
+            # it skipped would be events silently deleted from the lookup. Here, one
+            # unreadable record must not stop the other batches answering -- which a truthy
+            # non-list would, by reaching `.get` on a string.
             continue
+        outputs = metadata.get("outputs")
         frames = [
             output["path"]
-            for output in metadata.get("outputs", [])
-            if output.get("kind") == spec.output_kind and "path" in output
+            for output in (outputs if isinstance(outputs, list) else [])
+            if isinstance(output, dict) and output.get("kind") == spec.output_kind and "path" in output
         ]
         for injection in injections:
+            if not isinstance(injection, dict):
+                continue
             if event_id is not None and injection.get("event_id") != event_id:
                 continue
             parameters = spec.parameters(injection)

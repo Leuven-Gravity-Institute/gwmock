@@ -202,7 +202,10 @@ Injected glitches get the same treatment as signals. Each batch's metadata
 records `noise.glitch_injections`, one row per glitch the batch injected, and a
 run writes `glitch_index.yaml` mapping each glitch's `event_id` — such as
 `H1-0-3`, being the detector, the model's position in the configured list, and
-the event's ordinal — to the noise frame file(s) that contain it:
+the event's ordinal — to the noise frame for the batch where it **starts**. That
+is not the same as every frame holding its samples: a glitch crossing a segment
+boundary is indexed once, against the frame it begins in, and `duration_seconds`
+on its catalogue row is what tells you how far it spills into the next one.
 
 ```bash
 # By id (fast path via glitch_index.yaml)

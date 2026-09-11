@@ -484,3 +484,87 @@ def test_rebuild_truth_indexes_rebuilds_both_on_the_happy_path(tmp_path: Path) -
     assert [result.index_file.name for result in rebuilt] == ["signal_index.yaml", "glitch_index.yaml"]
     for name, expected in incremental.items():
         assert yaml.safe_load((tmp_path / name).read_text()) == expected
+
+
+def test_a_digest_failure_after_the_write_is_not_reported_as_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An index that was replaced must not be described as still holding its old contents.
+
+    The digest is recorded *after* the index is committed, so a digest failure leaves that
+    index current and its sidecar behind — a state that refuses every later write until it is
+    re-baselined. The first version of this reporting folded that in with "could not rebuild"
+    and told the operator the file still held what it held before, which by then was gone.
+    """
+    _populate(tmp_path)
+    import gwmock.cli.simulate_utils as module
+
+    real_record = module._record_digest
+
+    def _fail_for_the_signal_index(lock_file: Path, digest: str) -> None:
+        if lock_file.name.startswith("signal_index"):
+            raise module.IndexDigestNotRecordedError("could not be recorded: read-only sidecar")
+        real_record(lock_file, digest)
+
+    monkeypatch.setattr(module, "_record_digest", _fail_for_the_signal_index)
+
+    with pytest.raises(PartialIndexRebuildError) as raised:
+        module.rebuild_truth_indexes(tmp_path)
+
+    message = str(raised.value)
+    # The index that WAS replaced is named as replaced, and carried as data.
+    assert "Replaced signal_index.yaml" in message
+    assert raised.value.committed_without_digest == tmp_path / "signal_index.yaml"
+    # It must not be described as still holding its previous contents.
+    assert "signal_index.yaml still hold" not in message
+    assert "Rebuilt" not in message
+    # The index that genuinely was not touched is named as such, and is not in `rebuilt`.
+    assert "glitch_index.yaml was not rebuilt at all" in message
+    assert [result.index_file.name for result in raised.value.rebuilt] == []
+
+
+def test_a_digest_failure_on_the_last_index_is_left_to_speak_for_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing was skipped, so the original error already describes the whole outcome."""
+    _populate(tmp_path)
+    import gwmock.cli.simulate_utils as module
+
+    real_record = module._record_digest
+
+    def _fail_for_the_glitch_index(lock_file: Path, digest: str) -> None:
+        if lock_file.name.startswith("glitch_index"):
+            raise module.IndexDigestNotRecordedError("could not be recorded: read-only sidecar")
+        real_record(lock_file, digest)
+
+    monkeypatch.setattr(module, "_record_digest", _fail_for_the_glitch_index)
+
+    # Not wrapped: every index is current and only a sidecar is behind, which is exactly what
+    # this error says, with the re-baselining advice a wrapper could only restate.
+    with pytest.raises(module.IndexDigestNotRecordedError):
+        module.rebuild_truth_indexes(tmp_path)
+
+
+def test_a_malformed_record_does_not_stop_the_other_batches_answering(tmp_path: Path) -> None:
+    """A lookup returns what it can find; one unreadable record must not abort it.
+
+    Unlike a rebuild, which refuses the whole directory rather than silently dropping events.
+    A truthy non-list event collection reached `.get` on a string and took the query down with
+    it, so a single bad file made every glitch in the directory unfindable.
+    """
+    _populate(tmp_path)
+    for name, payload in (
+        ("orchestration-90.metadata.json", {"noise": {"glitch_injections": "not a list"}, "outputs": []}),
+        ("orchestration-91.metadata.json", {"noise": {"glitch_injections": ["not a mapping"]}, "outputs": []}),
+        ("orchestration-92.metadata.json", {"noise": {"glitch_injections": [_glitch("X1-0-0", 1.0)]}, "outputs": "x"}),
+        ("orchestration-93.metadata.json", {"noise": "not a mapping", "outputs": []}),
+    ):
+        (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    found = find_glitches(tmp_path, param_filters=[parse_param_filter("detector==H1")])
+
+    assert sorted(match["event_id"] for match in found) == ["H1-0-0", "H1-0-1"]
+    # The record whose `outputs` was malformed still answers, with no frames rather than a crash.
+    by_x1 = find_glitches(tmp_path, param_filters=[parse_param_filter("detector==X1")])
+    assert [match["event_id"] for match in by_x1] == ["X1-0-0"]
+    assert by_x1[0]["frames"] == []
