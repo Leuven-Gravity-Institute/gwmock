@@ -5,12 +5,12 @@
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.6.0`.
+Each record is validated at write time and uses schema version `1.7.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.6.0",
+    "schema_version": "1.7.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -124,6 +124,19 @@ index in the population as ordered for the run (by `coa_time` under the default
 ordering), so it is stable for a fixed configuration. Stationary/SGWB segments
 have no discrete events and record an empty list.
 
+`signal.gap_excluded_injections` and `signal.gap_discarded_injections` record
+what a run's segment gaps cost the injected signals — respectively, catalogue
+events lying wholly inside a gap and so written to no frame at all, and the
+content a gap swallowed from a signal that crosses it. Both are empty for a
+contiguous run, and both are withheld from an embedded copy alongside
+`signal.injections`, because they carry the same source parameters.
+`simulator_metadata.orchestration.segment_layout` records the layout each
+batch's epoch comes from, including the run's span and its analysed livetime,
+which differ once gaps exist. All three arrived in schema 1.7.0; a record
+written by an older gwmock lacks them, which is not the same fact as a
+contiguous run. See
+[Gapped segments](generating-data.md#gapped-segments-discontiguous-data).
+
 `environment` is a full freeze of the environment that produced the run — the
 Python version and the version of every installed distribution (direct and
 transitive) — recorded so the run can be reproduced against exactly those
@@ -133,8 +146,9 @@ A copy of the record is written into each HDF5 output as well, at the file root,
 so a data file that reaches a consumer without its sidecar still describes the
 run. It is the same record with three omissions: the file hashes (a file cannot
 carry its own digest), `pre_batch_state` (stored as separate `.npy` files an
-embedded copy could not point at), and the injection truth -- both
-`signal.injections` and `noise.glitch_injections` -- unless the run set
+embedded copy could not point at), and the injection truth --
+`signal.injections`, `noise.glitch_injections`, `signal.gap_excluded_injections`
+and `signal.gap_discarded_injections` -- unless the run set
 `orchestration.include-injection-parameters: true`. The sidecar described above
 is always complete.
 

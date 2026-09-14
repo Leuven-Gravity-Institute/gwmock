@@ -236,11 +236,17 @@ class TimeSeries(JSONSerializable):
             self._data[i] = GWpyTimeSeries(self._data[i].crop(start=start_time, end=end_time, copy=True))
         return self
 
-    def inject(self, other: TimeSeries) -> TimeSeries | None:
+    def inject(self, other: TimeSeries, preceding_gap: tuple[float, float] | None = None) -> TimeSeries | None:
         """Inject another TimeSeries into the current TimeSeries.
 
         Args:
             other: TimeSeries instance to inject.
+            preceding_gap: ``(gap_start, gap_end)`` of a configured segment gap immediately before
+                this segment, when there is one. Injection places by GPS time either way, so this
+                changes no samples; it only tells :meth:`_report_content_before_segment` which of
+                two very different losses it is looking at. Content dropped inside a configured gap
+                is the run doing what it was asked; content dropped before a segment for any other
+                reason is a placement failure.
 
         Returns:
             Remaining TimeSeries instance if the injected TimeSeries extends beyond the current
@@ -264,7 +270,7 @@ class TimeSeries(JSONSerializable):
         # handed back as a remainder and then dropped by `TimeSeriesMixin.simulate`, so it is
         # discarded just as surely as a partially-early one -- and reporting only the overlapping
         # case would leave the larger loss the quieter of the two.
-        self._report_content_before_segment(other)
+        self._report_content_before_segment(other, preceding_gap)
 
         if other.end_time < self.start_time:
             logger.warning(
@@ -350,7 +356,9 @@ class TimeSeries(JSONSerializable):
             return tail.crop(start_time=self.end_time)
         return None
 
-    def _report_content_before_segment(self, chunk: TimeSeries) -> None:
+    def _report_content_before_segment(
+        self, chunk: TimeSeries, preceding_gap: tuple[float, float] | None = None
+    ) -> None:
         """Warn that content starting before this segment is about to be dropped.
 
         Reaching this is now the exception rather than the rule. Segments claim an event by where its
@@ -373,6 +381,20 @@ class TimeSeries(JSONSerializable):
             chunk,
         )
         if samples <= 0:
+            return
+
+        # A configured gap is not a placement failure, and the message below would report it as
+        # one -- telling a reader to look for a warning about an unavailable pre-coalescence
+        # duration that will never appear, for a run behaving exactly as configured. The caller
+        # records the loss with the gap it fell into; this only has to stop mislabelling it.
+        if preceding_gap is not None and float(chunk.start_time.to(self.start_time.unit).value) >= preceding_gap[0]:
+            logger.debug(
+                "Dropping %.3f s (%d samples) of a chunk into the configured gap [%s, %s) before this segment.",
+                seconds,
+                samples,
+                preceding_gap[0],
+                preceding_gap[1],
+            )
             return
 
         coa_time = (chunk.metadata.get("injection_parameters") or {}).get("coa_time")
@@ -421,11 +443,15 @@ class TimeSeries(JSONSerializable):
         chunk_end = float(other.end_time.to(unit).value)
         return chunk_start < float(self.end_time.to(unit).value) and chunk_end > float(self.start_time.value)
 
-    def inject_from_list(self, ts_iterable: Iterable[TimeSeries]) -> TimeSeriesList:
+    def inject_from_list(
+        self, ts_iterable: Iterable[TimeSeries], preceding_gap: tuple[float, float] | None = None
+    ) -> TimeSeriesList:
         """Inject multiple TimeSeries from an iterable into the current TimeSeries.
 
         Args:
             ts_iterable: Iterable of TimeSeries instances to inject.
+            preceding_gap: A configured segment gap immediately before this segment; see
+                :meth:`inject`.
 
         Returns:
             TimeSeriesList of remaining TimeSeries instances that extend beyond the current TimeSeries end time.
@@ -434,7 +460,7 @@ class TimeSeries(JSONSerializable):
 
         remaining_ts: list[TimeSeries] = []
         for ts in ts_iterable:
-            remaining_chunk = self.inject(ts)
+            remaining_chunk = self.inject(ts, preceding_gap=preceding_gap)
             if remaining_chunk is not None:
                 remaining_ts.append(remaining_chunk)
         return TimeSeriesList(remaining_ts)
