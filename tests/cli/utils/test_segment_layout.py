@@ -81,6 +81,54 @@ class TestSpanAndLivetime:
             SegmentLayout(start_time=0.0, duration=4.0, gap=-1.0, count=2)
 
 
+class TestTheDegenerateAndContiguousLayouts:
+    """The branches an ordinary gapped run never takes, which is why they need their own tests.
+
+    A layout with no segments is reachable from a ``max_samples`` of zero, and the contiguous fast
+    paths are what every pre-existing configuration runs through -- so both are exactly the code a
+    gapped-run test cannot reach.
+    """
+
+    def test_a_layout_with_no_segments_spans_nothing_and_contains_nothing(self):
+        empty = SegmentLayout(start_time=100.0, duration=10.0, gap=5.0, count=0)
+
+        assert empty.span == 0.0
+        assert empty.livetime == 0.0
+        assert empty.end_time == 100.0
+        assert empty.epochs() == []
+        assert not empty.contains(100.0)
+        assert not empty.intersects(0.0, 1000.0)
+        assert empty.gap_containing(100.0) is None
+
+    def test_a_negative_segment_count_is_refused(self):
+        with pytest.raises(ValueError, match="count must be non-negative"):
+            SegmentLayout(start_time=0.0, duration=4.0, gap=1.0, count=-1)
+
+    def test_a_contiguous_layout_contains_every_instant_of_its_span(self):
+        """The fast path: with no gaps there is no modular arithmetic to do."""
+        contiguous = SegmentLayout(start_time=100.0, duration=10.0, gap=0.0, count=3)
+
+        assert contiguous.contains(100.0)
+        assert contiguous.contains(115.0)
+        assert contiguous.contains(129.999)
+        assert not contiguous.contains(130.0)
+        assert not contiguous.contains(99.999)
+
+    def test_the_gap_before_each_segment_of_a_gapped_run(self):
+        """Asserted directly. It is otherwise reached only from a full gapped simulation."""
+        layout = SegmentLayout(start_time=1000.0, duration=10.0, gap=5.0, count=3)
+
+        assert layout.gap_before(0) is None
+        assert layout.gap_before(1) == (1010.0, 1015.0)
+        assert layout.gap_before(2) == (1025.0, 1030.0)
+        # Each gap ends exactly where its segment begins, and begins exactly where the previous
+        # one ended.
+        for index in (1, 2):
+            gap_start, gap_end = layout.gap_before(index)
+            assert gap_end == layout.epoch(index)
+            assert gap_start == layout.epoch(index - 1) + layout.duration
+
+
 class TestClassifyingAnInstant:
     """Which GPS times a run writes, and which fall in the holes."""
 
@@ -200,6 +248,21 @@ class TestResolvingTheBatchCountFromAConfiguration:
 
     def test_no_gap_configured_means_no_gap(self):
         assert resolve_segment_gap({}, {}) == 0.0
+
+    def test_a_span_shorter_than_one_segment_resolves_to_a_single_batch(self):
+        """A run cannot write half a segment, so the span is taken as one and the caller is told."""
+        assert resolve_max_samples({}, {"total_duration": 2.0, "duration": 8.0, "segment_gap": 4.0}) == 1
+
+    def test_an_explicit_max_samples_is_used_when_no_span_is_given(self):
+        assert resolve_max_samples({"max_samples": 7}, {}) == 7
+        assert resolve_max_samples({}, {"max_samples": 5}) == 5
+
+    @pytest.mark.parametrize("bad", [None, [], {}, True])
+    def test_a_duration_that_is_not_a_number_or_a_duration_string_is_refused(self, bad):
+        """``True`` is in here deliberately: ``bool`` is an ``int``, and 1 second is not what a
+        caller writing ``segment-gap: yes`` meant."""
+        with pytest.raises(ValueError, match="must be a float, int, or str"):
+            parse_seconds(bad, "segment-gap")
 
 
 class TestRejectingNonFiniteDurations:
