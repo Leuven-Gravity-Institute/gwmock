@@ -461,8 +461,9 @@ class NoiseAdapter:
                 anyway and throw them away**, so the simulator's own sample counter -- which is
                 what a ``psd_schedule`` is interpolated against, and what a glitch model's Poisson
                 process is advanced by -- keeps step with GPS across the gap instead of tracking
-                analysed livetime. The cost is ``gap_duration / chunk_duration`` of extra
-                generation; the alternative would silently reinterpret every ``psd_schedule``
+                analysed livetime. The cost is one extra ``gap_duration`` generated per chunk
+                *after the first*, since a stream abandoned after its last chunk never pays for a
+                trailing gap; the alternative would silently reinterpret every ``psd_schedule``
                 offset as a livetime offset as soon as a run configured a gap.
             seed: The seed.
             psd_file: The PSD file.
@@ -479,10 +480,14 @@ class NoiseAdapter:
             leave this iterator.
 
         Raises:
-            ValueError: If ``gap_duration`` is negative.
+            ValueError: If ``gap_duration`` is not a finite, non-negative number of seconds.
         """
-        if gap_duration < 0:
-            raise ValueError(f"gap_duration must be non-negative; got {gap_duration}.")
+        # Finiteness first: `nan < 0` is False, so a NaN passes a bare range check, opens the
+        # stream, and fails only on the *second* pull -- as "cannot convert float NaN to integer"
+        # from inside a sample-count rounding, well away from the argument that was wrong.
+        # Infinity takes the same deferred path with an OverflowError.
+        if not np.isfinite(gap_duration) or gap_duration < 0:
+            raise ValueError(f"gap_duration must be a finite, non-negative number of seconds; got {gap_duration}.")
         simulator = self._resolve_stream_backend(
             chunk_duration=chunk_duration,
             sampling_frequency=sampling_frequency,

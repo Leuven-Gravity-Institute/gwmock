@@ -13,6 +13,7 @@ layout, and reproduces the arithmetic that preceded this module exactly.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 logger = logging.getLogger("gwmock")
@@ -47,10 +48,18 @@ class SegmentLayout:
     def __post_init__(self) -> None:
         """Reject a layout that cannot describe any run.
 
+        The finiteness checks come first, and they are not decoration: every comparison against a
+        NaN is False, so a NaN duration or gap passes both range checks below and then makes every
+        predicate on this layout answer silently -- ``contains`` returns ``False`` for every
+        instant of the run rather than raising.
+
         Raises:
-            ValueError: If the duration is not positive, the gap is negative, or the count is
-                negative.
+            ValueError: If any of the three is not finite, the duration is not positive, the gap is
+                negative, or the count is negative.
         """
+        for name, value in (("start_time", self.start_time), ("duration", self.duration), ("gap", self.gap)):
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite; got {value}.")
         if self.duration <= 0:
             raise ValueError(f"duration must be positive; got {self.duration}.")
         if self.gap < 0:
@@ -228,8 +237,12 @@ def resolve_segment_count(total_duration: float, duration: float, gap: float) ->
         The number of analysed segments, at least 1.
 
     Raises:
-        ValueError: If a gapped configuration's span does not divide into whole segments.
+        ValueError: If any argument is not finite, or a gapped configuration's span does not divide
+            into whole segments.
     """
+    for name, value in (("total-duration", total_duration), ("duration", duration), ("segment-gap", gap)):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number of seconds; got {value}.")
     stride = duration + gap
     exact = (total_duration + gap) / stride
     count = max(1, round(exact))

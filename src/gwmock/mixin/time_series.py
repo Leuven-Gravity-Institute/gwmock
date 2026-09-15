@@ -261,8 +261,11 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
         time across a gap, and keeps the noise in the segment after a gap the continuation of a
         detector that never stopped rather than a fresh draw. The alternative -- skipping the gap,
         so the schedule tracks analysed livetime and drifts away from GPS by the accumulated gap --
-        is cheaper by ``segment_gap / duration`` of the noise generation cost and is *not* what
-        this package does.
+        is cheaper and is *not* what this package does. Exactly how much cheaper: a run has no
+        trailing gap, so it generates ``(count - 1) * segment_gap`` seconds it never writes against
+        ``count * duration`` that it does, a ratio of
+        ``(count - 1) * segment_gap / (count * duration)`` that tends to ``segment_gap / duration``
+        only as the run grows long.
 
         Returns:
             The gap in seconds.

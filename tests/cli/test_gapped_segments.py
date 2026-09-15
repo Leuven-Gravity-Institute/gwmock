@@ -485,9 +485,30 @@ class TestTheNoiseStreamCrossesTheGap:
         for _ in range(3):
             assert np.array_equal(next(with_zero)["H1"], next(without)["H1"])
 
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_a_non_finite_gap_is_refused_before_the_stream_opens(self, tmp_path, bad):
+        """At open, not on the second pull.
+
+        ``nan < 0`` is False, so a bare range check lets a NaN through; the stream then opens
+        successfully and fails only when the *second* chunk is drawn -- from inside a sample-count
+        rounding, as "cannot convert float NaN to integer", by which point the argument that was
+        wrong is several frames away.
+        """
+        psd = self._psd_file(tmp_path / "psd.txt", 1.0, 256.0)
+
+        with pytest.raises(ValueError, match="finite, non-negative"):
+            NoiseAdapter.from_backend().open_stream(
+                chunk_duration=4.0,
+                gap_duration=bad,
+                sampling_frequency=256.0,
+                detectors=["H1"],
+                seed=11,
+                psd_file=str(psd),
+            )
+
     def test_a_negative_gap_is_refused(self, tmp_path):
         psd = self._psd_file(tmp_path / "psd.txt", 1.0, 256.0)
-        with pytest.raises(ValueError, match="gap_duration must be non-negative"):
+        with pytest.raises(ValueError, match="gap_duration must be a finite, non-negative"):
             NoiseAdapter.from_backend().open_stream(
                 chunk_duration=4.0,
                 gap_duration=-1.0,

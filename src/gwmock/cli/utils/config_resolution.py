@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from gwmock.cli.utils.segment_layout import resolve_segment_count
@@ -26,9 +27,14 @@ def parse_seconds(value: float | int | str, name: str) -> float:
     """
     if isinstance(value, bool) or not isinstance(value, (float, int, str)):
         raise ValueError(f"{name} must be a float, int, or str representing a duration; got {value!r}.")
-    if isinstance(value, str):
-        return float(parse_duration_to_seconds(value))
-    return float(value)
+    seconds = float(parse_duration_to_seconds(value)) if isinstance(value, str) else float(value)
+    # NaN and infinity are rejected here rather than left to fail later. Every comparison against a
+    # NaN is False, so one slips past a `< 0` guard, through the layout, and surfaces seconds or
+    # minutes downstream as "cannot convert float NaN to integer" from inside a sample-count
+    # rounding -- a message that names neither the setting nor the value that was wrong.
+    if not math.isfinite(seconds):
+        raise ValueError(f"{name} must be a finite number of seconds; got {value!r}.")
+    return seconds
 
 
 def resolve_segment_gap(

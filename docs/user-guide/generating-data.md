@@ -337,10 +337,18 @@ that:
 - the noise in the segment after a gap continues a detector that never stopped,
   rather than being a fresh draw.
 
-The cost is `segment-gap / duration` of extra noise generation. The alternative
-— skipping the gap, so the schedule's axis tracks analysed livetime and drifts
-away from GPS by the accumulated gap — is cheaper and is **not** what gwmock
-does.
+The cost is the gaps' own generation. A run has no trailing gap, so for `count`
+segments it discards `(count - 1) * segment-gap` seconds while writing
+`count * duration`, and the extra-generation ratio is exactly
+
+```text
+(count - 1) * segment-gap / (count * duration)
+```
+
+which approaches `segment-gap / duration` for a long run — 24.2 % for the 32
+segments above, against the 25 % the limit suggests. The alternative — skipping
+the gap, so the schedule's axis tracks analysed livetime and drifts away from
+GPS by the accumulated gap — is cheaper and is **not** what gwmock does.
 
 <!-- prettier-ignore-start -->
 

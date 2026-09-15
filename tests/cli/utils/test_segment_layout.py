@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
+from gwmock.cli.utils.config_resolution import parse_seconds, resolve_max_samples, resolve_segment_gap
 from gwmock.cli.utils.segment_layout import SegmentLayout, resolve_segment_count
 
 #: The motivating layout, stated once: four 1024 s analysed segments separated by 256 s gaps per
@@ -200,3 +200,62 @@ class TestResolvingTheBatchCountFromAConfiguration:
 
     def test_no_gap_configured_means_no_gap(self):
         assert resolve_segment_gap({}, {}) == 0.0
+
+
+class TestRejectingNonFiniteDurations:
+    """NaN and infinity are refused where they enter, not left to fail somewhere downstream.
+
+    Every comparison against a NaN is False, so one passes a bare ``< 0`` guard untouched. It then
+    travels through the layout -- where it makes every predicate answer ``False`` silently, so a
+    run reports that no instant of it is inside a segment -- and finally surfaces from a sample
+    count rounding as "cannot convert float NaN to integer", which names neither the setting nor
+    the value that was wrong. Infinity takes the same route to an OverflowError.
+    """
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_a_non_finite_gap_is_refused_when_it_is_parsed(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            resolve_segment_gap({}, {"segment_gap": bad})
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_a_non_finite_total_duration_is_refused(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            parse_seconds(bad, "total-duration")
+
+    @pytest.mark.parametrize("field", ["start_time", "duration", "gap"])
+    def test_a_layout_built_on_a_non_finite_number_is_refused(self, field):
+        arguments = {"start_time": 0.0, "duration": 4.0, "gap": 1.0, "count": 3} | {field: float("nan")}
+
+        with pytest.raises(ValueError, match="must be finite"):
+            SegmentLayout(**arguments)
+
+    def test_a_non_finite_layout_would_otherwise_answer_silently(self):
+        """Why the guard rejects rather than warns, demonstrated rather than argued.
+
+        The NaN is injected *past* the constructor, which is the only way to get one into a layout
+        now, so this shows what the guard is buying. The two failure shapes are both bad and they
+        are bad differently, which is why neither is acceptable:
+
+        * ``contains`` answers **silently and wrongly** -- the layout reports that no instant of
+          its own run is inside a segment, which reads exactly like a correctly configured run
+          whose signals all happen to miss;
+        * ``gap_containing`` and ``intersects`` raise, but from an ``int()`` of a NaN inside the
+          modular walk, with a message naming neither the setting nor the value that was wrong.
+
+        Which method does which was measured rather than reasoned about: the first draft of this
+        test asserted that all three were silent, and two of them were not.
+        """
+        layout = SegmentLayout(start_time=0.0, duration=4.0, gap=1.0, count=3)
+        assert layout.contains(1.0)
+
+        object.__setattr__(layout, "duration", float("nan"))
+
+        assert not layout.contains(1.0)
+        for query in (lambda: layout.gap_containing(4.5), lambda: layout.intersects(0.0, 100.0)):
+            with pytest.raises(ValueError, match="cannot convert float NaN to integer"):
+                query()
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_a_non_finite_span_is_refused_by_the_count_resolver(self, bad):
+        with pytest.raises(ValueError, match="finite"):
+            resolve_segment_count(bad, 1024.0, 256.0)
