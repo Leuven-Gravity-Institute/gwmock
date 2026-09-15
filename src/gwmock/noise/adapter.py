@@ -439,6 +439,7 @@ class NoiseAdapter:
         chunk_duration: float,
         sampling_frequency: float,
         detectors: Sequence[str],
+        gap_duration: float = 0.0,
         seed: int | None = None,
         psd_file: str | Path | None = None,
         psd_schedule: list[tuple[float, str | Path]] | None = None,
@@ -455,6 +456,15 @@ class NoiseAdapter:
             chunk_duration: The chunk duration.
             sampling_frequency: The sampling frequency.
             detectors: The detectors to use.
+            gap_duration: Seconds of GPS time between one emitted chunk and the next, which the
+                run writes to no frame. Non-zero makes this stream **generate those seconds
+                anyway and throw them away**, so the simulator's own sample counter -- which is
+                what a ``psd_schedule`` is interpolated against, and what a glitch model's Poisson
+                process is advanced by -- keeps step with GPS across the gap instead of tracking
+                analysed livetime. The cost is one extra ``gap_duration`` generated per chunk
+                *after the first*, since a stream abandoned after its last chunk never pays for a
+                trailing gap; the alternative would silently reinterpret every ``psd_schedule``
+                offset as a livetime offset as soon as a run configured a gap.
             seed: The seed.
             psd_file: The PSD file.
             psd_schedule: The PSD schedule.
@@ -466,8 +476,18 @@ class NoiseAdapter:
             glitches: The glitches.
 
         Returns:
-            An iterator over the chunks.
+            An iterator over the chunks. One chunk per analysed segment: the gap's samples never
+            leave this iterator.
+
+        Raises:
+            ValueError: If ``gap_duration`` is not a finite, non-negative number of seconds.
         """
+        # Finiteness first: `nan < 0` is False, so a NaN passes a bare range check, opens the
+        # stream, and fails only on the *second* pull -- as "cannot convert float NaN to integer"
+        # from inside a sample-count rounding, well away from the argument that was wrong.
+        # Infinity takes the same deferred path with an OverflowError.
+        if not np.isfinite(gap_duration) or gap_duration < 0:
+            raise ValueError(f"gap_duration must be a finite, non-negative number of seconds; got {gap_duration}.")
         simulator = self._resolve_stream_backend(
             chunk_duration=chunk_duration,
             sampling_frequency=sampling_frequency,
@@ -482,12 +502,21 @@ class NoiseAdapter:
             spectral_lines=spectral_lines,
             glitches=glitches,
         )
-        return upstream_open_stream(
+        stream = upstream_open_stream(
             simulator,
             chunk_duration=chunk_duration,
             sampling_frequency=sampling_frequency,
             detectors=list(detectors),
             seed=seed,
+        )
+        if not gap_duration:
+            return stream
+        return _gapped_stream(
+            simulator,
+            stream,
+            gap_duration=gap_duration,
+            sampling_frequency=sampling_frequency,
+            detectors=list(detectors),
         )
 
     def build_config(  # noqa: PLR0913
@@ -976,6 +1005,55 @@ class NoiseAdapter:
         if catalogue is None:
             return None
         return {key: value for key, value in catalogue.items() if key != "events"}
+
+
+def _gapped_stream(
+    simulator: NoiseSimulator,
+    stream: Iterator[dict[str, np.ndarray]],
+    *,
+    gap_duration: float,
+    sampling_frequency: float,
+    detectors: Sequence[str],
+) -> Iterator[dict[str, np.ndarray]]:
+    """Yield the upstream stream's chunks, generating and discarding each gap in between.
+
+    Wraps the upstream stream rather than calling ``generate`` for the chunks too, so the chunk
+    draws keep upstream's own argument validation and seed handling -- a second expression of that
+    contract here is a second thing to keep in step with it.
+
+    The discarded draw is what keeps a stateful simulator's notion of elapsed time equal to elapsed
+    GPS rather than to analysed livetime. It is taken *before* the chunk that follows it, not after
+    the one that precedes it, for two reasons that both matter to callers: nothing is generated for
+    a gap the run never reaches, so a stream stopped after its last segment has not paid for a
+    trailing gap; and whatever per-segment state the simulator exposes after a chunk is yielded --
+    the glitch rows gwmock reads off the injector, for instance -- still describes that chunk
+    rather than a gap drawn behind the caller's back.
+
+    Args:
+        simulator: The upstream simulator backing *stream*, asked directly for the gaps.
+        stream: The upstream chunk stream, opened on that simulator.
+        gap_duration: Seconds generated and discarded between consecutive emitted chunks.
+        sampling_frequency: The sampling frequency.
+        detectors: The detectors to generate.
+
+    Yields:
+        One chunk per analysed segment, one array per detector.
+    """
+    runtime_detectors = list(detectors)
+    first = True
+    while True:
+        if not first:
+            # Generated for its side effect on the stream's state, and dropped: the run writes no
+            # frame covering these seconds.
+            simulator.generate(gap_duration, sampling_frequency, runtime_detectors, None)
+        try:
+            chunk = next(stream)
+        except StopIteration:
+            # A `StopIteration` escaping a generator becomes a `RuntimeError` that names neither
+            # this function nor the exhausted stream, so it is caught and ended cleanly here.
+            return
+        yield chunk
+        first = False
 
 
 class _ChunkNoiseSimulator:

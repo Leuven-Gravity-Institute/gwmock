@@ -1,0 +1,47 @@
+# Gapped segments: the released frames themselves are discontiguous in GPS.
+#
+# `segment-gap` makes each segment epoch advance by `duration + segment-gap`, so the
+# seconds inside a gap appear in no frame at all. This layout is four 1024 s analysed
+# segments separated by 256 s gaps per block, eight blocks -- 32 segments at a stride of
+# 1280 s.
+#
+# `total-duration` is the run's GPS *span*, gaps included and with no trailing gap:
+#
+#     span = 32 * 1024 + 31 * 256 = 40704 s
+#
+# while the analysed livetime is 32 * 1024 = 32768 s. A gapped span that does not divide
+# is refused, naming the three numbers, rather than rounded.
+#
+# The `psd_schedule` here is the case the gaps interact with: gwmock generates each gap's
+# samples and discards them, so the schedule's `gps_offset_seconds` stays an offset in GPS
+# rather than in analysed livetime. See docs/user-guide/generating-data.md.
+globals:
+    simulator-arguments:
+        sampling-frequency: 4096
+        duration: 1024
+        segment-gap: 256
+        total-duration: 40704
+        start-time: 1577491218
+        seed: 42
+    working-directory: .
+    output-directory: output
+    metadata-directory: metadata
+
+orchestration:
+    noise:
+        arguments:
+            # A slow drift over the run's GPS span: the anchors are offsets from
+            # `start-time`, and the gaps are inside them.
+            psd_schedule:
+                - [0, ET_10_full_cryo_psd]
+                - [40704, ET_15_HF_psd]
+            detectors:
+                - ET-Triangle-Sardinia
+            minimum_frequency: 3
+        output:
+            output_directory: noise
+            file_name:
+                'E-{{ detectors }}_STRAIN_NOISE-{{ start_time }}-{{ duration
+                }}.gwf'
+            arguments:
+                channel: '{{ detectors }}:STRAIN_NOISE'

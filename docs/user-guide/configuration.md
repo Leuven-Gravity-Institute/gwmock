@@ -236,6 +236,7 @@ globals:
         duration:
         start-time:
         total-duration:
+        segment-gap:
     output-arguments: {}
 ```
 
@@ -245,9 +246,14 @@ globals:
 - `output-directory`: Where to save generated data files
 - `metadata-directory`: Where to save metadata files
 - `sampling-frequency`: Sample rate in Hz
-- `duration`: Duration of each segment in seconds
-- `start-time`: GPS start time
-- `total-duration`: Total duration of the dataset
+- `duration`: Duration of each analysed segment in seconds
+- `start-time`: GPS start time of the first segment
+- `total-duration`: The run's GPS **span** — first segment's start to last
+  segment's end, gaps included
+- `segment-gap`: Seconds of GPS time between consecutive segments, so epochs
+  advance by `duration + segment-gap`. Defaults to `0`, which is the contiguous
+  layout. See
+  [Gapped segments](generating-data.md#gapped-segments-discontiguous-data)
 - `output-arguments`: Additional global arguments passed to the file writer
 
 ### Orchestration

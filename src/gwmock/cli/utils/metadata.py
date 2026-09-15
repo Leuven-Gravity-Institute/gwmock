@@ -41,7 +41,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: *configuration* and a per-model count. ``glitch_index.yaml`` arrives in the same release. A
 #: record written by an older gwmock has no such key, which is not the same fact as a run that
 #: injected no glitches; only ``schema_version`` tells the two apart.
-SCHEMA_VERSION = "1.6.0"
+#:
+#: 1.7.0: segment epochs may advance by ``duration + segment-gap``, so a run's frames can be
+#: discontiguous in GPS. ``simulator_metadata.orchestration.segment_layout`` records the layout
+#: each batch's epoch comes from -- including the run's span and its analysed livetime, which
+#: differ once gaps exist -- and ``signal.gap_excluded_injections`` and
+#: ``signal.gap_discarded_injections`` record what the gaps cost the injected signals. A record
+#: written by an older gwmock has none of these keys, which is not the same fact as a contiguous
+#: run; only ``schema_version`` tells the two apart.
+SCHEMA_VERSION = "1.7.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 #: The key the source parameters of the injected signals are recorded under. Removed from an embedded
@@ -62,6 +70,15 @@ INJECTION_PARAMETERS_KEY = "injections"
 #: includes, and stripping every key called ``glitches`` at every depth would have taken it too while
 #: reading as though it removed only the truth.
 GLITCH_INJECTIONS_KEY = "glitch_injections"
+
+#: The keys holding what a run's *gaps* did to the injected signals -- which catalogue events fell
+#: wholly inside a gap and were therefore written nowhere, and how much of a signal crossing a gap
+#: was discarded into it. Dropped from an embedded copy at **every depth**, alongside
+#: :data:`INJECTION_PARAMETERS_KEY`, and for exactly the same reason: both carry the source
+#: parameters of real events, and even without them "a signal was lost in the gap at this time" is
+#: an answer in a blind challenge. A gapped run is precisely the one whose consumers are counting
+#: livetime, so this is the record that would most tempt a release to leak.
+GAP_INJECTION_KEYS = ("gap_excluded_injections", "gap_discarded_injections")
 
 #: The key holding the simulator's RNG state, kept for replay. Dropped from an embedded copy at
 #: **every depth**, for the same reason as the injections and then one more.
@@ -128,6 +145,19 @@ class SignalSection(BaseModel):
     # tail itself -- both the samples and the record. See
     # `gwmock/spillover-lost-on-checkpoint-resume`.
     injections: list[dict[str, Any]] = Field(default_factory=list)
+    # Catalogue events that fall wholly inside a configured segment gap, so the run writes them to
+    # no frame at all: [{"event_id": int, "parameters": {...}, "gap_start": float,
+    # "gap_end": float}]. Recorded against the batch that consumed the event. Empty for a
+    # contiguous run, and empty for a gapped run whose population happens to miss every gap --
+    # which is not the same fact as a run that never checked, and is why the layout recorded under
+    # `simulator_metadata.orchestration.segment_layout` says what the gaps were.
+    gap_excluded_injections: list[dict[str, Any]] = Field(default_factory=list)
+    # How much of a signal crossing into this segment the preceding gap swallowed:
+    # [{"event_id": int, "parameters": {...}, "gap_start": float, "gap_end": float,
+    # "discarded_samples": int, "discarded_seconds": float, "discarded_energy_fraction": float}].
+    # The signal is still present in this frame -- its far-side content is placed at its true GPS
+    # time -- so it appears in `injections` too; this says what did not survive the hole.
+    gap_discarded_injections: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -396,7 +426,10 @@ def without_injection_parameters(document: Any) -> Any:
     Returns:
         The same structure without either key.
     """
-    return _without_key(_without_key(document, INJECTION_PARAMETERS_KEY), GLITCH_INJECTIONS_KEY)
+    document = _without_key(_without_key(document, INJECTION_PARAMETERS_KEY), GLITCH_INJECTIONS_KEY)
+    for key in GAP_INJECTION_KEYS:
+        document = _without_key(document, key)
+    return document
 
 
 def embeddable_metadata(metadata: dict[str, Any], *, include_injection_parameters: bool = False) -> dict[str, Any]:

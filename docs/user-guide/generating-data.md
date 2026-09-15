@@ -237,7 +237,8 @@ The length of a dataset is controlled by:
 ```yaml
 start-time: # GPS start time of the dataset
 duration: # Duration per frame file (seconds)
-total-duration: # Total duration of the dataset
+total-duration: # GPS span of the dataset
+segment-gap: # GPS seconds between consecutive segments (default 0)
 ```
 
 To change the dataset duration, simply adjust these parameters in your
@@ -248,15 +249,106 @@ samples per second, measured in Hz), using the `sampling-frequency` argument.
 
 **Total number of frame files:**
 
-The total number of frame files depends on the duration of each frame file and
-the total duration of the dataset, and it's rounded to the nearest integer:
+`total-duration` is the dataset's GPS **span** — from the first segment's start
+to the last segment's end. With the default `segment-gap: 0` the segments tile
+that span, so the number of frame files is the span divided by the duration,
+rounded to the nearest integer:
 
 ```python
-max_samples = round(total - duration / duration)
+max_samples = round(total_duration / duration)
 ```
 
 For example, a one-day dataset (86400 s) in 4096-second frames yields
-`round(86400 / 4096) = 21` frame files per interferometer.
+`round(86400 / 4096) = 21` frame files per interferometer. Note that 86400 is
+not a multiple of 4096: the rounding is kept for compatibility, and gwmock warns
+when it happens, naming the span it actually used (86016 s here).
+
+With a non-zero `segment-gap` the segments no longer tile the span, and the
+count follows from the stride instead:
+
+```python
+max_samples = (total_duration + segment_gap) / (duration + segment_gap)
+```
+
+A **gapped** span that does not divide exactly is **refused**, naming the span,
+the duration and the gap, rather than rounded — rounding would move the run's
+last epoch away from the layout the configuration describes.
+
+## Gapped segments (discontiguous data)
+
+Real instruments are not on all the time. `segment-gap` makes a run write
+segments that are **discontiguous in GPS**: the seconds inside a gap appear in
+no frame at all, so the released data carries the gaps rather than relying on a
+downstream consumer to read a contiguous stream selectively.
+
+```yaml
+globals:
+    simulator-arguments:
+        sampling-frequency: 4096
+        duration: 1024 # analysed segment length
+        segment-gap: 256 # GPS seconds skipped between segments
+        total-duration: 40704 # span = 32 * 1024 + 31 * 256
+        start-time: 1577491218
+```
+
+Segment epochs then advance by `duration + segment-gap`:
+
+```text
+1577491218, 1577492498, 1577493778, 1577495058, ...
+```
+
+Two durations describe such a run and they are not equal:
+
+- **span** (`total-duration`) — `count * duration + (count - 1) * segment-gap`.
+  There is no trailing gap: a run stops at the end of data.
+- **analysed livetime** — `count * duration`, which is what the frames actually
+  cover.
+
+Both are recorded per batch under
+`simulator_metadata.orchestration.segment_layout` in the metadata record, so a
+released frame set says what its own discontinuity is.
+
+### What the gaps do to the signals
+
+- A waveform that **crosses** a gap keeps its far-side content **at its true GPS
+  sample**: the part inside the gap is discarded and the rest is placed where it
+  belongs, not shifted forward to close the hole. What the gap swallowed is
+  recorded under `signal.gap_discarded_injections`.
+- A signal lying **entirely inside** a gap is written to no frame. It is not
+  dropped silently: it is recorded under `signal.gap_excluded_injections` and
+  warned about.
+
+Both lists carry source parameters, so — like `signal.injections` — they are
+withheld from the copy of the record embedded in a released data file unless
+`orchestration.include-injection-parameters` is set.
+
+### What the gaps do to the noise
+
+The noise stream is stateful, and `gwmock_noise` interpolates a `psd_schedule`
+against the number of samples the stream has **produced** rather than against
+GPS. gwmock therefore **generates the gap's samples and throws them away**, so
+that:
+
+- a `psd_schedule` anchor at `gps_offset_seconds: 3600` means one hour after the
+  run's start time whether or not gaps fall in between — the schedule's time
+  axis stays locked to GPS, and a drifting instrument drifts in wall-clock time;
+- a glitch model's Poisson process keeps its configured rate per unit of
+  **real** time across a gap;
+- the noise in the segment after a gap continues a detector that never stopped,
+  rather than being a fresh draw.
+
+The cost is the gaps' own generation. A run has no trailing gap, so for `count`
+segments it discards `(count - 1) * segment-gap` seconds while writing
+`count * duration`, and the extra-generation ratio is exactly
+
+```text
+(count - 1) * segment-gap / (count * duration)
+```
+
+which approaches `segment-gap / duration` for a long run — 24.2 % for the 32
+segments above, against the 25 % the limit suggests. The alternative — skipping
+the gap, so the schedule's axis tracks analysed livetime and drifts away from
+GPS by the accumulated gap — is cheaper and is **not** what gwmock does.
 
 <!-- prettier-ignore-start -->
 

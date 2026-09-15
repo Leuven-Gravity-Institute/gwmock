@@ -358,6 +358,15 @@ def _build_signal_section(simulator: Simulator, batch: SimulationBatch) -> dict[
             # in injection order (empty for stationary/SGWB segments). This makes each
             # frame self-describing and backs the signal->frame lookup.
             "injections": list(simulator_metadata["orchestration"]["signal"].get("injections", [])),
+            # What the run's gaps did to the injected signals: events that fell wholly inside one
+            # and are in no frame, and content a gap swallowed from a signal that crosses it. Both
+            # empty for a contiguous run.
+            "gap_excluded_injections": list(
+                simulator_metadata["orchestration"]["signal"].get("gap_excluded_injections", [])
+            ),
+            "gap_discarded_injections": list(
+                simulator_metadata["orchestration"]["signal"].get("gap_discarded_injections", [])
+            ),
             "metadata": simulator_metadata["orchestration"]["signal"],
         }
 

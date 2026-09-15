@@ -295,7 +295,7 @@ def test_find_glitch_requires_something_to_look_for(tmp_path: Path) -> None:
 
 def test_the_record_carries_the_catalogue_and_says_so_in_its_version(tmp_path: Path) -> None:
     """``noise.glitch_injections`` is part of the validated record, and the schema version moved."""
-    assert SCHEMA_VERSION == "1.6.0"
+    assert SCHEMA_VERSION == "1.7.0"
 
     rows = [_glitch("H1-0-0", O3_EPOCH + 3.0)]
     record = MetadataRecord.model_validate(

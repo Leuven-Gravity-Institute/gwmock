@@ -16,7 +16,7 @@ from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
 from gwmock.cli.utils.config import OrchestrationConfig
-from gwmock.cli.utils.config_resolution import resolve_max_samples
+from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
 from gwmock.cli.utils.template import expand_template_variables
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
@@ -102,6 +102,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         earth_rotation: bool,
         noise_arguments: dict[str, Any],
         orchestration_config: OrchestrationConfig,
+        segment_gap: float = 0.0,
         population_seed: int | None = None,
         signal_adapter: SignalAdapter | None = None,
         noise_adapter: NoiseAdapter | None = None,
@@ -180,12 +181,18 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # stochastic paths never consume the catalogue this way.
         self._placement_order_cache: tuple[int, ...] | None = None
 
+        #: Events the catalogue holds that lie wholly inside a segment gap, recorded as the walk
+        #: steps over them. Per batch, like `_batch_injections`: the record belongs to the batch
+        #: that consumed the event, which is the only batch that had the chance to notice it.
+        self._gap_excluded_events: list[dict[str, Any]] = []
+
         super().__init__(
             max_samples=max_samples,
             start_time=start_time,
             duration=duration,
             sampling_frequency=sampling_frequency,
             num_of_channels=len(self.detectors),
+            segment_gap=segment_gap,
         )
 
     @classmethod
@@ -200,6 +207,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         duration = float(global_args.get("duration", 4.0))
         sampling_frequency = float(global_args.get("sampling_frequency", 4096.0))
         start_time = float(global_args.get("start_time", 0.0))
+        segment_gap = resolve_segment_gap(simulator_args={}, global_args=global_args)
 
         has_population = orchestration_config.population is not None
         has_signal = orchestration_config.signal is not None
@@ -269,6 +277,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             start_time=start_time,
             max_samples=max_samples,
             minimum_frequency=minimum_frequency,
+            segment_gap=segment_gap,
             earth_rotation=earth_rotation,
             noise_arguments=noise_arguments,
             orchestration_config=orchestration_config,
@@ -487,6 +496,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
     def metadata(self) -> dict[str, Any]:
         """Return orchestration metadata for reproducibility."""
         signal_segment_seed = self._signal_segment_seed()
+        layout = self.segment_layout
         return {
             **super().metadata,
             "orchestration": {
@@ -529,6 +539,15 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     "network_resolution": self._detector_resolution,
                     "segment_seed": signal_segment_seed,
                     "injections": self._segment_injections(),
+                    # Catalogue events this batch consumed that lie wholly inside a segment gap, so
+                    # they appear in no frame this run writes. Named alongside `injections` because
+                    # it is the same kind of answer -- which signals are where -- and it is
+                    # withheld from a released file by the same sanitiser.
+                    "gap_excluded_injections": list(self._gap_excluded_events),
+                    # Content of a carried-forward signal that the gap before this segment
+                    # swallowed: the samples are written nowhere, and the rest of the signal is
+                    # still placed at its true GPS time in this segment.
+                    "gap_discarded_injections": list(getattr(self, "gap_discarded", [])),
                 },
                 "noise": {
                     "arguments": self.noise_arguments,
@@ -549,6 +568,25 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     ),
                 },
                 "segment_seeds": self.segment_seeds(),
+                # The layout this batch's epoch comes from, recorded so a released frame set says
+                # what its own discontinuity is rather than leaving a consumer to infer it from
+                # the file names. `span` is `total-duration`; `analysed_livetime` is what the
+                # frames actually cover, and the two differ by the gaps.
+                "segment_layout": {
+                    "run_start_time": layout.start_time,
+                    "segment_index": int(self.counter),
+                    "duration": layout.duration,
+                    "segment_gap": layout.gap,
+                    "n_segments": layout.count,
+                    "span": layout.span,
+                    "analysed_livetime": layout.livetime,
+                    # Which axis a `noise.arguments.psd_schedule` offset is measured along. Always
+                    # GPS, and recorded rather than left implicit because the stateful stream
+                    # underneath measures in samples produced: gwmock generates each gap's samples
+                    # and discards them so that the two agree. A consumer reading this key knows
+                    # the schedule it sees was interpolated against elapsed GPS, gaps included.
+                    "psd_schedule_time_axis": "gps",
+                },
             },
         }
 
@@ -648,6 +686,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 "which is the default."
             )
         self._require_configuration_supported()
+        # Rebuilt per batch, and here rather than in `update_state` so a batch retried after a
+        # failure records each excluded event once instead of appending to the previous attempt.
+        self._gap_excluded_events = []
 
         if not self._population_events and self._source_type == "sgwb":
             return self._simulate_stationary_signal_segment()
@@ -672,6 +713,14 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             # place in the loaded catalogue rather than by the order generation happened to take.
             event_id = int(order[int(self.population_index)])
             parameters = dict(self._population_events[event_id])
+            gap = self._gap_excluding_event(parameters)
+            if gap is not None:
+                # Consumed without being generated, and recorded: the run writes no frame covering
+                # this signal, and a signal that is simply absent from every frame with nothing
+                # said about it is indistinguishable from one the run failed to produce.
+                self._record_gap_excluded_event(event_id, parameters, gap)
+                self.population_index = cast(int, self.population_index) + 1
+                continue
             if self._event_ended_before_segment_start(parameters):
                 # Consumed without being generated, the same as in `_events_for_this_segment`, and
                 # stepped over rather than breaking so the events behind it are still reached.
@@ -1005,6 +1054,76 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 )
             return None
 
+    def _gap_excluding_event(self, parameters: Mapping[str, Any]) -> tuple[float, float] | None:
+        """Return the segment gap that swallows this event whole, if one does.
+
+        An event lying entirely inside a gap has nowhere to be written: the run produces no frame
+        covering those seconds. Generating it anyway costs a waveform and then crops every sample
+        of it, and -- worse -- leaves no record that a catalogue entry produced nothing. So it is
+        identified here, before generation, from the same interval the placement rules use.
+
+        Only the *whole* event counts. An event coalescing inside a gap whose inspiral reaches back
+        into the previous segment, or whose ringdown reaches forward into the next one, is claimed
+        and generated as usual; injection then drops its in-gap samples and places the rest at
+        their true GPS times, which is the behaviour the gap is supposed to produce.
+
+        ``None`` from the tail query means *unknown*, and unknown claims the event, matching
+        :meth:`_event_ended_before_segment_start`: reading an unknown tail as zero would conclude a
+        whole backend's events end at coalescence and exclude them wholesale.
+
+        Args:
+            parameters: The candidate event's source parameters.
+
+        Returns:
+            ``(gap_start, gap_end)`` of the enclosing gap, or ``None`` when the event reaches at
+            least one analysed segment, has no coalescence time, or has an unknown tail.
+        """
+        if float(self.segment_gap.value) <= 0:
+            return None
+        coa_time = parameters.get("coa_time")
+        if coa_time is None:
+            return None
+        tail = self._post_coalescence_duration(parameters)
+        if tail is None:
+            return None
+        lead = self._pre_coalescence_duration(parameters)
+        start_time_value = float(coa_time) if lead is None else float(coa_time) - float(lead)
+        end_time_value = float(coa_time) + float(tail)
+        layout = self.segment_layout
+        if layout.intersects(start_time_value, end_time_value):
+            return None
+        gap = layout.gap_containing(start_time_value)
+        if gap is None or end_time_value > gap[1]:
+            return None
+        return gap
+
+    def _record_gap_excluded_event(
+        self, event_id: int, parameters: Mapping[str, Any], gap: tuple[float, float]
+    ) -> None:
+        """Record, and say out loud, that a catalogue event falls in a gap and is written nowhere.
+
+        Args:
+            event_id: The event's position in the loaded catalogue.
+            parameters: The event's source parameters.
+            gap: ``(gap_start, gap_end)`` of the gap containing it.
+        """
+        self._gap_excluded_events.append(
+            {
+                "event_id": event_id,
+                "parameters": dict(parameters),
+                "gap_start": gap[0],
+                "gap_end": gap[1],
+            }
+        )
+        logger.warning(
+            "Event %s lies entirely inside the configured segment gap [%s, %s) and is written to "
+            "no frame. It is consumed and recorded under signal.gap_excluded_injections rather "
+            "than generated.",
+            event_id,
+            gap[0],
+            gap[1],
+        )
+
     def _events_for_this_segment(self) -> tuple[list[int], list[dict[str, Any]]]:
         """Return the population events to generate for the current segment.
 
@@ -1042,9 +1161,20 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         order = self._placement_order()
         position = int(self.population_index)
         skipped = 0
+        excluded_by_gap = 0
         while position < len(order):
             event_id = int(order[position])
             parameters = dict(self._population_events[event_id])
+            gap = self._gap_excluding_event(parameters)
+            if gap is not None:
+                # Counted apart from the skips below because the reason differs: this event is not
+                # behind the segment, it is in a hole the run writes no frame for. One message per
+                # reason, so neither is reported under the other's explanation.
+                self._record_gap_excluded_event(event_id, parameters, gap)
+                excluded_by_gap += 1
+                skipped += 1
+                position += 1
+                continue
             if self._event_ended_before_segment_start(parameters):
                 skipped += 1
                 position += 1
@@ -1055,11 +1185,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             events.append(parameters)
             position += 1
 
-        if skipped:
+        if skipped - excluded_by_gap:
             logger.info(
                 "Skipped %d event(s) whose waveform ends before this segment starts; they belong "
                 "to no segment this run writes.",
-                skipped,
+                skipped - excluded_by_gap,
             )
 
         # How far the walk got, which is what consumption has to advance by -- not the number of
@@ -1343,12 +1473,17 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         return TimeSeriesList([strain])
 
     def update_state(self) -> None:
-        """Advance to the next segment."""
+        """Advance to the next segment.
+
+        The epoch advances by ``duration + segment_gap``. With a non-zero gap the frames a run
+        writes are therefore discontiguous in GPS, and the seconds in between appear in no frame
+        at all. With the default gap of zero this is the contiguous advance it has always been.
+        """
         self.noise_stream_committed_count = max(
             int(self.noise_stream_committed_count), int(self._noise_stream_position)
         )
         self.counter = cast(int, self.counter) + 1
-        self.start_time += self.duration
+        self.start_time += self.duration + self.segment_gap
         self._pending_noise_chunk = None
         # Cleared with the chunk they describe, so a batch that writes no noise cannot record the
         # previous batch's glitches as its own.
@@ -1662,6 +1797,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         self._noise_stream = self.noise_adapter.open_stream(
             chunk_duration=float(self.duration.value),
+            # The stream advances through the gaps as well, drawing their samples and discarding
+            # them, so the PSD schedule's time axis stays locked to GPS and the noise after a gap
+            # continues a detector that never stopped. See `TimeSeriesMixin.segment_gap`, which
+            # states the choice and what the alternative would have cost.
+            gap_duration=float(self.segment_gap.value),
             sampling_frequency=float(self.sampling_frequency.value),
             detectors=list(self.noise_arguments["detectors"]),
             seed=self._noise_stream_seed(),
