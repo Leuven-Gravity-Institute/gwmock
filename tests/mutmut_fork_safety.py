@@ -135,9 +135,9 @@ import traceback
 try:
     sys.path[:] = json.loads(os.environ[{ENV_SYS_PATH!r}])
     os.chdir(os.environ[{ENV_ROOT!r}])
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
 
-    Config.ensure_loaded()
+    config()
     os.chdir(os.environ[{ENV_CWD!r}])
     import pytest
 
@@ -187,9 +187,9 @@ def _mutmut_debug() -> bool:
     an ordinary ``pytest`` run -- which imports this module through the conftest -- never
     needs mutmut to be installed at all.
     """
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
 
-    return bool(Config.get().debug)
+    return bool(config().debug)
 
 
 def build_worker_pytest_args(runner: Any, tests: list[str]) -> list[str]:
