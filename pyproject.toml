@@ -106,7 +106,7 @@ dev = [
   "mutmut>=3.8.0",
 ]
 docs = ["zensical>=0.0.62", "mkdocstrings-python>=2.0.8"]
-build = ["hatch>=1.18.0"]
+build = ["hatch>=1.18.1"]
 release = ["git-cliff>=2.13.1"]
 
 [project.scripts]
