@@ -64,7 +64,7 @@ repos:
           - id: actionlint
 
     - repo: https://github.com/astral-sh/uv-pre-commit
-      rev: 0.12.18
+      rev: 0.12.19
       hooks:
           # Update the uv lockfile
           - id: uv-lock
