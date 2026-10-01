@@ -866,7 +866,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-github-actions-annotate-failures", specifier = ">=0.4.2" },
-    { name = "pytest-mock", specifier = ">=3.15.1" },
+    { name = "pytest-mock", specifier = ">=3.16.0" },
 ]
 docs = [
     { name = "mkdocstrings-python", specifier = ">=2.0.9" },
