@@ -55,11 +55,11 @@ dependencies = [
   "gwmock-pop>=0.14.0",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
-  "h5py>=3.12.1",
-  "pydantic>=2.9.0",
+  "h5py>=3.13.0",
+  "pydantic>=2.10.0",
   "pymap3d>=3.2.0",
   "psutil>=6.1.0",
-  "filelock>=3.16.0",
+  "filelock>=3.17.0",
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
 ]
 
