@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -839,13 +839,13 @@ release = [
 [package.metadata]
 requires-dist = [
     { name = "filelock", specifier = ">=3.17.0" },
-    { name = "gwmock-noise", specifier = ">=0.13.0" },
-    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.13.0" },
-    { name = "gwmock-pop", specifier = ">=0.14.0" },
-    { name = "gwmock-signal", specifier = ">=0.17.2" },
-    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.17.2" },
-    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'jax'", specifier = ">=0.17.2" },
-    { name = "gwmock-signal", extras = ["sgwb"], marker = "extra == 'sgwb'", specifier = ">=0.17.2" },
+    { name = "gwmock-noise", specifier = ">=0.14.0" },
+    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.14.0" },
+    { name = "gwmock-pop", specifier = ">=0.14.1" },
+    { name = "gwmock-signal", specifier = ">=0.17.3" },
+    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.17.3" },
+    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'jax'", specifier = ">=0.17.3" },
+    { name = "gwmock-signal", extras = ["sgwb"], marker = "extra == 'sgwb'", specifier = ">=0.17.3" },
     { name = "h5py", specifier = ">=3.13.0" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda'", specifier = ">=0.11.0" },
     { name = "psutil", specifier = ">=6.1.0" },
@@ -876,7 +876,7 @@ release = [{ name = "git-cliff", specifier = ">=2.14.2" }]
 
 [[package]]
 name = "gwmock-noise"
-version = "0.13.0"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h5py" },
@@ -886,9 +886,9 @@ dependencies = [
     { name = "scipy" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/63/d5/0b21faa37ccbd9adafd001f5693e53b53f2f9fc1e8fc39d75d947d2aa61c/gwmock_noise-0.13.0.tar.gz", hash = "sha256:30deee1b43be5fd78c4a3b4edd5b9614a61bbc9863898a73cacd28c33308916c", size = 1692409, upload-time = "2026-09-22T03:01:58.037Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/7f/cbb2acb50e589288e6e06bde76237c1405d189fffa760c4489e21b084a93/gwmock_noise-0.14.0.tar.gz", hash = "sha256:90b7b2c3356332cb67da904bf12e942b55bfbbba3997f3c4538ed8eb73c9320e", size = 1705522, upload-time = "2026-09-29T03:54:41.813Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/c3/f4a67d9ae47fa7c66bdbed55360f31e088d18412abdc3bb9ef949928f200/gwmock_noise-0.13.0-py3-none-any.whl", hash = "sha256:b2b46a62821926f1d68b21f5eebcf85001b5d7ac56e46f6333f952ade9d12cf1", size = 1287920, upload-time = "2026-09-22T03:01:56.631Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/ab/7b7a2e8a21a53efdc3c361b7a244114c9b8b69a0e3ac7907d22909da2156/gwmock_noise-0.14.0-py3-none-any.whl", hash = "sha256:7ae6a8a53f04b05fa463835893b3fa84c37822894bcf4dfb3c8e61a2ceda869e", size = 1295687, upload-time = "2026-09-29T03:54:40.527Z" },
 ]
 
 [package.optional-dependencies]
@@ -898,7 +898,7 @@ deepextractor = [
 
 [[package]]
 name = "gwmock-pop"
-version = "0.14.0"
+version = "0.14.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h5py" },
@@ -909,14 +909,14 @@ dependencies = [
     { name = "ruyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/2c/df9c38eb6c7ecf9bb563a11184192218802f12dc4159b46c2fcfc441d0bd/gwmock_pop-0.14.0.tar.gz", hash = "sha256:450b99caeddcab957bcbc357b77a1739e8eedc2ceef05de14c6d67bbaea65813", size = 408349, upload-time = "2026-09-22T03:38:02.311Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/ec/9f033d750af5c6c1b2a0e9dad0e08d8e3d5e390f6c4a4a22d2f30c4c8f22/gwmock_pop-0.14.1.tar.gz", hash = "sha256:575d3e24f98496e12d6711afa6b8e2f306aa89b1f65e6016dabe65f9f343bb38", size = 408849, upload-time = "2026-09-29T04:35:15.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/12/e623936d3b3e417d89dfcffea5e04c47537acaf558a1c64665c7cb5042dd/gwmock_pop-0.14.0-py3-none-any.whl", hash = "sha256:0144cd147ab8f9ad743c9e048629a2adf2f0240701a8314455dbf498c856deb3", size = 151592, upload-time = "2026-09-22T03:38:00.401Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/21/c2912971c83f9cffd803b1840a27e514a2ead3dfd7bf3304b3db07c8f1cd/gwmock_pop-0.14.1-py3-none-any.whl", hash = "sha256:b874c96c86531c79fca1b256eb94e7bbb55f231dd6ec704d1cadce078b68e7fa", size = 151593, upload-time = "2026-09-29T04:35:14.764Z" },
 ]
 
 [[package]]
 name = "gwmock-signal"
-version = "0.17.2"
+version = "0.17.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gwpy" },
@@ -924,9 +924,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/67/b3fd039b82b2380b19e998deb4b90440cc855ca0d231f0776e8cc45620db/gwmock_signal-0.17.2.tar.gz", hash = "sha256:32326f81265141749ac265a72aa7f8e4f21f7ac5bb02e6d9aabb2ecb1f67c560", size = 544372, upload-time = "2026-09-22T04:05:40.792Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/e9/0bdb7685f7a338014bd957aa52807e0a60dce15613ca57ddf2961513641b/gwmock_signal-0.17.3.tar.gz", hash = "sha256:e413784b8e48dcaf69a776efd598b4a13d9f15141f6bd70e8882fa5b6778854f", size = 544393, upload-time = "2026-09-29T05:09:00.964Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/b9/c55f3506932f0a42e3ab75771f602565fc74cfeb91aa32a46a15e08c9dd4/gwmock_signal-0.17.2-py3-none-any.whl", hash = "sha256:db0fa2a7dd4c8c6dfdf4c7e7d60f62d5fb8d4e879ce22331df230722a8018c59", size = 182669, upload-time = "2026-09-22T04:05:39.342Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/db/00fd5edc7068e914fb2df39a76d6aa09ecafed1e600bf7f91557ace5bebc/gwmock_signal-0.17.3-py3-none-any.whl", hash = "sha256:7e5c9d33c5b11b7e2dc738f396507c2ab37eef0b757dc608b2edca988deb594d", size = 182670, upload-time = "2026-09-29T05:08:59.668Z" },
 ]
 
 [package.optional-dependencies]
