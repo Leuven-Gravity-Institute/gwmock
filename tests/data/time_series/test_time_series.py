@@ -308,6 +308,13 @@ class TestInjectBoundaryOverflow:
         offset = (float(remaining.start_time.value) - float(segment.end_time.value)) * self.SAMPLING_FREQUENCY
         assert abs(offset) < 1e-3, f"the tail starts {offset} samples off the next segment's grid"
 
+    def test_a_misaligned_chunk_covering_no_grid_point_is_skipped(self):
+        """A one-sample chunk between two grid points has nothing to place, so nothing changes."""
+        segment = self._segment()
+
+        assert segment.inject(self._chunk(500.5).crop(end_time=self.START + 501 / self.SAMPLING_FREQUENCY)) is None
+        assert not np.any(np.asarray(segment[0]))
+
     def test_a_misaligned_signal_is_continuous_across_the_boundary(self):
         """A signal crossing segments must be resampled as accurately at the boundary as inside one.
 
