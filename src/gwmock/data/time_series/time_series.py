@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable
 from numbers import Number
 from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.units.quantity import Quantity
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 from gwpy.types.index import Index
-from scipy.interpolate import interp1d
 
 from gwmock.data.serialize.serializable import JSONSerializable
 from gwmock.data.time_series.inject import alignment_tolerance, inject, is_aligned, measure_content_before
@@ -290,11 +291,8 @@ class TimeSeries(JSONSerializable):
             )
             return other
 
-        # Kept because the interpolation below rebinds `other` to samples drawn from this segment's
-        # own time array, which by construction cannot extend past `self.end_time`. The overflow has
-        # to be measured against what the caller actually passed, or a chunk crossing the segment
-        # boundary loses its tail -- and `TimeSeriesMixin.simulate` relies on that tail being
-        # returned to carry the rest of the signal into the next segment.
+        # Kept for the metadata and channel identity the tail carries forward: the interpolation below
+        # rebinds `other` to a new series on this segment's lattice, which has neither.
         supplied = other
 
         # Check whether there is any offset in times
@@ -309,38 +307,43 @@ class TimeSeries(JSONSerializable):
             logger.warning("Chunk time grid does not align with segment time grid.")
             logger.warning("Interpolation will be used to align the chunk to the segment grid.")
 
-            other_end_time = other.end_time.to(self.start_time.unit)
-            other_new_times = self.time_array.value[
-                (self.time_array.value >= other_start_time.value) & (self.time_array.value <= other_end_time.value)
-            ]
-
+            # The whole chunk is resampled once onto this segment's lattice -- extended past either
+            # end -- rather than only the part inside the segment. The windowed-sinc kernel needs
+            # ~half its taps of context on each side, so resampling segment by segment would cut
+            # that context at every boundary: measured errors there reached the signal's own peak,
+            # where resampling the whole chunk leaves none. The tail returned below is then already
+            # on the lattice, so a contiguous next segment places it without resampling it again.
+            #
+            # Same kernel, and the same integer-index-minus-one-offset positions, as `inject` and
+            # gwmock-signal's `inject_strain`, so the two packages agree on the operation.
+            first = math.ceil(idx)
+            last = math.floor(idx + len(other.time_array) - 1)
+            if first > last:
+                logger.warning("Chunk spans no sample of the segment grid. No injection performed.")
+                return None
+            positions = np.arange(first, last + 1) - idx
             other = TimeSeries(
-                data=np.array(
-                    [
-                        interp1d(
-                            other.time_array.value, other[i].value, kind="linear", bounds_error=False, fill_value=0.0
-                        )(other_new_times)
-                        for i in range(len(other))
-                    ]
+                data=np.array([resample_uniform_sinc(other[i].value, positions) for i in range(len(other))]),
+                start_time=Quantity(
+                    self.start_time.value + first / self.sampling_frequency.value, unit=self.start_time.unit
                 ),
-                start_time=Quantity(other_new_times[0], unit=self.start_time.unit),
                 sampling_frequency=self.sampling_frequency,
             )
 
         for i in range(self.num_of_channels):
             self[i] = inject(self[i], other[i])
 
-        # The tail comes from the supplied chunk, unresampled, so the next segment interpolates it
-        # against its own grid rather than inheriting this segment's resampling.
+        # The tail is the resampled chunk when interpolation was needed, so it is already on this
+        # segment's lattice and the next segment -- which continues that lattice -- places it as is.
         #
         # Cropped from a copy: `crop` rewrites `_data` in place and returns `self`, so cropping the
         # supplied chunk directly would truncate the caller's own object and hand it back as the
         # remainder. `inject_from_list` walks a caller-provided list, so that mutates its elements.
-        if supplied.end_time > self.end_time:
+        if other.end_time > self.end_time:
             tail = TimeSeries(
-                data=np.asarray(supplied).copy(),
-                start_time=supplied.start_time,
-                sampling_frequency=supplied.sampling_frequency,
+                data=np.asarray(other).copy(),
+                start_time=other.start_time,
+                sampling_frequency=other.sampling_frequency,
             )
             # Carry the wrapper metadata and each channel's identity across. A tail is the same
             # signal continuing into the next segment, so dropping these would strip
