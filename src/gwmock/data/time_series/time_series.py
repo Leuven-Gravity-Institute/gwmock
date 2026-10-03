@@ -328,7 +328,7 @@ class TimeSeries(JSONSerializable):
         idx, aligned, first, last = self._grid_span(other)
         if not aligned:
             logger.warning("Chunk time grid does not align with segment time grid.")
-            logger.warning("Interpolation will be used to align the chunk to the segment grid.")
+            logger.warning("The chunk will be resampled onto the segment grid with the windowed-sinc kernel.")
 
             # The whole chunk is resampled once onto this segment's lattice -- extended past either
             # end -- rather than only the part inside the segment. The windowed-sinc kernel needs

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 from astropy.units import Quantity
@@ -236,6 +238,28 @@ class TestInjectOffLatticeResampling:
             written = np.asarray(segment[channel])
             np.testing.assert_allclose(written[covered], scale * expected, rtol=0.0, atol=1e-15)
             assert np.max(np.abs(written[covered] - scale * analytic)[interior]) < 1e-9
+
+
+class TestTheOffGridWarningDescribesTheResampling:
+    """The warning an off-grid chunk raises must name what is actually done to it.
+
+    It once announced linear interpolation and outlived the switch to the windowed-sinc kernel,
+    telling a caller the opposite of the documented behaviour. Asserted on content, not count.
+    """
+
+    def test_the_warning_names_the_windowed_sinc_kernel(self, caplog):
+        sampling_frequency = 4096.0
+        segment = TimeSeries(data=np.zeros((1, 1000)), start_time=1e9, sampling_frequency=sampling_frequency)
+        chunk = TimeSeries(
+            data=np.ones((1, 100)), start_time=1e9 + 100.5 / sampling_frequency, sampling_frequency=sampling_frequency
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gwmock"):
+            segment.inject(chunk)
+
+        messages = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+        assert any("windowed-sinc kernel" in message for message in messages), messages
+        assert not any("nterpolation will be used" in message for message in messages), messages
 
 
 class TestInjectBoundaryOverflow:
