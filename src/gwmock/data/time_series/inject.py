@@ -7,8 +7,8 @@ from typing import Any, cast
 
 import numpy as np
 from astropy.units import second  # pylint: disable=no-name-in-module
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 from gwpy.timeseries import TimeSeries
-from scipy.interpolate import interp1d
 
 logger = logging.getLogger("gwmock")
 
@@ -219,8 +219,12 @@ def inject(timeseries: TimeSeries, other: TimeSeries, interpolate_if_offset: boo
             logger.debug("No overlap between timeseries and other after searching; returning original timeseries")
             return timeseries
 
-        interp_func = interp1d(other_times, other.value, kind="cubic", axis=0, bounds_error=False, fill_value=0.0)
-        resampled = interp_func(target_times[start_idx : end_idx + 1])
+        # The band-limited windowed-sinc kernel gwmock-signal's `inject_strain` resamples with, so the
+        # two packages agree on the same operation. Positions come from integer target indices minus
+        # one offset, as there, rather than from per-sample GPS timestamps, each of which carries
+        # float64 rounding of a sizeable fraction of a sample.
+        positions = np.arange(start_idx, end_idx + 1) - offset
+        resampled = resample_uniform_sinc(other.value, positions)
 
         # Create a new TimeSeries with explicit parameters to avoid floating-point precision issues
         injected_data = timeseries.value.copy()
