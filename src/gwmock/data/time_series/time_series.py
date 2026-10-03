@@ -240,6 +240,30 @@ class TimeSeries(JSONSerializable):
     def inject(self, other: TimeSeries, preceding_gap: tuple[float, float] | None = None) -> TimeSeries | None:
         """Inject another TimeSeries into the current TimeSeries.
 
+        A chunk whose samples fall on this segment's grid is added sample for sample. A chunk that
+        sits a fraction of a sample off the grid is first resampled, as a whole, onto this segment's
+        grid -- extended past either end of the segment -- with the band-limited windowed-sinc kernel
+        ``gwmock_signal.projection.resampling.resample_uniform_sinc``, and a warning is logged. Only
+        grid points within the chunk's own sample span are produced; nothing is extrapolated beyond
+        its first or last sample.
+
+        Resampling the whole chunk rather than the part inside this segment is what keeps a signal
+        continuous across segment boundaries: the kernel needs about half its taps of context on
+        either side, which a per-segment resample would cut at every boundary. It also means the
+        returned remainder of an off-grid chunk is the *resampled* series, already on this segment's
+        grid, so a contiguous next segment adds it without resampling it a second time.
+
+        This replaces linear interpolation, which at 0.8 x Nyquist was off by ~0.63 of the signal's
+        peak; the sinc kernel's error there is ~1e-12. Off-grid injections therefore produce
+        different samples from earlier releases, most visibly at high frequency.
+
+        Agreement with gwmock-signal: this is the kernel gwmock-signal's projection resamples with,
+        but ``gwmock_signal.injection.core.inject_strain`` in gwmock-signal 0.17.3 -- the minimum
+        this package requires -- still interpolates cubically. The divergence is deliberate and
+        temporary: the kernel module is byte-identical between gwmock-signal 0.17.3 and the pending
+        gwmock-signal change that moves ``inject_strain`` onto it, so the two paths become equal
+        once that change is released and required here, without any further change on this side.
+
         Args:
             other: TimeSeries instance to inject.
             preceding_gap: ``(gap_start, gap_end)`` of a configured segment gap immediately before
@@ -250,8 +274,14 @@ class TimeSeries(JSONSerializable):
                 reason is a placement failure.
 
         Returns:
-            Remaining TimeSeries instance if the injected TimeSeries extends beyond the current
-            TimeSeries end time, otherwise None.
+            What this segment could not place, for the next segment. *other* itself, unchanged, if
+            it ends before this segment starts or starts after it ends, in which case nothing is
+            injected. Otherwise the part of the chunk past this segment's end, if it extends beyond
+            it; for an off-grid chunk that is the resampled series, on this segment's grid, carrying
+            *other*'s metadata, channel names and units. ``None`` if the chunk ends within this
+            segment, or if it is an off-grid chunk whose sample span contains no grid point at all
+            (a single sample between two grid points), in which case nothing is injected and a
+            warning is logged.
         """
         if len(other) != len(self):
             raise ValueError(
@@ -307,8 +337,11 @@ class TimeSeries(JSONSerializable):
             # where resampling the whole chunk leaves none. The tail returned below is then already
             # on the lattice, so a contiguous next segment places it without resampling it again.
             #
-            # Same kernel, and the same integer-index-minus-one-offset positions, as `inject` and
-            # gwmock-signal's `inject_strain`, so the two packages agree on the operation.
+            # Same kernel, and the same integer-index-minus-one-offset positions, as `inject` and as
+            # the pending gwmock-signal change to `inject_strain`. The released `inject_strain` in
+            # gwmock-signal 0.17.3 still interpolates cubically, so the two packages agree on this
+            # operation only once that change is released and required; the kernel module itself is
+            # byte-identical between the two, so nothing here has to change when it is.
             if first > last:
                 logger.warning("Chunk spans no sample of the segment grid. No injection performed.")
                 return None
