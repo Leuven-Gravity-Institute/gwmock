@@ -295,15 +295,8 @@ class TimeSeries(JSONSerializable):
         # rebinds `other` to a new series on this segment's lattice, which has neither.
         supplied = other
 
-        # Check whether there is any offset in times
-        other_start_time = other.start_time.to(self.start_time.unit)
-        idx = ((other_start_time - self.start_time) * self.sampling_frequency).value
-        tolerance = alignment_tolerance(
-            self.start_time.value,
-            self.sampling_frequency.value,
-            gps_times=(other_start_time.value, other.end_time.to(self.start_time.unit).value),
-        )
-        if not is_aligned(idx, tolerance):
+        idx, aligned, first, last = self._grid_span(other)
+        if not aligned:
             logger.warning("Chunk time grid does not align with segment time grid.")
             logger.warning("Interpolation will be used to align the chunk to the segment grid.")
 
@@ -316,8 +309,6 @@ class TimeSeries(JSONSerializable):
             #
             # Same kernel, and the same integer-index-minus-one-offset positions, as `inject` and
             # gwmock-signal's `inject_strain`, so the two packages agree on the operation.
-            first = math.ceil(idx)
-            last = math.floor(idx + len(other.time_array) - 1)
             if first > last:
                 logger.warning("Chunk spans no sample of the segment grid. No injection performed.")
                 return None
@@ -417,6 +408,35 @@ class TimeSeries(JSONSerializable):
             self.start_time,
         )
 
+    def _grid_span(self, other: TimeSeries) -> tuple[float, bool, int, int]:
+        """Locate *other* on this segment's sample grid.
+
+        Shared by :meth:`inject` and :meth:`contributes_samples`, so that what a segment claims to
+        receive and what it actually places are the same computation.
+
+        Args:
+            other: The chunk to locate.
+
+        Returns:
+            ``(offset, aligned, first, last)``: the chunk's first sample as a fractional index on
+            this grid (rounded to a whole index when aligned), whether it is aligned within
+            :func:`alignment_tolerance`, and the first and last grid indices lying within the
+            chunk's sample span -- not clipped to this segment, and ``first > last`` when the span
+            holds no grid point.
+        """
+        unit = self.start_time.unit
+        other_start_time = other.start_time.to(unit)
+        offset = ((other_start_time - self.start_time) * self.sampling_frequency).value
+        tolerance = alignment_tolerance(
+            self.start_time.value,
+            self.sampling_frequency.value,
+            gps_times=(other_start_time.value, other.end_time.to(unit).value),
+        )
+        aligned = is_aligned(offset, tolerance)
+        if aligned:
+            offset = float(round(offset))
+        return offset, aligned, math.ceil(offset), math.floor(offset + len(other.time_array) - 1)
+
     def contributes_samples(self, other: TimeSeries) -> bool:
         """Whether injecting *other* into this segment would place at least one sample.
 
@@ -429,9 +449,12 @@ class TimeSeries(JSONSerializable):
         edge -- still means the signal is present in that frame, which is what a provenance record
         is claiming. Reading the samples would call that absent.
 
-        The two endpoints are exclusive because a chunk ending exactly at ``self.start_time`` has no
-        sample inside this segment: the segment's first sample is *at* that time and the chunk's last
-        sample is one interval before it. This is tested across the boundary rather than argued, in
+        Answered on the sample grid, with the same computation :meth:`inject` places by: a chunk
+        contributes when some grid point of this segment lies within its sample span. A chunk ending
+        exactly at ``self.start_time`` therefore does not -- its last sample is one interval before
+        the segment's first -- and neither does an off-grid chunk overlapping an edge by less than
+        a sample, which places nothing here because no grid point of this segment falls inside it.
+        This is tested across the boundary rather than argued, in
         ``test_provenance_across_segments.py``, because an off-by-one here silently over- or
         under-reports one frame per signal.
 
@@ -439,12 +462,10 @@ class TimeSeries(JSONSerializable):
             other: The chunk that would be injected.
 
         Returns:
-            ``True`` if the chunk overlaps this segment's sampled span.
+            ``True`` if injecting the chunk would place at least one sample in this segment.
         """
-        unit = self.start_time.unit
-        chunk_start = float(other.start_time.to(unit).value)
-        chunk_end = float(other.end_time.to(unit).value)
-        return chunk_start < float(self.end_time.to(unit).value) and chunk_end > float(self.start_time.value)
+        _, _, first, last = self._grid_span(other)
+        return max(first, 0) <= min(last, len(self.time_array) - 1)
 
     def inject_from_list(
         self, ts_iterable: Iterable[TimeSeries], preceding_gap: tuple[float, float] | None = None
