@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 
 from gwmock.cli.utils.config import Config
 
@@ -670,3 +671,56 @@ class TestAgainstRealGeneration:
             "a 30+25 binary at 1024 Hz leads coalescence by 3.6 s, so this event starts in this segment"
         )
         assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 5.0})
+
+
+class TestAnOffGridCoalescenceTime:
+    """A real waveform whose buffer starts between grid samples, assembled across a segment boundary.
+
+    The end-to-end matrix cannot reach this: its fixture event coalesces on a whole second and its
+    runs start on a 16-second boundary, so every chunk arrives on the segment grid and the
+    off-grid branch of ``TimeSeries.inject`` is never taken there.
+    """
+
+    #: Sub-sample offset of the off-grid run. 0.375 samples at 1024 Hz is 3 * 2**-13 s, exactly
+    #: representable beside the epoch, so the offset injection measures is the nominal one.
+    _OFFSET_SAMPLES = 0.375
+
+    def _assemble(self, working_directory: Path, offset_samples: float) -> np.ndarray:
+        orchestrator = _orchestrator(working_directory, total_duration=2 * _SEGMENT_DURATION)
+        coa_time = _START + _SEGMENT_DURATION + 1.0 + offset_samples / _SAMPLING_FREQUENCY
+        orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": coa_time},)
+        first = orchestrator.simulate().signal_segment
+        orchestrator.update_state()
+        second = orchestrator.simulate().signal_segment
+        return np.concatenate([np.asarray(first), np.asarray(second)], axis=1)
+
+    def test_the_off_grid_run_is_the_on_grid_run_sinc_shifted(self, tmp_path, caplog):
+        """Equal, across the seam, to the on-grid run resampled by the same sub-sample shift.
+
+        Shifting ``coa_time`` by a fraction of a sample shifts the waveform and nothing else of
+        consequence, so the off-grid strain must be the on-grid strain evaluated
+        ``offset_samples`` earlier. The windowed-sinc kernel reproduces that to ~4e-7 of peak --
+        the residue of the waveform's own weak dependence on ``coa_time`` -- where linear
+        interpolation leaves ~0.27, and resampling segment by segment leaves the seam broken.
+
+        The chunk's first and last kernel half-width are excluded: positions just outside a chunk
+        evaluate to zero there by contract, while the reference resamples across them.
+        """
+        on_grid = self._assemble(tmp_path / "on", 0.0)
+        with caplog.at_level(logging.WARNING, logger="gwmock"):
+            off_grid = self._assemble(tmp_path / "off", self._OFFSET_SAMPLES)
+
+        # Resampled once, as a whole, in the first segment; the second receives an on-grid tail.
+        assert caplog.text.count("Chunk time grid does not align") == 1
+
+        indices = np.arange(on_grid.shape[1])
+        support = np.flatnonzero(np.any(on_grid != 0.0, axis=0))
+        half_width = 64
+        compared = (indices > support[0] + half_width) & (indices < support[-1] - half_width)
+        seam = int(_SEGMENT_DURATION * _SAMPLING_FREQUENCY)
+        assert compared[seam - half_width : seam + half_width].all(), "the seam must lie inside the comparison"
+
+        for channel in range(on_grid.shape[0]):
+            expected = resample_uniform_sinc(on_grid[channel], indices - self._OFFSET_SAMPLES)
+            error = np.abs(off_grid[channel] - expected)[compared] / np.max(np.abs(on_grid[channel]))
+            assert np.max(error) < 1e-5, f"channel {channel}: off-grid strain differs by {np.max(error):.3g} of peak"

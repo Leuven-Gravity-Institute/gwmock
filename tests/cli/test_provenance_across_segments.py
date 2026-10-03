@@ -88,6 +88,41 @@ class TestWhichChunksCountAsPresent:
         assert segment.contributes_samples(_chunk(chunk_start, chunk_duration)) is expected, why
 
 
+class TestOffGridChunksAgreeWithInjection:
+    """For an off-grid chunk, presence is whether injection places a sample, not whether spans overlap.
+
+    The chunk is resampled onto the segment's grid points within its own sample span, so one that
+    overlaps an edge by less than a sample -- or a one-sample chunk between two grid points --
+    places nothing, and claiming it in the provenance record would name a signal the frame lacks.
+    """
+
+    @pytest.mark.parametrize(
+        ("first_sample", "samples", "expected", "why"),
+        [
+            (63.5, 4, False, "starts half a sample before the segment end"),
+            (62.5, 4, True, "starts one and a half samples before the segment end"),
+            (-3.5, 4, False, "last sample half a sample before the segment start"),
+            (-2.5, 4, True, "last sample half a sample into the segment"),
+            (10.5, 1, False, "a single sample between two grid points"),
+            (10.5, 2, True, "two samples straddling a grid point"),
+        ],
+    )
+    def test_presence_matches_what_injection_places(self, first_sample, samples, expected, why):
+        segment = _segment(100.0)
+        chunk = TimeSeries(
+            data=np.ones((1, samples)),
+            start_time=Quantity(100.0 + first_sample / 16.0, unit="s"),
+            sampling_frequency=Quantity(16.0, unit="Hz"),
+        )
+
+        claimed = segment.contributes_samples(chunk)
+        segment.inject(chunk)
+        placed = bool(np.any(np.asarray(segment[0])))
+
+        assert claimed is expected, why
+        assert placed is expected, f"{why}: injection disagrees with the expectation"
+
+
 class TestTheSegmentRecordsWhatReachesIt:
     """`_contributing_injections` and `_merge_injection_records`, the pieces `simulate` composes."""
 

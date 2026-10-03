@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 from astropy.units import Quantity
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
@@ -198,6 +201,67 @@ class TestTimeSeriesSerialization:
         np.testing.assert_array_equal(reconstructed[0].value, sample_timeseries[0].value)
 
 
+class TestInjectOffLatticeResampling:
+    """An off-lattice chunk injected through the wrapper is resampled with the windowed-sinc kernel.
+
+    The wrapper used to pre-resample such a chunk onto the segment grid by linear interpolation,
+    so the per-channel ``inject`` only ever saw an aligned chunk and never reached the kernel
+    gwmock-signal's ``inject_strain`` uses. At 0.8 x Nyquist that left an interior error of ~0.63
+    of peak against the analytic signal.
+    """
+
+    def test_matches_the_shared_kernel_and_the_analytic_signal(self):
+        """Pinned to the kernel itself and to the analytic signal, on every channel."""
+        sampling_frequency, start = 4096.0, 1e9
+        # 1000.375 samples is 8003 * 2**-15 s, exactly representable beside a GPS epoch of 1e9, so
+        # the offset `inject` measures is the nominal one and both checks below can be tight.
+        length, shift, frequency = 2048, 1000.375, 0.8 * sampling_frequency / 2
+        envelope = np.hanning(length)
+        values = envelope * np.sin(2 * np.pi * frequency * np.arange(length) / sampling_frequency)
+        segment = TimeSeries(data=np.zeros((2, 4096)), start_time=start, sampling_frequency=sampling_frequency)
+        chunk = TimeSeries(
+            data=np.stack([values, -2.0 * values]),
+            start_time=start + shift / sampling_frequency,
+            sampling_frequency=sampling_frequency,
+        )
+
+        assert segment.inject(chunk) is None
+
+        covered = np.arange(1001, 3048)
+        positions = covered - shift
+        expected = resample_uniform_sinc(values, positions)
+        interior = (positions > 200) & (positions < length - 200)
+        analytic = (0.5 - 0.5 * np.cos(2 * np.pi * positions / (length - 1))) * np.sin(
+            2 * np.pi * frequency * positions / sampling_frequency
+        )
+        for channel, scale in enumerate((1.0, -2.0)):
+            written = np.asarray(segment[channel])
+            np.testing.assert_allclose(written[covered], scale * expected, rtol=0.0, atol=1e-15)
+            assert np.max(np.abs(written[covered] - scale * analytic)[interior]) < 1e-9
+
+
+class TestTheOffGridWarningDescribesTheResampling:
+    """The warning an off-grid chunk raises must name what is actually done to it.
+
+    It once announced linear interpolation and outlived the switch to the windowed-sinc kernel,
+    telling a caller the opposite of the documented behaviour. Asserted on content, not count.
+    """
+
+    def test_the_warning_names_the_windowed_sinc_kernel(self, caplog):
+        sampling_frequency = 4096.0
+        segment = TimeSeries(data=np.zeros((1, 1000)), start_time=1e9, sampling_frequency=sampling_frequency)
+        chunk = TimeSeries(
+            data=np.ones((1, 100)), start_time=1e9 + 100.5 / sampling_frequency, sampling_frequency=sampling_frequency
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gwmock"):
+            segment.inject(chunk)
+
+        messages = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+        assert any("windowed-sinc kernel" in message for message in messages), messages
+        assert not any("nterpolation will be used" in message for message in messages), messages
+
+
 class TestInjectBoundaryOverflow:
     """A chunk crossing the segment boundary must hand its tail back, aligned or not.
 
@@ -236,12 +300,9 @@ class TestInjectBoundaryOverflow:
         ("offset_samples", "description", "expected_tail"),
         [
             (900.0, "aligned", 300),
-            # One sample longer than the 300 that lie at or after the boundary. The chunk's sample
-            # at 999.5 is the left neighbour the *next* segment needs in order to interpolate its
-            # own grid point at 1000; dropping it would lose accuracy at every segment boundary.
-            # Verified not to be double-counted: this segment writes grid index 999 from the
-            # interpolation, and the tail supplies grid 1000 onward.
-            (900.5, "half a sample misaligned", 301),
+            # Resampled onto the segment lattice first: the chunk covers grid points 901..1299, and
+            # the tail is the 300 of those from the boundary at 1000 onward.
+            (900.5, "half a sample misaligned", 300),
         ],
     )
     def test_the_overflow_is_returned(self, offset_samples: float, description: str, expected_tail: int):
@@ -256,21 +317,65 @@ class TestInjectBoundaryOverflow:
         )
         assert len(np.asarray(remaining)[0]) == expected_tail
 
-    def test_the_returned_tail_is_not_resampled(self):
-        """The tail must keep its own grid so the next segment can place it correctly.
+    def test_a_misaligned_tail_is_returned_on_the_segment_lattice(self):
+        """The tail must start exactly where the next contiguous segment does.
 
-        Handing back an already-interpolated tail would resample the same data twice, and would
-        also lose the sub-sample offset the next segment needs in order to place it.
+        The chunk is resampled once, as a whole, onto the segment's lattice; the tail is the part of
+        that past the boundary. Starting it anywhere else would send it through the kernel a second
+        time in the next segment, with no context on its left.
         """
         segment = self._segment()
-        chunk = self._chunk(900.5)
 
-        remaining = segment.inject(chunk)
+        remaining = segment.inject(self._chunk(900.5))
 
         assert remaining is not None
-        assert np.all(np.asarray(remaining)[0] == 1.0), (
-            "the returned tail has been interpolated; it should be the supplied samples unchanged"
+        offset = (float(remaining.start_time.value) - float(segment.end_time.value)) * self.SAMPLING_FREQUENCY
+        assert abs(offset) < 1e-3, f"the tail starts {offset} samples off the next segment's grid"
+
+    def test_a_misaligned_chunk_covering_no_grid_point_is_skipped(self):
+        """A one-sample chunk between two grid points has nothing to place, so nothing changes."""
+        segment = self._segment()
+
+        assert segment.inject(self._chunk(500.5).crop(end_time=self.START + 501 / self.SAMPLING_FREQUENCY)) is None
+        assert not np.any(np.asarray(segment[0]))
+
+    def test_a_misaligned_signal_is_continuous_across_the_boundary(self):
+        """A signal crossing segments must be resampled as accurately at the boundary as inside one.
+
+        The windowed-sinc kernel needs about half its taps of context on either side. Resampling the
+        chunk segment by segment cuts that context at every boundary, and the error there was
+        measured at the signal's own peak; resampling the whole chunk once leaves none.
+        """
+        sampling_frequency = self.SAMPLING_FREQUENCY
+        segment_samples, length, frequency = 4096, 6000, 50.0
+        # 1000.375 samples is 8003 * 2**-15 s, exactly representable beside the epoch.
+        shift = 1000.375
+        values = np.hanning(length) * np.sin(2 * np.pi * frequency * np.arange(length) / sampling_frequency)
+        segments = [
+            TimeSeries(
+                data=np.zeros((1, segment_samples)),
+                start_time=self.START + k * segment_samples / sampling_frequency,
+                sampling_frequency=sampling_frequency,
+            )
+            for k in range(2)
+        ]
+        chunk = TimeSeries(
+            data=values[None, :],
+            start_time=self.START + shift / sampling_frequency,
+            sampling_frequency=sampling_frequency,
         )
+
+        for segment in segments:
+            chunk = segment.inject(chunk)
+        assert chunk is None
+
+        written = np.concatenate([np.asarray(segment[0]) for segment in segments])
+        positions = np.arange(len(written)) - shift
+        near_boundary = slice(segment_samples - 64, segment_samples + 64)
+        analytic = (0.5 - 0.5 * np.cos(2 * np.pi * positions / (length - 1))) * np.sin(
+            2 * np.pi * frequency * positions / sampling_frequency
+        )
+        assert np.max(np.abs(written - analytic)[near_boundary]) < 1e-9
 
     @pytest.mark.parametrize("offset_samples", [900.0, 900.5])
     def test_the_caller_s_chunk_is_not_modified(self, offset_samples: float):

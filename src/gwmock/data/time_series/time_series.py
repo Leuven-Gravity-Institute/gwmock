@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable
 from numbers import Number
 from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.units.quantity import Quantity
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 from gwpy.types.index import Index
-from scipy.interpolate import interp1d
 
 from gwmock.data.serialize.serializable import JSONSerializable
 from gwmock.data.time_series.inject import alignment_tolerance, inject, is_aligned, measure_content_before
@@ -239,6 +240,30 @@ class TimeSeries(JSONSerializable):
     def inject(self, other: TimeSeries, preceding_gap: tuple[float, float] | None = None) -> TimeSeries | None:
         """Inject another TimeSeries into the current TimeSeries.
 
+        A chunk whose samples fall on this segment's grid is added sample for sample. A chunk that
+        sits a fraction of a sample off the grid is first resampled, as a whole, onto this segment's
+        grid -- extended past either end of the segment -- with the band-limited windowed-sinc kernel
+        ``gwmock_signal.projection.resampling.resample_uniform_sinc``, and a warning is logged. Only
+        grid points within the chunk's own sample span are produced; nothing is extrapolated beyond
+        its first or last sample.
+
+        Resampling the whole chunk rather than the part inside this segment is what keeps a signal
+        continuous across segment boundaries: the kernel needs about half its taps of context on
+        either side, which a per-segment resample would cut at every boundary. It also means the
+        returned remainder of an off-grid chunk is the *resampled* series, already on this segment's
+        grid, so a contiguous next segment adds it without resampling it a second time.
+
+        This replaces linear interpolation, which at 0.8 x Nyquist was off by ~0.63 of the signal's
+        peak; the sinc kernel's error there is ~1e-12. Off-grid injections therefore produce
+        different samples from earlier releases, most visibly at high frequency.
+
+        Agreement with gwmock-signal: this is the kernel gwmock-signal's projection resamples with,
+        but ``gwmock_signal.injection.core.inject_strain`` in gwmock-signal 0.17.3 -- the minimum
+        this package requires -- still interpolates cubically. The divergence is deliberate and
+        temporary: the kernel module is byte-identical between gwmock-signal 0.17.3 and the pending
+        gwmock-signal change that moves ``inject_strain`` onto it, so the two paths become equal
+        once that change is released and required here, without any further change on this side.
+
         Args:
             other: TimeSeries instance to inject.
             preceding_gap: ``(gap_start, gap_end)`` of a configured segment gap immediately before
@@ -249,8 +274,14 @@ class TimeSeries(JSONSerializable):
                 reason is a placement failure.
 
         Returns:
-            Remaining TimeSeries instance if the injected TimeSeries extends beyond the current
-            TimeSeries end time, otherwise None.
+            What this segment could not place, for the next segment. *other* itself, unchanged, if
+            it ends before this segment starts or starts after it ends, in which case nothing is
+            injected. Otherwise the part of the chunk past this segment's end, if it extends beyond
+            it; for an off-grid chunk that is the resampled series, on this segment's grid, carrying
+            *other*'s metadata, channel names and units. ``None`` if the chunk ends within this
+            segment, or if it is an off-grid chunk whose sample span contains no grid point at all
+            (a single sample between two grid points), in which case nothing is injected and a
+            warning is logged.
         """
         if len(other) != len(self):
             raise ValueError(
@@ -290,57 +321,53 @@ class TimeSeries(JSONSerializable):
             )
             return other
 
-        # Kept because the interpolation below rebinds `other` to samples drawn from this segment's
-        # own time array, which by construction cannot extend past `self.end_time`. The overflow has
-        # to be measured against what the caller actually passed, or a chunk crossing the segment
-        # boundary loses its tail -- and `TimeSeriesMixin.simulate` relies on that tail being
-        # returned to carry the rest of the signal into the next segment.
+        # Kept for the metadata and channel identity the tail carries forward: the interpolation below
+        # rebinds `other` to a new series on this segment's lattice, which has neither.
         supplied = other
 
-        # Check whether there is any offset in times
-        other_start_time = other.start_time.to(self.start_time.unit)
-        idx = ((other_start_time - self.start_time) * self.sampling_frequency).value
-        tolerance = alignment_tolerance(
-            self.start_time.value,
-            self.sampling_frequency.value,
-            gps_times=(other_start_time.value, other.end_time.to(self.start_time.unit).value),
-        )
-        if not is_aligned(idx, tolerance):
+        idx, aligned, first, last = self._grid_span(other)
+        if not aligned:
             logger.warning("Chunk time grid does not align with segment time grid.")
-            logger.warning("Interpolation will be used to align the chunk to the segment grid.")
+            logger.warning("The chunk will be resampled onto the segment grid with the windowed-sinc kernel.")
 
-            other_end_time = other.end_time.to(self.start_time.unit)
-            other_new_times = self.time_array.value[
-                (self.time_array.value >= other_start_time.value) & (self.time_array.value <= other_end_time.value)
-            ]
-
+            # The whole chunk is resampled once onto this segment's lattice -- extended past either
+            # end -- rather than only the part inside the segment. The windowed-sinc kernel needs
+            # ~half its taps of context on each side, so resampling segment by segment would cut
+            # that context at every boundary: measured errors there reached the signal's own peak,
+            # where resampling the whole chunk leaves none. The tail returned below is then already
+            # on the lattice, so a contiguous next segment places it without resampling it again.
+            #
+            # Same kernel, and the same integer-index-minus-one-offset positions, as `inject` and as
+            # the pending gwmock-signal change to `inject_strain`. The released `inject_strain` in
+            # gwmock-signal 0.17.3 still interpolates cubically, so the two packages agree on this
+            # operation only once that change is released and required; the kernel module itself is
+            # byte-identical between the two, so nothing here has to change when it is.
+            if first > last:
+                logger.warning("Chunk spans no sample of the segment grid. No injection performed.")
+                return None
+            positions = np.arange(first, last + 1) - idx
             other = TimeSeries(
-                data=np.array(
-                    [
-                        interp1d(
-                            other.time_array.value, other[i].value, kind="linear", bounds_error=False, fill_value=0.0
-                        )(other_new_times)
-                        for i in range(len(other))
-                    ]
+                data=np.array([resample_uniform_sinc(other[i].value, positions) for i in range(len(other))]),
+                start_time=Quantity(
+                    self.start_time.value + first / self.sampling_frequency.value, unit=self.start_time.unit
                 ),
-                start_time=Quantity(other_new_times[0], unit=self.start_time.unit),
                 sampling_frequency=self.sampling_frequency,
             )
 
         for i in range(self.num_of_channels):
             self[i] = inject(self[i], other[i])
 
-        # The tail comes from the supplied chunk, unresampled, so the next segment interpolates it
-        # against its own grid rather than inheriting this segment's resampling.
+        # The tail is the resampled chunk when interpolation was needed, so it is already on this
+        # segment's lattice and the next segment -- which continues that lattice -- places it as is.
         #
         # Cropped from a copy: `crop` rewrites `_data` in place and returns `self`, so cropping the
         # supplied chunk directly would truncate the caller's own object and hand it back as the
         # remainder. `inject_from_list` walks a caller-provided list, so that mutates its elements.
-        if supplied.end_time > self.end_time:
+        if other.end_time > self.end_time:
             tail = TimeSeries(
-                data=np.asarray(supplied).copy(),
-                start_time=supplied.start_time,
-                sampling_frequency=supplied.sampling_frequency,
+                data=np.asarray(other).copy(),
+                start_time=other.start_time,
+                sampling_frequency=other.sampling_frequency,
             )
             # Carry the wrapper metadata and each channel's identity across. A tail is the same
             # signal continuing into the next segment, so dropping these would strip
@@ -414,6 +441,35 @@ class TimeSeries(JSONSerializable):
             self.start_time,
         )
 
+    def _grid_span(self, other: TimeSeries) -> tuple[float, bool, int, int]:
+        """Locate *other* on this segment's sample grid.
+
+        Shared by :meth:`inject` and :meth:`contributes_samples`, so that what a segment claims to
+        receive and what it actually places are the same computation.
+
+        Args:
+            other: The chunk to locate.
+
+        Returns:
+            ``(offset, aligned, first, last)``: the chunk's first sample as a fractional index on
+            this grid (rounded to a whole index when aligned), whether it is aligned within
+            :func:`alignment_tolerance`, and the first and last grid indices lying within the
+            chunk's sample span -- not clipped to this segment, and ``first > last`` when the span
+            holds no grid point.
+        """
+        unit = self.start_time.unit
+        other_start_time = other.start_time.to(unit)
+        offset = ((other_start_time - self.start_time) * self.sampling_frequency).value
+        tolerance = alignment_tolerance(
+            self.start_time.value,
+            self.sampling_frequency.value,
+            gps_times=(other_start_time.value, other.end_time.to(unit).value),
+        )
+        aligned = is_aligned(offset, tolerance)
+        if aligned:
+            offset = float(round(offset))
+        return offset, aligned, math.ceil(offset), math.floor(offset + len(other.time_array) - 1)
+
     def contributes_samples(self, other: TimeSeries) -> bool:
         """Whether injecting *other* into this segment would place at least one sample.
 
@@ -426,9 +482,12 @@ class TimeSeries(JSONSerializable):
         edge -- still means the signal is present in that frame, which is what a provenance record
         is claiming. Reading the samples would call that absent.
 
-        The two endpoints are exclusive because a chunk ending exactly at ``self.start_time`` has no
-        sample inside this segment: the segment's first sample is *at* that time and the chunk's last
-        sample is one interval before it. This is tested across the boundary rather than argued, in
+        Answered on the sample grid, with the same computation :meth:`inject` places by: a chunk
+        contributes when some grid point of this segment lies within its sample span. A chunk ending
+        exactly at ``self.start_time`` therefore does not -- its last sample is one interval before
+        the segment's first -- and neither does an off-grid chunk overlapping an edge by less than
+        a sample, which places nothing here because no grid point of this segment falls inside it.
+        This is tested across the boundary rather than argued, in
         ``test_provenance_across_segments.py``, because an off-by-one here silently over- or
         under-reports one frame per signal.
 
@@ -436,12 +495,10 @@ class TimeSeries(JSONSerializable):
             other: The chunk that would be injected.
 
         Returns:
-            ``True`` if the chunk overlaps this segment's sampled span.
+            ``True`` if injecting the chunk would place at least one sample in this segment.
         """
-        unit = self.start_time.unit
-        chunk_start = float(other.start_time.to(unit).value)
-        chunk_end = float(other.end_time.to(unit).value)
-        return chunk_start < float(self.end_time.to(unit).value) and chunk_end > float(self.start_time.value)
+        _, _, first, last = self._grid_span(other)
+        return max(first, 0) <= min(last, len(self.time_array) - 1)
 
     def inject_from_list(
         self, ts_iterable: Iterable[TimeSeries], preceding_gap: tuple[float, float] | None = None
