@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from gwmock_signal.projection.resampling import resample_uniform_sinc
 from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.data.time_series.inject import (
@@ -744,6 +745,32 @@ class TestInjectInterpolationQuality:
         lower_threshold = -1.5
         assert np.all(result.value[25:45] <= upper_threshold)
         assert np.all(result.value[25:45] >= lower_threshold)
+
+    def test_off_lattice_resampling_uses_gwmock_signal_sinc_kernel(self):
+        """An off-lattice injection is resampled with gwmock-signal's windowed-sinc kernel.
+
+        A 0.8 x Nyquist sinusoid shifted by 0.37 samples, the regime where a cubic spline and the
+        sinc kernel part ways: cubic is off by ~0.31 of peak here. Pinned two ways -- equal to the
+        shared kernel evaluated at the expected positions, and accurate against the analytic signal,
+        which neither implementation computes.
+        """
+        sampling_frequency = 4096.0
+        timeseries = GWpyTimeSeries(np.zeros(4096), t0=0.0, dt=1 / sampling_frequency)
+        length, shift, frequency = 2048, 1000.37, 0.8 * sampling_frequency / 2
+        envelope = np.hanning(length)
+        values = envelope * np.sin(2 * np.pi * frequency * np.arange(length) / sampling_frequency)
+        other = GWpyTimeSeries(values, t0=shift / sampling_frequency, dt=1 / sampling_frequency)
+
+        result = inject(timeseries, other).value
+
+        covered = np.arange(1001, 3048)
+        positions = covered - shift
+        np.testing.assert_allclose(result[covered], resample_uniform_sinc(values, positions), rtol=0.0, atol=1e-15)
+        interior = (positions > 200) & (positions < length - 200)
+        analytic = (0.5 - 0.5 * np.cos(2 * np.pi * positions / (length - 1))) * np.sin(
+            2 * np.pi * frequency * positions / sampling_frequency
+        )
+        assert np.max(np.abs(result[covered] - analytic)[interior]) < 1e-9
 
 
 class TestInjectMixedSigns:
