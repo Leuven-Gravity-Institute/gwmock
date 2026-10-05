@@ -29,7 +29,7 @@ repos:
           - id: ruff-format
 
     - repo: https://github.com/crate-ci/typos
-      rev: v1.50.3
+      rev: typos-dict-v0.14.2
       hooks:
           - id: typos
             args: []
@@ -70,6 +70,6 @@ repos:
           - id: uv-lock
 
     - repo: https://github.com/betterleaks/betterleaks
-      rev: v1.9.0
+      rev: v2.0.0-rc.1
       hooks:
           - id: betterleaks
