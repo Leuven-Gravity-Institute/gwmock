@@ -1,0 +1,168 @@
+# DeepExtractor instrumental glitches for both Einstein Telescope designs at
+# once -- the 10 km triangle in Sardinia and the 15 km 2L, aligned -- in a
+# single file.
+#
+# `detectors` lists both network presets, and the noise side resolves them into
+# five interferometers: ET1_SARD, ET2_SARD and ET3_SARD for the triangle,
+# ET1_2L_ALIGNED_SARD and ET2_2L_ALIGNED_EMR for the 2L. Each (glitch model,
+# interferometer) pair runs its own independent Poisson process off its own RNG
+# stream, so one file and one seed give five independent glitch realisations.
+#
+# Output is `.gwf`, since frames are the usual deliverable for glitch data.
+#
+# Needs the extra: `pip install 'gwmock[deepextractor]'`. The dataset (~2.3 GB)
+# is fetched from the HuggingFace Hub on first use and cached; later runs reuse
+# the cache after an ETag check.
+#
+# THE PSD IS THE COLORING REFERENCE, AND EACH DESIGN NEEDS ITS OWN. The
+# dataset's waveforms are whitened reconstructions, and `psd_file` is what
+# shapes them back into strain. The two designs do not share a noise curve, so
+# there are two glitch models below, each scoped with `detectors` to the
+# interferometers of one design and carrying that design's PSD. The run refuses
+# a configuration that leaves an interferometer unclaimed or lets two PSDs claim
+# the same one, so a missing or misspelled name fails before any strain is
+# generated rather than coloring an instrument against the wrong curve.
+
+globals:
+    simulator-arguments:
+        # 4096 Hz is the dataset's native rate. Below it the backend resamples
+        # by linear interpolation with no anti-aliasing filter, so
+        # high-frequency glitch content aliases; the SNR calibration stays exact
+        # either way, because it is computed after resampling.
+        sampling-frequency: 4096
+        duration: 4096
+        total-duration: 1 day
+        # GPS 1577491218 is 2030-01-01, inside the ET observing era rather than
+        # LIGO's.
+        start-time: 1577491218
+    working-directory: .
+    output-directory: output
+    metadata-directory: metadata
+
+orchestration:
+    noise:
+        arguments:
+            seed: 42
+            detectors:
+                - ET-Triangle-Sardinia
+                - ET-2L-Aligned
+            glitches:
+                # The 10 km triangle.
+                - kind: deepextractor
+                  # Interferometer names, not network presets: a model's
+                  # selector is matched against the interferometers the presets
+                  # above resolve to.
+                  detectors:
+                      - ET1_SARD
+                      - ET2_SARD
+                      - ET3_SARD
+                  # Per-class Poisson rates in Hz, per interferometer, at their
+                  # O3 LIGO rates -- Gravity Spy label counts divided by GWOSC
+                  # observing livetime, averaged over H1 and L1 across O3a+O3b.
+                  # They sum to 8.098e-3 Hz, one glitch per 2.1 minutes per
+                  # interferometer: 77% of the full O3 glitch rate, the rest
+                  # being the sixteen Gravity Spy classes with no waveforms in
+                  # the dataset. The per-network examples beside this one say
+                  # more about what the table does and does not represent.
+                  #
+                  # The YAML anchor lets the 2L model below reuse this table, so
+                  # the two designs cannot drift apart by accident. Give the 2L
+                  # its own mapping instead where its rates should differ.
+                  rate: &o3_rates
+                      Blip: 0.0003536
+                      Fast_Scattering: 0.001955
+                      Koi_Fish: 0.0006158
+                      Low_Frequency_Burst: 0.0006542
+                      Scattered_Light: 0.002902
+                      Tomte: 0.001239
+                      Whistle: 0.0003792
+                  # Target optimal SNR against `psd_file`, drawn per event from
+                  # a power-law tail per class rather than pinned to one value:
+                  # the classes are heavy-tailed, and for the heaviest the tail
+                  # is where most of their effect sits.
+                  #
+                  # `alpha` is the Pareto (survival-function) tail index of the
+                  # class's O3 Omicron SNRs, and `minimum` is the 7.5 Omicron
+                  # trigger threshold it was measured above. As a check, the
+                  # median such a tail implies, 7.5 * 2 ** (1 / alpha), lands
+                  # within 10% of the measured median SNR for five classes. It
+                  # misses for Tomte (11.2 against 14.0) and badly for Koi_Fish
+                  # (42 against 114), whose bulk is not a power law: the tail
+                  # is reproduced and the bulk replaced.
+                  #
+                  # Koi_Fish has alpha below 1, so its mean SNR is infinite and
+                  # an uncapped draw eventually exceeds anything a detector
+                  # could record; it is capped at the largest Koi_Fish SNR
+                  # observed in O3. The other classes have a finite mean and are
+                  # left uncapped -- add a `maximum` if you have one to hand.
+                  #
+                  # These are Omicron SNRs, against the LIGO PSD over the band
+                  # Omicron searched, now used as targets against the ET PSD
+                  # from `low_frequency_cutoff` upward. That reads them as "the
+                  # same loudness distribution, in this detector's band" -- a
+                  # choice about the population, not something the sampler can
+                  # check.
+                  snr: &o3_snr_tails
+                      Blip:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 1.34
+                      Fast_Scattering:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 3.11
+                      Koi_Fish:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 0.40
+                          maximum: 11841.5
+                      Low_Frequency_Burst:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 1.40
+                      Scattered_Light:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 1.48
+                      Tomte:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 1.71
+                      Whistle:
+                          distribution: power_law
+                          minimum: 7.5
+                          alpha: 1.65
+                  # Unity: the SNR alone sets the scale.
+                  amplitude_distribution: &unity_amplitude
+                      distribution: lognormal
+                      mean: 1.0
+                      std: 0.0
+                  # The 10 km PSD, applied to the triangle's interferometers
+                  # only.
+                  psd_file: ET_10_full_cryo_psd
+                  low_frequency_cutoff: 5.0
+                  # Pin the dataset to a commit so a regenerated frame set is
+                  # reproducible for a fixed (gwmock version, this file, seed).
+                  revision: 144f56880c6e7aa8def31c537ca843b8c9e5bdda
+                # The 15 km 2L: the same glitch population, colored against the
+                # 15 km PSD.
+                - kind: deepextractor
+                  detectors:
+                      - ET1_2L_ALIGNED_SARD
+                      - ET2_2L_ALIGNED_EMR
+                  rate: *o3_rates
+                  snr: *o3_snr_tails
+                  amplitude_distribution: *unity_amplitude
+                  psd_file: ET_15_full_cryo_psd
+                  low_frequency_cutoff: 5.0
+                  revision: 144f56880c6e7aa8def31c537ca843b8c9e5bdda
+        output:
+            output_directory: glitch
+            # The `.gwf` suffix is what selects frame output -- the format is
+            # inferred from the file name, not declared. `{{ detectors }}`
+            # expands once per interferometer, all five of them.
+            file_name:
+                'E-{{ detectors }}_STRAIN_GLITCH-{{ start_time }}-{{ duration
+                }}.gwf'
+            arguments:
+                channel: '{{ detectors }}:STRAIN'

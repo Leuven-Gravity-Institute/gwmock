@@ -15,12 +15,13 @@
 # is fetched from the HuggingFace Hub on first use and cached; later runs reuse
 # the cache after an ETag check.
 #
-# THE PSD IS THE COLORING REFERENCE, AND ONE MODEL CARRIES ONE OF THEM. The
-# dataset's waveforms are whitened reconstructions, and `psd_file` is what
-# shapes them back into strain. A glitch model carries exactly one `psd_file`
-# and applies it to every interferometer of the run, so no single file can mix
-# the 10 km triangle's PSD with the 15 km 2L's -- which is why each geometry
-# gets its own file here.
+# THE PSD IS THE COLORING REFERENCE. The dataset's waveforms are whitened
+# reconstructions, and `psd_file` is what shapes them back into strain. This
+# file covers one geometry, so its one glitch model applies its PSD to every
+# interferometer of the run. To put the 10 km triangle and the 15 km 2L in one
+# file, give each design its own model, scoped with `detectors` to that design's
+# interferometers and carrying that design's PSD -- `et_triangle_and_2l` beside
+# this one does exactly that.
 
 globals:
     simulator-arguments:
@@ -84,13 +85,14 @@ orchestration:
                   # default, and a scalar here would apply one target to every
                   # class.
                   #
-                  # A median is a weak summary and it is the best this backend
-                  # accepts. Each class's SNR distribution is heavy-tailed, so
-                  # calibrating every event of a class to one value discards the
-                  # tail. The only available spread is the lognormal
-                  # `amplitude_distribution` multiplier below, left at unity
-                  # rather than standing in for a measured shape. Koi_Fish
-                  # really is an order of magnitude above the rest.
+                  # A median is a weak summary. Each class's SNR distribution is
+                  # heavy-tailed, so calibrating every event of a class to one
+                  # value discards the tail. `snr` also takes a distribution per
+                  # class -- a `power_law` tail or an `empirical` sample, drawn
+                  # per event -- and `et_triangle_and_2l` beside this one uses
+                  # the measured O3 tails; this file keeps the fixed medians as
+                  # the simplest configuration. Koi_Fish really is an order of
+                  # magnitude above the rest.
                   snr:
                       Blip: 13.95
                       Fast_Scattering: 9.004
