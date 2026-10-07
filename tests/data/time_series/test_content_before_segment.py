@@ -187,9 +187,11 @@ class TestTheWarning:
     def test_a_real_run_warns_when_the_pre_coalescence_duration_is_unavailable(self, tmp_path, caplog):
         """Synthetic arrays cannot show that a real configuration reaches this.
 
-        A 30+25 Msun binary at 20 Hz is conditioned into a 4 s buffer with the merger 0.4 s from its
-        end, so a ``coa_time`` 0.5 s past a segment boundary has 3.1 s of inspiral in the previous
-        segment -- which is already written.
+        A 30+25 Msun binary at 20 Hz is conditioned into a buffer that starts seconds before its
+        merger, so a ``coa_time`` 0.5 s past a segment boundary leaves all but the last 0.5 s of
+        that lead in the previous segment -- which is already written. How long the lead is belongs
+        to the waveform backend's conditioning and changes with it (3.6 s in one gwmock-signal
+        release, 7.2 s in the next), so the expected loss is taken from the backend's own answer.
 
         Segments now claim an event by where its waveform starts, so this configuration keeps that
         inspiral -- ``tests/cli/test_inspiral_segment_placement.py`` measures that it survives, by
@@ -248,8 +250,16 @@ class TestTheWarning:
         )
 
         # Force the fallback rather than simulate an old install: the query is made through the
-        # adapter, so replacing its answer with "unknown" is the whole difference.
-        orchestrator.signal_adapter.pre_coalescence_duration = lambda *_args, **_kwargs: None
+        # adapter, so replacing its answer with "unknown" is the whole difference. The real answer
+        # is still recorded, with the arguments placement asked it with, because it is what the
+        # loss should be measured against.
+        real_query = orchestrator.signal_adapter.pre_coalescence_duration
+        leads = []
+
+        def unavailable(*args, **kwargs):
+            leads.append(real_query(*args, **kwargs))
+
+        orchestrator.signal_adapter.pre_coalescence_duration = unavailable
 
         with caplog.at_level(logging.WARNING, logger="gwmock"):
             orchestrator.simulate()  # first segment: nothing to claim yet
@@ -257,12 +267,19 @@ class TestTheWarning:
             orchestrator.simulate()  # the segment holding coa_time
 
         assert "Discarding" in caplog.text, "the fallback lost part of an inspiral without saying so"
-        # A bounded range, not the exact 3.100 s this currently prints. The value comes from LAL's
-        # conditioning, so pinning it would turn a waveform-library bump into a failure here while
-        # saying nothing about whether the reporting works. Still tight enough to fail if the
-        # measurement were the whole buffer, a single sample, or zero.
+        # Exact to a sample, against a figure the reporting does not compute: everything before the
+        # boundary is the backend's lead less the 0.5 s by which coa_time follows the boundary. A
+        # fixed number here would encode one release's conditioning and fail on the next while
+        # saying nothing about the reporting. This still fails if the measurement were the whole
+        # buffer (which also holds the post-merger tail), a single sample, or zero.
+        assert len(set(leads)) == 1, f"the backend gave inconsistent leads for one event: {leads}"
+        assert leads[0] is not None, "the real query must answer here, or the expected loss is unknown"
+        assert leads[0] > 1.0, f"expected a real inspiral lead, got {leads[0]}"
         dropped = float(re.search(r"Discarding ([\d.]+) s", caplog.text).group(1))
-        assert 1.0 < dropped < 4.0, f"expected a few seconds of inspiral before the boundary, got {dropped}"
+        assert dropped == pytest.approx(leads[0] - 0.5, abs=1.0 / _FS), (
+            f"the backend leads coalescence by {leads[0]} s, so {leads[0] - 0.5} s precede the boundary; "
+            f"the warning reported {dropped}"
+        )
 
     def test_a_chunk_lying_entirely_before_the_segment_is_reported(self, caplog):
         """The larger loss must not be the quieter one.
