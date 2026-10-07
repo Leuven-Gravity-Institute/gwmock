@@ -592,18 +592,50 @@ orchestration:
                   revision: 144f56880c6e7aa8def31c537ca843b8c9e5bdda
 ```
 
-| Argument                 | Required | Meaning                                                                                                                                                                                                                               |
-| ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rate`                   | yes      | Poisson rate in Hz, per interferometer. A number is the total rate, with each event's class drawn uniformly; a mapping gives one rate per class, the total being their sum and each event's class drawn in proportion to its own rate |
-| `snr`                    | **yes**  | Target optimal SNR against `psd_file`. A number applies to every class; a mapping gives one target per class                                                                                                                          |
-| `psd_file`               | **yes**  | The PSD the whitened reconstructions are coloured with. A bundled name (`ET_10_full_cryo_psd`), a local path, or an http(s) URL to a two-column `.txt`                                                                                |
-| `glitch_classes`         | no       | Which of the seven classes to draw from. Defaults to all seven                                                                                                                                                                        |
-| `revision`               | no       | Pins the HuggingFace dataset to a branch, tag, or commit SHA. Unset tracks the repository default                                                                                                                                     |
-| `low_frequency_cutoff`   | no       | Lower edge of the band the SNR is computed over, in Hz. Defaults to 2.0                                                                                                                                                               |
-| `high_frequency_cutoff`  | no       | Upper edge, in Hz. Defaults to Nyquist                                                                                                                                                                                                |
-| `amplitude_distribution` | yes      | Multiplier applied on top of the SNR calibration, required of every glitch model. `mean: 1.0, std: 0.0` for no spread                                                                                                                 |
-| `local_files_only`       | no       | Read the cached dataset without contacting the Hub at all. Defaults to `false`                                                                                                                                                        |
-| `repo_id`                | no       | The dataset to draw from. Defaults to `tomdooney/deepextractor-glitch-reconstructions`                                                                                                                                                |
+| Argument                 | Required | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rate`                   | yes      | Poisson rate in Hz, per interferometer. A number is the total rate, with each event's class drawn uniformly; a mapping gives one rate per class, the total being their sum and each event's class drawn in proportion to its own rate                                                                                                                                                                                             |
+| `snr`                    | **yes**  | Target optimal SNR against `psd_file`. A number applies to every class; a mapping gives one target per class. A target may also be a distribution, drawn per event: `{distribution: power_law, minimum, alpha, maximum}` (`maximum` optional) or `{distribution: empirical, samples: [...]}` / `{..., file: path}`. Given in place of the number it applies to every class; given per class, fixed and sampled targets mix freely |
+| `psd_file`               | **yes**  | The PSD the whitened reconstructions are coloured with. A bundled name (`ET_10_full_cryo_psd`), a local path, or an http(s) URL to a two-column `.txt`                                                                                                                                                                                                                                                                            |
+| `detectors`              | no       | The interferometers this model injects into: one name or a list. Unset applies it to every interferometer of the run. Names are interferometers (`ET1_SARD`), not network presets (`ET-Triangle-Sardinia`)                                                                                                                                                                                                                        |
+| `glitch_classes`         | no       | Which of the seven classes to draw from. Defaults to all seven                                                                                                                                                                                                                                                                                                                                                                    |
+| `revision`               | no       | Pins the HuggingFace dataset to a branch, tag, or commit SHA. Unset tracks the repository default                                                                                                                                                                                                                                                                                                                                 |
+| `low_frequency_cutoff`   | no       | Lower edge of the band the SNR is computed over, in Hz. Defaults to 2.0                                                                                                                                                                                                                                                                                                                                                           |
+| `high_frequency_cutoff`  | no       | Upper edge, in Hz. Defaults to Nyquist                                                                                                                                                                                                                                                                                                                                                                                            |
+| `amplitude_distribution` | yes      | Multiplier applied on top of the SNR calibration, required of every glitch model. `mean: 1.0, std: 0.0` for no spread                                                                                                                                                                                                                                                                                                             |
+| `local_files_only`       | no       | Read the cached dataset without contacting the Hub at all. Defaults to `false`                                                                                                                                                                                                                                                                                                                                                    |
+| `repo_id`                | no       | The dataset to draw from. Defaults to `tomdooney/deepextractor-glitch-reconstructions`                                                                                                                                                                                                                                                                                                                                            |
+
+Two of those arguments reach past a single fixed target and a single network:
+
+- **`detectors` is what lets one file describe two designs.** The 10 km triangle
+  and the 15 km 2L do not share a noise curve, so they cannot share a
+  `psd_file`; give each design its own model, scoped to its interferometers. A
+  configuration that does not say what every interferometer gets is refused
+  before any strain is generated: an interferometer no model claims, two models'
+  PSDs claiming the same interferometer, or a selector naming an interferometer
+  the run does not have each raise an error naming the interferometers involved.
+  Where an interferometer should carry no glitches, say so with a model at
+  `rate: 0.0`. A model without `detectors` applies to every interferometer, as
+  before. See
+  [Scoping a model to some interferometers](https://leuven-gravity-institute.github.io/gwmock-noise/user_guide/noise_simulation/#scoping-a-model-to-some-interferometers)
+  in the gwmock-noise guide.
+- **A distribution-valued `snr` keeps a class's tail.** Measured glitch SNRs are
+  heavy-tailed, and one fixed target per class discards the tail. `alpha` is the
+  exponent of the survival function — the convention a Hill or
+  maximum-likelihood tail index is quoted in — so a measured index goes in as
+  measured, with `minimum` set to the threshold it was measured above. Setting
+  `maximum` renormalizes the law onto `[minimum, maximum]`; leave it unset only
+  where `alpha` is comfortably above 1, since below that the mean is infinite
+  and a long run eventually draws an SNR no detector could record. An
+  `empirical` file holds one SNR per line, or is an HDF5 file with an `snr`
+  dataset. Each event's `target_snr` in the batch metadata is the value it was
+  drawn with (see
+  [Finding which frame contains a glitch](reproducibility.md#finding-which-frame-contains-a-glitch)).
+  See
+  [Sampled SNR distributions](https://leuven-gravity-institute.github.io/gwmock-noise/user_guide/noise_simulation/#sampled-snr-distributions)
+  for the survival functions and what an SNR measured by another pipeline means
+  as a target here.
 
 Four things about it are worth knowing before a production run:
 
@@ -634,7 +666,9 @@ without it the model raises the moment it first reaches for the dataset.
 
 See `examples/noise/glitches/deepextractor/<network>` for runnable
 configurations — one per detector network, each covering that geometry's
-interferometers in a single file and writing frames.
+interferometers in a single file and writing frames — and
+`examples/noise/glitches/deepextractor/et_triangle_and_2l` for both designs in
+one file, with per-class power-law SNR tails.
 
 ## Template Variables
 
