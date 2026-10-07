@@ -20,7 +20,7 @@ import pytest
 from gwmock.cli.utils.hash import compute_content_hash
 
 from .matrix import E2E_MATRIX, MatrixEntry
-from .overlay import CONTAINS_SIGNAL
+from .overlay import NONZERO_OUTPUT
 from .runner import config_of, manifest, samples, skip_if_unavailable, written_files
 
 pytestmark = pytest.mark.e2e
@@ -102,30 +102,32 @@ class TestExampleRuns:
                     f"'{item['path']}' does not hold the channels its metadata declares"
                 )
 
-    def test_the_output_contains_signal_where_expected(self, entry: MatrixEntry, completed_run):
-        """A run whose span covers the population must not be all zeros.
+    def test_the_output_is_nonzero_where_expected(self, entry: MatrixEntry, completed_run):
+        """A run whose span covers its events must not write all zeros where they belong.
 
         This is the assertion that distinguishes "the pipeline ran" from "the pipeline produced
-        data". A configuration whose segment misses its events completes, writes
-        correctly-shaped files, and contains nothing at all -- a trap hit for real while
-        developing these tests, not a hypothetical one.
+        data". A configuration whose segment misses its events, or whose injector never fires,
+        completes, writes correctly-shaped files, and contains nothing at all -- a trap hit for
+        real while developing these tests, not a hypothetical one.
         """
-        if entry.label not in CONTAINS_SIGNAL:
-            pytest.skip(f"'{entry.label}' is not expected to contain a located signal")
+        if entry.label not in NONZERO_OUTPUT:
+            pytest.skip(f"'{entry.label}' is not expected to contain located content")
         skip_if_unavailable(entry)
         tmp_path = completed_run(entry)
         config = config_of(entry, tmp_path)
+        section = NONZERO_OUTPUT[entry.label]
 
-        # Only the signal outputs. Counting every file instead lets a signal+noise
+        # Only the named section's outputs. Counting every file instead lets a signal+noise
         # configuration pass on its noise alone -- verified: with the start time deliberately
         # misaligned, `signal/bbh` failed but `quick_start` still passed, because its noise is
         # non-zero whatever the signal did.
-        signal_directory = tmp_path / "output" / config["orchestration"]["signal"]["output"]["output_directory"]
-        signal_files = [path for path in written_files(tmp_path) if signal_directory in path.parents]
-        assert signal_files, f"'{entry.label}' wrote nothing under {signal_directory}"
+        directory = tmp_path / "output" / config["orchestration"][section]["output"]["output_directory"]
+        files = [path for path in written_files(tmp_path) if directory in path.parents]
+        assert files, f"'{entry.label}' wrote nothing under {directory}"
 
-        occupied = sum(int(np.count_nonzero(samples(path))) for path in signal_files)
+        occupied = sum(int(np.count_nonzero(samples(path))) for path in files)
         assert occupied > 0, (
-            f"'{entry.label}' wrote only zeros to {signal_directory.name}/, so no signal reached the "
-            f"output -- most likely the segment does not cover the population's events."
+            f"'{entry.label}' wrote only zeros to {directory.name}/, so nothing reached its "
+            f"{section} output -- most likely the segment misses the population's events, or no "
+            f"glitch was injected."
         )

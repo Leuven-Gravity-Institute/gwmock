@@ -69,7 +69,7 @@ _FIXTURE_EVENT_GPS = _fixture_event_gps()
 
 #: Start time placing that event inside a short segment. A run whose span misses the population
 #: still succeeds and writes only zeros, so this is not a cosmetic choice -- see the
-#: ``contains_signal`` assertions in the end-to-end tests.
+#: ``test_the_output_is_nonzero_where_expected`` in the end-to-end tests.
 #:
 #: GPS 1419724816, which is 2024-12-31 23:59:58 UTC -- chosen for 16-second alignment, so the
 #: fixture event four seconds later falls at 2025-01-01 00:00:02. The choice of *year* is
@@ -298,20 +298,30 @@ def _scale_glitch_rates(config: dict[str, Any], scale: float) -> None:
         )
 
 
-#: Entries whose span is expected to contain a gravitational-wave signal, so an all-zero output
-#: is a failure rather than a valid result. Noise-only runs are excluded because their content
-#: is noise, and the SGWB run produces a background rather than a located event.
-CONTAINS_SIGNAL: frozenset[str] = frozenset(
-    {
-        "noise/uncorrelated_gaussian/quick_start",
-        "signal/bbh/et_triangle_sardinia",
-        "signal/waveform_backend/ripple",
-        "signal/execution/batched",
-        # Every pulsar is present in every segment, so any span contains signal -- unlike the
-        # transient entries, whose span has to be aligned to an event.
-        "signal/cw/et_triangle_sardinia",
-    }
-)
+#: Entries whose span is expected to put content in a particular output, by label, mapped to the
+#: ``orchestration`` section whose ``output_directory`` must then not be all zeros.
+#:
+#: A section rather than a bare label, because "this run produced data" is only meaningful against
+#: the output that carries what the entry is about. A signal+noise run names ``signal``, so it
+#: cannot pass on its noise alone; a glitch-only run names ``noise``, which is the only section it
+#: has and holds nothing but the glitches it injected.
+#:
+#: Noise-only Gaussian runs are excluded because their content is noise whatever the code did, and
+#: the SGWB run produces a background rather than a located event.
+NONZERO_OUTPUT: dict[str, str] = {
+    "noise/uncorrelated_gaussian/quick_start": "signal",
+    "signal/bbh/et_triangle_sardinia": "signal",
+    "signal/waveform_backend/ripple": "signal",
+    "signal/execution/batched": "signal",
+    # Every pulsar is present in every segment, so any span contains signal -- unlike the
+    # transient entries, whose span has to be aligned to an event.
+    "signal/cw/et_triangle_sardinia": "signal",
+    # Glitch-only: the noise output has no Gaussian component, so all zeros means no glitch was
+    # injected. Both are in NOT_HERMETIC and skip today; listed so the guard applies the moment
+    # either is made runnable, rather than relying on someone remembering to add it then.
+    "noise/glitches/deepextractor/et_triangle_sardinia": "noise",
+    "noise/glitches/gengli/et_triangle_sardinia/e1": "noise",
+}
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

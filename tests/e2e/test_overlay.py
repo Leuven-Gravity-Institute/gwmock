@@ -23,8 +23,8 @@ from .overlay import (
     _GLITCH_RATE_SCALES,
     _OVERLAYS,
     _TEST_SEED,
-    CONTAINS_SIGNAL,
     EXAMPLES_DIR,
+    NONZERO_OUTPUT,
     NOT_HERMETIC,
     POPULATION_FIXTURE,
     apply_overlay,
@@ -95,7 +95,7 @@ def test_the_aligned_start_brackets_the_fixture_event():
     shortest = min(
         overlay["globals"]["simulator-arguments"]["duration"]
         for label, overlay in _OVERLAYS.items()
-        if label in CONTAINS_SIGNAL
+        if NONZERO_OUTPUT.get(label) == "signal"
     )
 
     assert _ALIGNED_START <= _FIXTURE_EVENT_GPS < _ALIGNED_START + shortest, (
@@ -257,10 +257,11 @@ class TestGlitchRateScaling:
         """The point of scaling: at the example's own rates the entry would write zeros.
 
         A run that fires no glitch still completes and writes correctly-shaped files, exactly the
-        trap ``test_the_output_contains_signal_where_expected`` exists for on the signal side --
-        and that test cannot cover a glitch-only entry, which has no ``signal`` block to look
-        under. So the arithmetic is asserted here instead: the expected count per output file,
-        which is one segment of one interferometer, has to be comfortably above one.
+        trap ``test_the_output_is_nonzero_where_expected`` exists for. That test checks the run's
+        output, but only once the entry is runnable; this checks the overlay's arithmetic before
+        any run: the expected count per output file, which is one segment of one interferometer,
+        has to be comfortably above one, or a zero-filled file would be a likely outcome rather
+        than a failure.
         """
         merged = apply_overlay(_example(label), label, tmp_path)
         segment = merged["globals"]["simulator-arguments"]["duration"]
@@ -274,11 +275,30 @@ class TestGlitchRateScaling:
         )
 
 
-def test_contains_signal_only_names_matrix_entries():
-    """A stale label here would silently stop asserting that a signal was produced."""
+def test_nonzero_output_only_names_matrix_entries():
+    """A stale label here would silently stop asserting that the run produced anything."""
     labels = {entry.label for entry in E2E_MATRIX}
-    unknown = sorted(CONTAINS_SIGNAL - labels)
-    assert not unknown, f"CONTAINS_SIGNAL names entries that are not in the matrix: {unknown}"
+    unknown = sorted(set(NONZERO_OUTPUT) - labels)
+    assert not unknown, f"NONZERO_OUTPUT names entries that are not in the matrix: {unknown}"
+
+
+@pytest.mark.parametrize("label", sorted(NONZERO_OUTPUT), ids=lambda label: label)
+def test_nonzero_output_names_a_section_the_entry_writes(label: str):
+    """The named section must exist and declare an output directory in the entry's own config.
+
+    Checked against the example rather than the overlaid config, so it also covers entries with no
+    overlay yet. A mislabelled section would otherwise surface only as a ``KeyError`` once the
+    entry runs -- and for an entry that is skipped today, not at all.
+    """
+    section = NONZERO_OUTPUT[label]
+    orchestration = _example(label).get("orchestration", {})
+    assert section in orchestration, (
+        f"NONZERO_OUTPUT expects '{label}' to fill its '{section}' output, but the example has no "
+        f"orchestration.{section} block (it has: {sorted(orchestration)})"
+    )
+    assert orchestration[section].get("output", {}).get("output_directory"), (
+        f"'{label}' declares no orchestration.{section}.output.output_directory to check"
+    )
 
 
 def test_the_runner_pins_the_earth_orientation_table():
