@@ -45,7 +45,13 @@ dependencies = [
   # threaded to gwmock-signal as exactly that. Below this floor the key is still validated and
   # then refused when the backend is built -- never silently ignored -- but it cannot be used, so
   # the floor is what turns an actionable error into a working configuration.
-  "gwmock-signal>=0.17.3",
+  #
+  # 0.17.4 is the first release whose ET detector presets are oriented correctly. Before it, the
+  # ET-Triangle and ET-2L presets stored arm azimuths counter-clockwise from East (bilby's
+  # convention) while the detector code applies them clockwise from North (LAL's), so every preset
+  # ET arm was mis-oriented and its antenna response wrong; bilby `.interferometer` files were read
+  # the same wrong way. Below this floor a locked install generates ET data with those responses.
+  "gwmock-signal>=0.17.4",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -66,7 +72,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.17.3"]
+sgwb = ["gwmock-signal[sgwb]>=0.17.4"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -82,10 +88,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.17.3"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.17.3"]
+jax = ["gwmock-signal[jax]>=0.17.4"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.17.3", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.17.4", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
