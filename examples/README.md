@@ -79,32 +79,34 @@ each is runnable without editing.
 
 ## Every example
 
-| Label                                              | Generates          | Network                       | Notes                                                                                                                                                      |
-| -------------------------------------------------- | ------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default_config`                                   | noise              | Triangle Sardinia             | Commented template; single 4096 s segment                                                                                                                  |
-| `noise/uncorrelated_gaussian/quick_start`          | signal + noise     | Triangle Sardinia             | **Start here.** 1024 s, one BBH event                                                                                                                      |
-| `noise/uncorrelated_gaussian/et_triangle_sardinia` | noise              | Triangle Sardinia             | 1 day, `ET_10_full_cryo_psd`                                                                                                                               |
-| `noise/uncorrelated_gaussian/et_triangle_emr`      | noise              | Triangle EMR                  | 1 day, `ET_10_full_cryo_psd`                                                                                                                               |
-| `noise/uncorrelated_gaussian/et_2l_aligned`        | noise              | 2L aligned                    | 1 day, `ET_15_full_cryo_psd`                                                                                                                               |
-| `noise/uncorrelated_gaussian/et_2l_misaligned`     | noise              | 2L misaligned                 | 1 day, `ET_15_full_cryo_psd`                                                                                                                               |
-| `noise/glitches/gengli/<network>/<e1\|e2\|e3>`     | glitches           | all four                      | One file **per detector**; blip glitches at 1/min. Needs `gengli`                                                                                          |
-| `noise/glitches/deepextractor/<network>`           | glitches           | all four                      | One file **per network**; real O3 reconstructions in seven Gravity Spy classes at their O3 rates, written as **GWF**. Needs `gwmock[deepextractor]`        |
-| `noise/gapped_segments`                            | noise              | Triangle Sardinia             | Epochs advance by `duration + segment-gap`, so the frames are **discontiguous in GPS**; 32 x 1024 s segments at 256 s gaps, with a drifting `psd_schedule` |
-| `signal/bbh/<network>`                             | signal             | all four                      | `IMRPhenomXPHM`, f<sub>min</sub> 10 Hz, Earth rotation on                                                                                                  |
-| `signal/bns/<network>`                             | signal             | all four                      | `IMRPhenomPv2_NRTidalv2`, f<sub>min</sub> 20 Hz, Earth rotation on. Cannot use `execution: batched` — ripple lacks this approximant                        |
-| `signal/sgwb/<network>`                            | background + noise | Triangle Sardinia, 2L aligned | 16 s; signal written as **HDF5**, noise as GWF                                                                                                             |
-| `signal/waveform_backend/ripple`                   | signal             | Triangle Sardinia             | Waveforms from **ripple** rather than LAL. Needs `gwmock[jax]`                                                                                             |
-| `signal/execution/batched`                         | signal             | Triangle Sardinia             | A segment's events generated in one batched call. Needs `gwmock[jax]`; add `gwmock[cuda]` for a GPU                                                        |
-| `signal/cw/et_triangle_sardinia`                   | signal             | Triangle Sardinia             | Continuous waves from a pulsar catalogue. Always-on, so every source is in every segment. Needs `gwmock[jax]` and LALPulsar ephemeris tables               |
+| Label                                              | Generates          | Network                        | Notes                                                                                                                                                      |
+| -------------------------------------------------- | ------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default_config`                                   | noise              | Triangle Sardinia              | Commented template; single 4096 s segment                                                                                                                  |
+| `noise/uncorrelated_gaussian/quick_start`          | signal + noise     | Triangle Sardinia              | **Start here.** 1024 s, one BBH event                                                                                                                      |
+| `noise/uncorrelated_gaussian/et_triangle_sardinia` | noise              | Triangle Sardinia              | 1 day, `ET_10_full_cryo_psd`                                                                                                                               |
+| `noise/uncorrelated_gaussian/et_triangle_emr`      | noise              | Triangle EMR                   | 1 day, `ET_10_full_cryo_psd`                                                                                                                               |
+| `noise/uncorrelated_gaussian/et_2l_aligned`        | noise              | 2L aligned                     | 1 day, `ET_15_full_cryo_psd`                                                                                                                               |
+| `noise/uncorrelated_gaussian/et_2l_misaligned`     | noise              | 2L misaligned                  | 1 day, `ET_15_full_cryo_psd`                                                                                                                               |
+| `noise/glitches/gengli/<network>/<e1\|e2\|e3>`     | glitches           | all four                       | One file **per detector**; blip glitches at 1/min. Needs `gengli`                                                                                          |
+| `noise/glitches/deepextractor/<network>`           | glitches           | all four                       | One file **per network**; real O3 reconstructions in seven Gravity Spy classes at their O3 rates, written as **GWF**. Needs `gwmock[deepextractor]`        |
+| `noise/glitches/deepextractor/et_triangle_and_2l`  | glitches           | Triangle Sardinia + 2L aligned | **Both designs in one file**: two models scoped with `detectors`, each with its own PSD; per-class power-law SNR tails. Needs `gwmock[deepextractor]`      |
+| `noise/gapped_segments`                            | noise              | Triangle Sardinia              | Epochs advance by `duration + segment-gap`, so the frames are **discontiguous in GPS**; 32 x 1024 s segments at 256 s gaps, with a drifting `psd_schedule` |
+| `signal/bbh/<network>`                             | signal             | all four                       | `IMRPhenomXPHM`, f<sub>min</sub> 10 Hz, Earth rotation on                                                                                                  |
+| `signal/bns/<network>`                             | signal             | all four                       | `IMRPhenomPv2_NRTidalv2`, f<sub>min</sub> 20 Hz, Earth rotation on. Cannot use `execution: batched` — ripple lacks this approximant                        |
+| `signal/sgwb/<network>`                            | background + noise | Triangle Sardinia, 2L aligned  | 16 s; signal written as **HDF5**, noise as GWF                                                                                                             |
+| `signal/waveform_backend/ripple`                   | signal             | Triangle Sardinia              | Waveforms from **ripple** rather than LAL. Needs `gwmock[jax]`                                                                                             |
+| `signal/execution/batched`                         | signal             | Triangle Sardinia              | A segment's events generated in one batched call. Needs `gwmock[jax]`; add `gwmock[cuda]` for a GPU                                                        |
+| `signal/cw/et_triangle_sardinia`                   | signal             | Triangle Sardinia              | Continuous waves from a pulsar catalogue. Always-on, so every source is in every segment. Needs `gwmock[jax]` and LALPulsar ephemeris tables               |
 
 The `gengli` examples are per-detector rather than per-network because each
 detector draws from its own glitch population file. The `deepextractor` ones are
 per-network: the dataset is shared, so a network preset and one file cover a
 whole geometry, and each interferometer still gets its own glitch realisation
-from its own RNG stream. What splits _those_ four files is the coloring PSD —
-one glitch model carries exactly one `psd_file` and applies it to every
-interferometer of the run, so the 10 km triangle and the 15 km 2L cannot share a
-file.
+from its own RNG stream. One glitch model carries one coloring `psd_file`, so a
+file mixing the 10 km triangle and the 15 km 2L needs a model per design, each
+scoped with `detectors` to that design's interferometers —
+`deepextractor/et_triangle_and_2l` is that file, and it also draws each class's
+SNR from its measured O3 power-law tail rather than pinning it to the median.
 
 ## The end-to-end test matrix
 

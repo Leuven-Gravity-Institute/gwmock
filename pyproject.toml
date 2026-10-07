@@ -50,7 +50,9 @@ dependencies = [
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
   # second silently overwrites the first. The floor makes the refusal reachable rather than leaving it
-  # to whichever version happens to resolve.
+  # to whichever version happens to resolve. 0.12.0 is the first release with a glitch model's
+  # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
+  # below it a config using either is refused with a `TypeError` rather than run.
   "gwmock-noise>=0.14.0",
   "gwmock-pop>=0.14.1",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
