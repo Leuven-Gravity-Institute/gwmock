@@ -289,6 +289,12 @@ def test_nonzero_output_names_a_section_the_entry_writes(label: str):
     Checked against the example rather than the overlaid config, so it also covers entries with no
     overlay yet. A mislabelled section would otherwise surface only as a ``KeyError`` once the
     entry runs -- and for an entry that is skipped today, not at all.
+
+    Existence alone cannot catch a signal-carrying entry labelled ``noise``: a signal+noise run has
+    a noise section too, and the check would then pass on the noise alone. Whether a run carries
+    signal is read from the example rather than from ``covers``, which is prose: the orchestrator
+    runs a signal simulator exactly when ``orchestration.signal`` is present, so such an entry has
+    to be checked on that output.
     """
     section = NONZERO_OUTPUT[label]
     orchestration = _example(label).get("orchestration", {})
@@ -299,6 +305,11 @@ def test_nonzero_output_names_a_section_the_entry_writes(label: str):
     assert orchestration[section].get("output", {}).get("output_directory"), (
         f"'{label}' declares no orchestration.{section}.output.output_directory to check"
     )
+    if "signal" in orchestration:
+        assert section == "signal", (
+            f"'{label}' injects signal (its example has an orchestration.signal block), so its "
+            f"nonzero check must name 'signal'; '{section}' would pass on that output alone"
+        )
 
 
 def test_the_runner_pins_the_earth_orientation_table():
