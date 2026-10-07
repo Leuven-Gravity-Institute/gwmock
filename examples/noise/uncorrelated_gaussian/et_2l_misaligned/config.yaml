@@ -13,7 +13,7 @@ orchestration:
         arguments:
             psd_file: ET_15_full_cryo_psd
             seed: 42
-            minimum_frequency: 3
+            low_frequency_cutoff: 3
             detectors:
                 - ET-2L-Misaligned
         output:
