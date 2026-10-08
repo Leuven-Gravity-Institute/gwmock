@@ -99,7 +99,7 @@ deepextractor = ["gwmock-noise[deepextractor]>=0.14.0"]
 
 [dependency-groups]
 dev = [
-  "prek>=0.5.4",
+  "prek>=0.5.5",
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.16.0",
   "pytest>=9.1.1",
