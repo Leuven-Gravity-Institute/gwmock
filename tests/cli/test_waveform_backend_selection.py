@@ -207,6 +207,12 @@ class TestGeneratedData:
         detail. The merger must land in the same sample -- that is what distinguishes "a
         different implementation ran" from "one of them is wrong".
 
+        "The same sample" is a statement about the time offset between the two signals, so it is
+        checked as the lag that maximises their cross-correlation. The sample of each signal's own
+        peak is not a substitute: near merger adjacent cycles have almost equal amplitude, and a
+        change to the detector's antenna weights can make a neighbouring cycle the tallest in one
+        signal and not the other while the two stay aligned.
+
         ``atol=0`` because strain is ~1e-22: the default absolute tolerance would call any two
         strain arrays equal and this assertion could not fail.
         """
@@ -217,9 +223,8 @@ class TestGeneratedData:
         ripple = self._generate(tmp_path / "ripple", **{"waveform-backend": "ripple"})
 
         assert not np.allclose(lal, ripple, rtol=1e-6, atol=0.0), "selecting ripple changed nothing"
-        assert int(np.argmax(np.abs(lal))) == int(np.argmax(np.abs(ripple))), (
-            "the two libraries put the merger in different samples, so one of them is wrong"
-        )
+        lag = int(np.argmax(np.correlate(lal, ripple, mode="full"))) - (len(ripple) - 1)
+        assert lag == 0, f"the two libraries put the merger {lag} samples apart, so one of them is wrong"
         assert np.max(np.abs(ripple)) == pytest.approx(np.max(np.abs(lal)), rel=0.05), (
             "the same approximant from two libraries should agree to a few percent"
         )

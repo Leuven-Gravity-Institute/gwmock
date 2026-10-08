@@ -1,17 +1,17 @@
 {
   "environment": {
     "astropy": "8.0.1",
-    "astropy-iers-data": "0.2026.8.24.0.24.29",
-    "gwmock": "0.14.0.post11+a2a216d",
-    "gwmock-noise": "0.11.1",
-    "gwmock-pop": "0.12.0",
-    "gwmock-signal": "0.16.3",
-    "jax": "0.11.1",
-    "jaxlib": "0.11.1",
-    "lalsuite": "7.26.15",
-    "numpy": "2.5.2",
+    "astropy-iers-data": "0.2026.10.5.1.0.7",
+    "gwmock": "0.16.3-post.4+5bee1dd",
+    "gwmock-noise": "0.14.0",
+    "gwmock-pop": "0.14.1",
+    "gwmock-signal": "0.17.4",
+    "jax": "0.11.2",
+    "jaxlib": "0.11.2",
+    "lalsuite": "7.26.16",
+    "numpy": "2.5.3",
     "pyerfa": "2.0.1.5",
-    "ripplegw": "0.3.1",
+    "ripplegw": "0.4.0",
     "scipy": "1.18.1"
   },
   "fingerprint": {
@@ -54,12 +54,12 @@
     },
     "output/signal/sgwb-et-triangle-0.hdf5": {
       "argmax": 1807,
-      "content_hash": "sha256:be692f3aa4e43f1d70884d6d18104cc9451de55757bed99635d8b8c430df1959",
-      "mean": 4.18521141345012e-42,
+      "content_hash": "sha256:baad66afd493763f205d6029465a56bd51d62948558fb8026914a6e12c358a58",
+      "mean": -2.989436723892943e-42,
       "n": 24576,
       "nonzero": 24576,
       "peak": 6.93698448988948e-24,
-      "rms": 1.780989180271843e-24,
+      "rms": 1.780976723503206e-24,
       "signed_peak": 6.93698448988948e-24
     }
   }
