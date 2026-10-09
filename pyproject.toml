@@ -59,7 +59,7 @@ dependencies = [
   # to whichever version happens to resolve. 0.12.0 is the first release with a glitch model's
   # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
   # below it a config using either is refused with a `TypeError` rather than run.
-  "gwmock-noise>=0.14.0",
+  "gwmock-noise>=0.15.0",
   "gwmock-pop>=0.14.1",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
@@ -101,7 +101,7 @@ cuda = ["gwmock-signal[jax]>=0.17.4", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.14.0"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.15.0"]
 
 [dependency-groups]
 dev = [
