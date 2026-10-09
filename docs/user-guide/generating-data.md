@@ -414,7 +414,7 @@ orchestration:
             csd_file: path_to_csd_file.txt
             detectors:
                 - ET-Triangle-EMR
-            minimum_frequency: 3
+            low_frequency_cutoff: 3
             seed: 42
         output:
             output_directory: noise
