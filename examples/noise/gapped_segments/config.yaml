@@ -37,7 +37,7 @@ orchestration:
                 - [40704, ET_15_HF_psd]
             detectors:
                 - ET-Triangle-Sardinia
-            minimum_frequency: 3
+            low_frequency_cutoff: 3
         output:
             output_directory: noise
             file_name:
