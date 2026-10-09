@@ -79,6 +79,13 @@
             "automerge": true,
             "automergeType": "pr",
             "automergeStrategy": "squash"
+        },
+        {
+            "matchManagers": ["pep621", "pre-commit"],
+            "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
+            "description": "The dev-group Ruff pin and the ruff-pre-commit hook rev must match, so raise them in one PR.",
+            "groupName": "ruff",
+            "minimumReleaseAge": "3 days"
         }
     ],
     "rangeStrategy": "bump"
