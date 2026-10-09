@@ -83,7 +83,7 @@
         {
             "matchManagers": ["pep621", "pre-commit"],
             "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
-            "description": "The dev-group Ruff pin and the ruff-pre-commit hook rev must match, so raise them in one PR.",
+            "description": "The dev-group Ruff pin and the ruff-pre-commit hook rev must match, so raise them in one PR. This rule, like the two pep621 rules above, matches pyproject.toml only because the committed uv.lock makes Renovate's pep621 manager own that file; without uv.lock the poetry manager takes it over and these rules silently stop matching.",
             "groupName": "ruff",
             "minimumReleaseAge": "3 days"
         }
