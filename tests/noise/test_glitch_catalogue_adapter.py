@@ -340,8 +340,12 @@ def test_an_end_to_end_run_indexes_its_glitches(tmp_path: Path, monkeypatch: pyt
     # The default backend, because the glitch path is part of it: a run naming its own noise
     # backend gets no injector at all, and this test is about the injector's rows reaching disk.
     config.orchestration.noise.backend = None
-    sampling_frequency = float(config.orchestration.noise.arguments["sampling_frequency"])
-    duration = float(config.orchestration.noise.arguments["duration"])
+    # The fake backend's constructor takes these; the default backend reads the run's own from
+    # the globals and rejects them here.
+    config.orchestration.noise.arguments.pop("sampling_frequency")
+    config.orchestration.noise.arguments.pop("duration")
+    sampling_frequency = float(config.globals.simulator_arguments["sampling-frequency"])
+    duration = float(config.globals.simulator_arguments["duration"])
     n_samples = round(duration * sampling_frequency)
     config.orchestration.noise.arguments["glitches"] = [
         {

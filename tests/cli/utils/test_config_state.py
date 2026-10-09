@@ -36,6 +36,11 @@ class TestConfigStateSet:
         state.set("noise", "minimum-frequency", "5.0")
         assert state.get("noise", "minimum-frequency") == 5.0
 
+    def test_set_noise_minimum_frequency_writes_the_key_the_noise_backend_reads(self):
+        state = ConfigState()
+        state.set("noise", "minimum-frequency", "5.0")
+        assert _get(state._data, ["orchestration", "noise", "arguments"]) == {"low_frequency_cutoff": 5.0}
+
     def test_set_signal_waveform_model(self):
         state = ConfigState()
         state.set("signal", "waveform-model", "IMRPhenomXPHM")
