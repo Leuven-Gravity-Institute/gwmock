@@ -388,9 +388,15 @@ GPS by the accumulated gap — is cheaper and is **not** what gwmock does.
 
 ## Generate Multi-Detector Correlated Noise
 
-You can generate multi-detector correlated noise by specifying a cross-power
-spectral density (CSD) file via the `orchestration.noise` backend. Pass
-`csd_file` as a noise argument:
+You can generate multi-detector correlated noise by specifying cross-power
+spectral density (CSD) files via the `orchestration.noise` backend. Pass
+`csd_files` as a noise argument, a mapping from a `DET1-DET2` detector pair to
+the CSD file for that pair, together with `psd_files`, one PSD per detector.
+Correlated noise takes its PSDs from `psd_files` only, so `psd_file` does not
+apply here. The detector names are the expanded interferometer names (`ET1_EMR`,
+`ET2_EMR`, `ET3_EMR` for `ET-Triangle-EMR`), and a pair without a CSD file is
+generated uncorrelated. Each CSD file has two columns: frequency and the complex
+one-sided CSD.
 
 <!-- prettier-ignore -->
 !!! warning
@@ -410,8 +416,14 @@ globals:
 orchestration:
     noise:
         arguments:
-            psd_file: ET_10_full_cryo_psd
-            csd_file: path_to_csd_file.txt
+            psd_files:
+                ET1_EMR: ET_10_full_cryo_psd
+                ET2_EMR: ET_10_full_cryo_psd
+                ET3_EMR: ET_10_full_cryo_psd
+            csd_files:
+                ET1_EMR-ET2_EMR: path_to_et1_et2_csd_file.txt
+                ET1_EMR-ET3_EMR: path_to_et1_et3_csd_file.txt
+                ET2_EMR-ET3_EMR: path_to_et2_et3_csd_file.txt
             detectors:
                 - ET-Triangle-EMR
             low_frequency_cutoff: 3
