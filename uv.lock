@@ -855,7 +855,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.17.0" },
     { name = "gwmock-noise", specifier = ">=0.15.0" },
     { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.15.0" },
-    { name = "gwmock-pop", specifier = ">=0.14.1" },
+    { name = "gwmock-pop", specifier = ">=0.14.2" },
     { name = "gwmock-signal", specifier = ">=0.17.4" },
     { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.17.4" },
     { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'jax'", specifier = ">=0.17.4" },
@@ -913,7 +913,7 @@ deepextractor = [
 
 [[package]]
 name = "gwmock-pop"
-version = "0.14.1"
+version = "0.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h5py" },
@@ -924,9 +924,9 @@ dependencies = [
     { name = "ruyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/ec/9f033d750af5c6c1b2a0e9dad0e08d8e3d5e390f6c4a4a22d2f30c4c8f22/gwmock_pop-0.14.1.tar.gz", hash = "sha256:575d3e24f98496e12d6711afa6b8e2f306aa89b1f65e6016dabe65f9f343bb38", size = 408849, upload-time = "2026-09-29T04:35:15.882Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/c0/613955ac8a87ca9f49359ade27fe8773919ce7ee8a005f8c01167252d84c/gwmock_pop-0.14.2.tar.gz", hash = "sha256:96bd1354344f96162b03bb74f830767da34bb94fd11fe6f27010eecb62897626", size = 419488, upload-time = "2026-10-06T05:12:53.449Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/21/c2912971c83f9cffd803b1840a27e514a2ead3dfd7bf3304b3db07c8f1cd/gwmock_pop-0.14.1-py3-none-any.whl", hash = "sha256:b874c96c86531c79fca1b256eb94e7bbb55f231dd6ec704d1cadce078b68e7fa", size = 151593, upload-time = "2026-09-29T04:35:14.764Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/30/71e26eb98e0aa23ccb5a97dd64257369420d70843c31d2b1f5c85b897622/gwmock_pop-0.14.2-py3-none-any.whl", hash = "sha256:7abdea2473a5a5ad5ba82b5072025b8a66ed24cba58110f47a61b960692f4a42", size = 152692, upload-time = "2026-10-06T05:12:52.203Z" },
 ]
 
 [[package]]
