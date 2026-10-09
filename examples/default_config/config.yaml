@@ -15,7 +15,7 @@ orchestration:
         arguments:
             psd_file: ET_10_full_cryo_psd
             seed: 42
-            minimum_frequency: 20
+            low_frequency_cutoff: 20
             detectors:
                 - ET-Triangle-Sardinia
         output:
