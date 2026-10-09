@@ -303,6 +303,31 @@ orchestration:
                 channel: '{{ detectors }}:STRAIN'
 ```
 
+### Noise arguments
+
+With the default noise backend (no `noise.backend`), `noise.arguments` accepts
+exactly these keys, with hyphens and underscores interchangeable:
+
+| Key                     | Meaning                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `detectors`             | Detector network; required when there is no `signal` section, else defaults to its list |
+| `seed`                  | Root seed; defaults to the global `seed` when that is set                               |
+| `psd_file`              | One PSD for every detector                                                              |
+| `psd_files`             | One PSD per detector                                                                    |
+| `csd_files`             | Cross-spectral densities for correlated noise                                           |
+| `psd_schedule`          | A PSD that changes over the run                                                         |
+| `low_frequency_cutoff`  | Lowest frequency the noise is generated from, in Hz (default `2.0`)                     |
+| `high_frequency_cutoff` | Highest frequency the noise is generated to, in Hz                                      |
+| `spectral_lines`        | Narrow spectral lines added to the noise                                                |
+| `glitches`              | Transient glitch models, described below                                                |
+
+Any other key is an error naming the key, rather than being ignored: a
+misspelled or misplaced setting would otherwise leave the run on the default
+while looking entirely normal. In particular the noise floor is
+`low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. A
+custom `noise.backend` receives `noise.arguments` as its constructor's keyword
+arguments instead, so that backend decides which keys it accepts.
+
 ### Injection parameters in the data files
 
 Every HDF5 file a run writes carries the run's metadata record inside it, at the

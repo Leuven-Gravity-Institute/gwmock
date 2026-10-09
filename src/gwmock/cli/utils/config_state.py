@@ -78,7 +78,8 @@ NOISE_KEYS: dict[str, list[str]] = {
     "psd": ["orchestration", "noise", "arguments", "psd_file"],
     "seed": ["orchestration", "noise", "arguments", "seed"],
     "detectors": ["orchestration", "noise", "arguments", "detectors"],
-    "minimum-frequency": ["orchestration", "noise", "arguments", "minimum_frequency"],
+    # The noise backend reads its floor as `low_frequency_cutoff`; any other spelling is rejected.
+    "minimum-frequency": ["orchestration", "noise", "arguments", "low_frequency_cutoff"],
     "backend": ["orchestration", "noise", "backend"],
 }
 

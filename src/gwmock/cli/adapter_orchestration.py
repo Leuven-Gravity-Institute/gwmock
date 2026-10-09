@@ -42,6 +42,27 @@ _RIPPLE_UNAVAILABLE = "__ripple_unavailable__"
 
 logger = logging.getLogger("gwmock")
 
+#: Keys the default noise backend reads from ``orchestration.noise.arguments`` (after hyphens are
+#: normalised to underscores). ``detectors`` and ``seed`` are resolved by the orchestrator itself;
+#: the rest are forwarded to ``NoiseAdapter.build_config`` and ``NoiseAdapter.open_stream``. Any
+#: other key is rejected, because it would otherwise be ignored and the run would look normal while
+#: generating noise from a setting the author never made. A custom ``noise.backend`` receives the
+#: arguments as constructor keywords instead, so it is the constructor that decides what it accepts.
+_DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
+    {
+        "detectors",
+        "seed",
+        "psd_file",
+        "psd_schedule",
+        "psd_files",
+        "csd_files",
+        "low_frequency_cutoff",
+        "high_frequency_cutoff",
+        "spectral_lines",
+        "glitches",
+    }
+)
+
 
 @dataclass(slots=True)
 class AdapterOrchestrationResult:
@@ -302,6 +323,17 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             if has_noise
             else {}
         )
+        if has_noise and orchestration_config.noise.backend is None:  # type: ignore[union-attr]
+            unrecognised = sorted(
+                key
+                for key in orchestration_config.noise.arguments  # type: ignore[union-attr]
+                if key.replace("-", "_") not in _DEFAULT_NOISE_ARGUMENT_KEYS
+            )
+            if unrecognised:
+                raise ValueError(
+                    f"Unrecognised noise.arguments key(s) for the default noise backend: {', '.join(unrecognised)}. "
+                    f"Recognised keys: {', '.join(sorted(_DEFAULT_NOISE_ARGUMENT_KEYS))}."
+                )
         if global_args.get("seed") is not None:
             noise_arguments.setdefault("seed", int(global_args["seed"]))
 

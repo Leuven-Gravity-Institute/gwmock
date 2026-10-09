@@ -616,6 +616,34 @@ def test_orchestrator_resolves_noise_detector_alias(tmp_path: Path):
     assert orchestrator.detectors == ["ET1_SARD", "ET2_SARD", "ET3_SARD"]
 
 
+def test_default_noise_backend_rejects_an_unrecognised_argument(tmp_path: Path):
+    """An unread key under noise.arguments must fail by name, not leave the run on the default.
+
+    ``minimum_frequency`` is the case that motivated this: it reads like the noise floor, sits
+    where the floor goes, and was ignored, so the noise came from the 2 Hz default instead.
+    """
+    config = _fake_orchestration_config(tmp_path, source_type="bbh")
+    config.orchestration.noise.backend = None
+    config.orchestration.noise.arguments = {"seed": 7, "detectors": ["H1"], "minimum_frequency": 20}
+
+    with pytest.raises(
+        ValueError, match=r"noise\.arguments key\(s\).*: minimum_frequency\. Recognised keys: "
+    ) as error:
+        AdapterOrchestrator.from_config(config.orchestration, config.globals.simulator_arguments)
+    assert "low_frequency_cutoff" in str(error.value)
+
+
+def test_default_noise_backend_accepts_every_recognised_argument_spelling(tmp_path: Path):
+    """The recognised keys pass in either spelling, and the value reaches the noise arguments."""
+    config = _fake_orchestration_config(tmp_path, source_type="bbh")
+    config.orchestration.noise.backend = None
+    config.orchestration.noise.arguments = {"seed": 7, "detectors": ["H1"], "low-frequency-cutoff": 20.0}
+
+    orchestrator = AdapterOrchestrator.from_config(config.orchestration, config.globals.simulator_arguments)
+
+    assert orchestrator.noise_arguments["low_frequency_cutoff"] == 20.0
+
+
 def test_orchestrator_records_single_detector_preset_resolution(tmp_path: Path):
     """Single public ET-detector aliases should resolve via the preset-backed detector catalog."""
     config = _fake_orchestration_config(tmp_path, source_type="bbh")
