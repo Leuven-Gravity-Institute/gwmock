@@ -60,7 +60,7 @@ dependencies = [
   # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
   # below it a config using either is refused with a `TypeError` rather than run.
   "gwmock-noise>=0.15.0",
-  "gwmock-pop>=0.14.1",
+  "gwmock-pop>=0.14.2",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "h5py>=3.13.0",
