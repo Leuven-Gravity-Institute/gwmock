@@ -31,7 +31,7 @@ jobs:
 
             - name: Check for new commits
               id: check_commits
-              uses: isaac-cf-wong/detect-git-changes-action@051225b2ef2faf2a02d61f16d1a027cdf941498d # v0.0.21
+              uses: isaac-cf-wong/detect-git-changes-action@9863c3c0ba155ed10b54072f711ae8807aedbc87 # v0.0.22
               with:
                   use-latest-tag: true
 
