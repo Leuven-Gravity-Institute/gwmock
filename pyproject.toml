@@ -51,7 +51,7 @@ dependencies = [
   # convention) while the detector code applies them clockwise from North (LAL's), so every preset
   # ET arm was mis-oriented and its antenna response wrong; bilby `.interferometer` files were read
   # the same wrong way. Below this floor a locked install generates ET data with those responses.
-  "gwmock-signal>=0.17.4",
+  "gwmock-signal>=0.17.5",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -59,8 +59,8 @@ dependencies = [
   # to whichever version happens to resolve. 0.12.0 is the first release with a glitch model's
   # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
   # below it a config using either is refused with a `TypeError` rather than run.
-  "gwmock-noise>=0.16.0",
-  "gwmock-pop>=0.14.2",
+  "gwmock-noise>=0.16.1",
+  "gwmock-pop>=0.14.3",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "h5py>=3.13.0",
@@ -72,7 +72,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.17.4"]
+sgwb = ["gwmock-signal[sgwb]>=0.17.5"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -88,10 +88,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.17.4"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.17.4"]
+jax = ["gwmock-signal[jax]>=0.17.5"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.17.4", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.17.5", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -101,7 +101,7 @@ cuda = ["gwmock-signal[jax]>=0.17.4", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.16.0"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.16.1"]
 
 [dependency-groups]
 dev = [
