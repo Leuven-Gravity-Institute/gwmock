@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from collections.abc import Iterable
@@ -9,10 +10,10 @@ from numbers import Number
 from typing import TYPE_CHECKING
 
 import numpy as np
-from astropy.units.quantity import Quantity
+from astropy.units import Quantity
+from gwmock_data import TimeSeries as ChannelSeries
+from gwmock_data import as_timeseries
 from gwmock_signal.projection.resampling import resample_uniform_sinc
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
-from gwpy.types.index import Index
 
 from gwmock.data.serialize.serializable import JSONSerializable
 from gwmock.data.time_series.inject import alignment_tolerance, inject, is_aligned, measure_content_before
@@ -24,13 +25,29 @@ if TYPE_CHECKING:
     from gwmock.data.time_series.time_series_list import TimeSeriesList
 
 
+def _in_unit(value: float | Quantity, unit: str) -> float:
+    """Return *value* as a float in *unit*; a plain number is taken to be in that unit already."""
+    if isinstance(value, Quantity):
+        return float(value.to_value(unit))
+    if isinstance(value, Number):
+        return float(value)
+    raise TypeError(f"Expected a number or an astropy Quantity in {unit}; got {type(value).__name__}.")
+
+
 class TimeSeries(JSONSerializable):
-    """Class representing a time series data for multiple channels."""
+    """Time series data for several channels on one sample grid.
+
+    Each channel is a :class:`gwmock_data.TimeSeries`, the series the gwmock packages share; indexing
+    returns one. The channel names used when the data is written (``"H1:STRAIN"`` and the like) are
+    kept here, in :attr:`channels`, since the shared series has a name and a unit but no channel.
+
+    Timing is reported as astropy quantities (seconds, hertz), as before.
+    """
 
     __hash__ = None
 
     def __init__(self, data: np.ndarray, start_time: float | Quantity, sampling_frequency: float | Quantity):
-        """Initialize the TimeSeries with a list of GWPy TimeSeries objects.
+        """Initialize the TimeSeries.
 
         Args:
             data: 2D numpy array of shape (num_of_channels, num_samples) containing the time series data.
@@ -41,19 +58,13 @@ class TimeSeries(JSONSerializable):
         if data.ndim != expected_ndim:
             raise ValueError("Data must be a 2D numpy array with shape (num_of_channels, num_samples).")
 
-        if isinstance(start_time, Number):
-            start_time = Quantity(start_time, unit="s")
-        if isinstance(sampling_frequency, (int, float)):
-            sampling_frequency = Quantity(sampling_frequency, unit="Hz")
-
-        self._data: list[GWpyTimeSeries] = [
-            GWpyTimeSeries(
-                data=data[i],
-                t0=start_time,
-                sample_rate=sampling_frequency,
-            )
-            for i in range(data.shape[0])
+        t0 = _in_unit(start_time, "s")
+        sample_rate = _in_unit(sampling_frequency, "Hz")
+        self._data: list[ChannelSeries] = [
+            ChannelSeries(data[i], t0=t0, sample_rate=sample_rate) for i in range(data.shape[0])
         ]
+        #: The channel each row is written as, or ``None``; one entry per channel.
+        self.channels: list[str | None] = [None] * data.shape[0]
         self.num_of_channels = data.shape[0]
         self.dtype = data.dtype
         self.metadata = {}
@@ -66,77 +77,57 @@ class TimeSeries(JSONSerializable):
         """
         return self.num_of_channels
 
-    def __getitem__(self, index: int) -> GWpyTimeSeries:
-        """Get the GWPy TimeSeries object for a specific channel.
+    def __getitem__(self, index: int) -> ChannelSeries:
+        """Get one channel.
 
         Args:
             index: Index of the channel to retrieve.
 
         Returns:
-            GWPy TimeSeries object for the specified channel.
+            The channel's series.
         """
         return self._data[index]
 
-    def __setitem__(self, index: int, value: GWpyTimeSeries) -> None:
-        """Set the GWPy TimeSeries object for a specific channel.
+    def __setitem__(self, index: int, value: ChannelSeries) -> None:
+        """Replace one channel.
 
         Args:
             index: Index of the channel to set.
-            value: GWPy TimeSeries object to set for the specified channel.
+            value: The new series for the channel: a :class:`gwmock_data.TimeSeries`, or a GWpy
+                ``TimeSeries``, which is converted. It must have this series' start time, sampling
+                frequency and length.
         """
-        # First check whether the start time and sampling frequency match
-        if value.t0 != self.start_time:
+        value = as_timeseries(value)
+        if value.t0 != self[index].t0:
             raise ValueError(
                 "Start time of the provided TimeSeries does not match."
                 f"The start time of this instance is {self.start_time}, "
-                f"while that of the provided TimeSeries is {value.t0}."
+                f"while that of the provided TimeSeries is {value.t0} s."
             )
-
-        # Debug: log the sampling frequencies
-        logger.debug(
-            "Assigning to channel %d: value.sample_rate=%.15f, self.sampling_frequency=%.15f",
-            index,
-            float(value.sample_rate.value),
-            float(self.sampling_frequency.value),
-        )
-
-        if value.sample_rate != self.sampling_frequency:
-            # Additional debug info
+        if value.sample_rate != self[index].sample_rate:
             logger.warning(
-                "Sampling frequency mismatch on channel %d. "
-                "Difference: %.15e Hz. "
-                "Value times: %s to %s (%d samples, dt=%.15f). "
-                "Self times span should match.",
+                "Sampling frequency mismatch on channel %d. Difference: %.15e Hz.",
                 index,
-                float(value.sample_rate.value) - float(self.sampling_frequency.value),
-                value.times[0],
-                value.times[-1],
-                len(value),
-                float(value.dt.value),
+                value.sample_rate - self[index].sample_rate,
             )
             raise ValueError(
                 "Sampling frequency of the provided TimeSeries does not match."
                 f"The sampling frequency of this instance is {self.sampling_frequency}, "
-                f"while that of the provided TimeSeries is {value.sample_rate}."
+                f"while that of the provided TimeSeries is {value.sample_rate} Hz."
             )
-        # Check the duration
-        if value.duration != self.duration:
+        if value.n_samples != self[index].n_samples:
             raise ValueError(
                 "Duration of the provided TimeSeries does not match."
                 f"The duration of this instance is {self.duration}, "
-                f"while that of the provided TimeSeries is {value.duration}."
+                f"while that of the provided TimeSeries is {value.duration} s."
             )
-
-        if not isinstance(value, GWpyTimeSeries):
-            raise TypeError(f"Value must be a GWpy TimeSeries instance, got {type(value)}")
-
         self._data[index] = value
 
     def __iter__(self):
         """Iterate over the channels in the time series.
 
         Returns:
-            Iterator over the GWPy TimeSeries objects in the time series.
+            Iterator over the channels' series.
         """
         return iter(self._data)
 
@@ -153,12 +144,10 @@ class TimeSeries(JSONSerializable):
             return False
         if self.num_of_channels != other.num_of_channels:
             return False
-        for i in range(self.num_of_channels):
-            if not np.array_equal(self[i].value, other[i].value):
+        for mine, theirs in zip(self, other, strict=True):
+            if not np.array_equal(mine.data, theirs.data):
                 return False
-            if self[i].t0 != other[i].t0:
-                return False
-            if self[i].sample_rate != other[i].sample_rate:
+            if mine.t0 != theirs.t0 or mine.sample_rate != theirs.sample_rate:
                 return False
         return True
 
@@ -169,25 +158,25 @@ class TimeSeries(JSONSerializable):
         Returns:
             Tuple representing the shape of the time series data (num_of_channels, num_samples).
         """
-        return (self.num_of_channels, self[0].size)
+        return (self.num_of_channels, self[0].n_samples)
 
     @property
     def start_time(self) -> Quantity:
         """Get the start time of the time series.
 
         Returns:
-            Start time of the time series.
+            Start time of the time series, in seconds.
         """
-        return Quantity(self._data[0].t0)
+        return Quantity(self._data[0].t0, unit="s")
 
     @property
     def duration(self) -> Quantity:
         """Get the duration of the time series.
 
         Returns:
-            Duration of the time series.
+            Duration of the time series, in seconds: the number of samples times the sample spacing.
         """
-        return Quantity(self._data[0].duration)
+        return Quantity(self._data[0].n_samples * (1.0 / self._data[0].sample_rate), unit="s")
 
     @property
     def end_time(self) -> Quantity:
@@ -204,25 +193,28 @@ class TimeSeries(JSONSerializable):
         """Get the sampling frequency of the time series.
 
         Returns:
-            Sampling frequency of the time series.
+            Sampling frequency of the time series, in hertz.
         """
-        return Quantity(self._data[0].sample_rate)
+        return Quantity(self._data[0].sample_rate, unit="Hz")
 
     @property
-    def time_array(self) -> Index:
+    def time_array(self) -> Quantity:
         """Get the time array of the time series.
 
         Returns:
-            Time array of the time series.
+            GPS time of every sample, in seconds.
         """
-        return self[0].times
+        return Quantity(self[0].times, unit="s")
 
     def crop(
         self,
-        start_time: Quantity | None = None,
-        end_time: Quantity | None = None,
+        start_time: Quantity | float | None = None,
+        end_time: Quantity | float | None = None,
     ) -> TimeSeries:
-        """Crop the time series to the specified start and end times.
+        """Crop the time series, in place, to the samples at GPS times in ``[start_time, end_time)``.
+
+        A bound that falls on a sample, to within float64 resolution at the GPS epoch, counts as on
+        it, so cropping at a sample's own time keeps that sample (see ``gwmock_data.TimeSeries.crop``).
 
         Args:
             start_time: Start time of the cropped segment in GPS seconds. If None, use the
@@ -231,10 +223,11 @@ class TimeSeries(JSONSerializable):
                 original end time.
 
         Returns:
-            Cropped TimeSeries instance.
+            This TimeSeries, cropped.
         """
-        for i in range(self.num_of_channels):
-            self._data[i] = GWpyTimeSeries(self._data[i].crop(start=start_time, end=end_time, copy=True))
+        start = None if start_time is None else _in_unit(start_time, "s")
+        end = None if end_time is None else _in_unit(end_time, "s")
+        self._data = [series.crop(start, end).copy() for series in self._data]
         return self
 
     def inject(self, other: TimeSeries, preceding_gap: tuple[float, float] | None = None) -> TimeSeries | None:
@@ -365,7 +358,7 @@ class TimeSeries(JSONSerializable):
         # remainder. `inject_from_list` walks a caller-provided list, so that mutates its elements.
         if other.end_time > self.end_time:
             tail = TimeSeries(
-                data=np.asarray(other).copy(),
+                data=np.array([np.asarray(series.data) for series in other]),
                 start_time=other.start_time,
                 sampling_frequency=other.sampling_frequency,
             )
@@ -375,11 +368,9 @@ class TimeSeries(JSONSerializable):
             # enough to cross a boundary, which is precisely the long-inspiral case.
             tail.metadata.update(dict(supplied.metadata))
             for index in range(min(tail.num_of_channels, supplied.num_of_channels)):
-                source, target = supplied[index], tail[index]
-                target.name = source.name
-                target.channel = source.channel
-                # `unit` is read-only on a gwpy array; override_unit is the supported way to set it.
-                target.override_unit(source.unit)
+                source = supplied[index]
+                tail._data[index] = dataclasses.replace(tail[index], name=source.name, unit=source.unit)
+                tail.channels[index] = supplied.channels[index]
             return tail.crop(start_time=self.end_time)
         return None
 
@@ -543,7 +534,7 @@ class TimeSeries(JSONSerializable):
             # widened float32 to float64 on the way back. Base64 carries the dtype, so a float32
             # chunk returns float32 -- checked for both widths rather than assumed, because the
             # comment here previously claimed the opposite and was wrong.
-            "data": np.asarray([self[i].value for i in range(self.num_of_channels)]),
+            "data": np.asarray([np.asarray(self[i].data) for i in range(self.num_of_channels)]),
             # Carried because a serialized chunk is a *spillover tail* waiting in a checkpoint, and
             # the next segment reads exactly these on restore. Omitting them restores the samples
             # while silently dropping `injection_parameters` and `event_id` -- so the run continues
@@ -553,8 +544,10 @@ class TimeSeries(JSONSerializable):
             "channels": [
                 {
                     "name": self[i].name,
-                    "channel": None if self[i].channel is None else str(self[i].channel),
-                    "unit": str(self[i].unit),
+                    "channel": self.channels[i],
+                    # An empty string for no unit, as GWpy wrote a dimensionless unit, so records
+                    # written before and after read back alike.
+                    "unit": "" if self[i].unit is None else str(self[i].unit),
                 }
                 for i in range(self.num_of_channels)
             ],
@@ -586,11 +579,7 @@ class TimeSeries(JSONSerializable):
         for index, channel in enumerate(json_dict.get("channels") or []):
             if index >= series.num_of_channels:
                 break
-            target = series[index]
-            target.name = channel.get("name")
-            target.channel = channel.get("channel")
-            unit = channel.get("unit")
-            if unit is not None:
-                # `unit` is read-only on a gwpy array; override_unit is the supported way to set it.
-                target.override_unit(unit)
+            unit = channel.get("unit") or None
+            series._data[index] = dataclasses.replace(series[index], name=channel.get("name"), unit=unit)
+            series.channels[index] = channel.get("channel")
         return series

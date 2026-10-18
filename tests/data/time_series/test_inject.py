@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from gwmock_data import TimeSeries
 from gwmock_signal.projection.resampling import resample_uniform_sinc
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.data.time_series.inject import (
     _MAXIMUM_ALIGNMENT_TOLERANCE,
@@ -15,13 +15,19 @@ from gwmock.data.time_series.inject import (
 )
 
 
+def _series(data, t0=0.0, dt=None, unit=None, sample_rate=None):
+    """A one-channel series, given its spacing ``dt`` or its ``sample_rate``."""
+    rate = sample_rate if sample_rate is not None else 1.0 / dt
+    return TimeSeries(np.asarray(data, dtype=float), t0=float(t0), sample_rate=float(rate), unit=unit)
+
+
 class TestInjectBasic:
     """Test basic injection functionality."""
 
     def test_inject_aligned_grids_simple(self):
         """Test injecting two time series with aligned time grids."""
         # Create target timeseries
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -29,7 +35,7 @@ class TestInjectBasic:
         )
 
         # Create other timeseries with aligned grid
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(50),
             t0=2.5,
             dt=0.1,
@@ -39,7 +45,7 @@ class TestInjectBasic:
         result = inject(timeseries, other)
 
         # Result should have the same length as timeseries
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         # Result should have ones in the injected region and zeros elsewhere
         assert np.all(result.value[:25] == 0)  # Before injection
         assert np.all(result.value[25:75] == 1)  # Injected region
@@ -47,14 +53,14 @@ class TestInjectBasic:
 
     def test_inject_with_addition(self):
         """Test that injection adds values correctly."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.ones(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30) * 2,
             t0=2.0,
             dt=0.1,
@@ -72,14 +78,14 @@ class TestInjectBasic:
 
     def test_inject_preserves_metadata(self):
         """Test that injection preserves time series metadata."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=10.0,
             dt=0.01,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(20),
             t0=10.05,
             dt=0.01,
@@ -92,25 +98,25 @@ class TestInjectBasic:
         assert result.t0 == timeseries.t0
         assert result.dt == timeseries.dt
         assert result.unit == timeseries.unit
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
 
     def test_inject_sampling_frequency_mismatch(self):
         """Test that injection raises error for incompatible sampling frequencies."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(50),
             t0=2.5,
             dt=0.2,  # Different dt
             unit="m",
         )
 
-        with pytest.raises((RuntimeError, ValueError)):  # GWpy's is_compatible raises RuntimeError or ValueError
+        with pytest.raises((RuntimeError, ValueError)):  # mismatched sample rates are refused
             inject(timeseries, other)
 
 
@@ -119,7 +125,7 @@ class TestInjectOffset:
 
     def test_inject_with_fractional_offset_interpolate(self):
         """Test injection with fractional sample offset using interpolation."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -127,7 +133,7 @@ class TestInjectOffset:
         )
 
         # Create other with a fractional offset (0.05s = 0.5 samples)
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=2.55,  # 2.55 = 2.5 + 0.05 (fractional offset)
             dt=0.1,
@@ -137,20 +143,20 @@ class TestInjectOffset:
         result = inject(timeseries, other, interpolate_if_offset=True)
 
         # Result should have been interpolated
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         # The injected region should have non-zero values
         assert np.any(result.value[25:55] != 0)
 
     def test_inject_with_fractional_offset_no_interpolate(self):
         """Test injection with fractional offset without interpolation."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=2.55,  # Fractional offset
             dt=0.1,
@@ -168,14 +174,14 @@ class TestInjectEdgeCases:
 
     def test_inject_other_entirely_before_timeseries(self):
         """Test injection when other ends before timeseries starts."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=10.0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(20),
             t0=0,
             dt=0.1,
@@ -185,19 +191,19 @@ class TestInjectEdgeCases:
         result = inject(timeseries, other)
 
         # Should return result with same properties as timeseries
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert result.t0 == timeseries.t0
 
     def test_inject_other_entirely_after_timeseries(self):
         """Test injection when other starts after timeseries ends."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(20),
             t0=20.0,  # Starts after timeseries ends at 10.0
             dt=0.1,
@@ -207,19 +213,19 @@ class TestInjectEdgeCases:
         result = inject(timeseries, other)
 
         # Should return result with same properties
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert result.t0 == timeseries.t0
 
     def test_inject_other_at_start(self):
         """Test injection when other aligns with start of timeseries."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(20),
             t0=0,  # Starts at same time
             dt=0.1,
@@ -233,14 +239,14 @@ class TestInjectEdgeCases:
 
     def test_inject_other_at_end(self):
         """Test injection when other aligns with end of timeseries."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(20),
             t0=8.0,  # Ends at same time as timeseries
             dt=0.1,
@@ -254,14 +260,14 @@ class TestInjectEdgeCases:
 
     def test_inject_other_spans_entire_timeseries(self):
         """Test injection when other spans entire timeseries."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(100),
             t0=0,
             dt=0.1,
@@ -274,14 +280,14 @@ class TestInjectEdgeCases:
 
     def test_inject_single_sample(self):
         """Test injection with single sample."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.array([5.0]),
             t0=2.5,
             dt=0.1,
@@ -297,14 +303,14 @@ class TestInjectEdgeCases:
 
     def test_inject_other_extends_beyond_timeseries(self):
         """Test injection when other extends beyond timeseries end."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(150),  # Longer than timeseries
             t0=0,
             dt=0.1,
@@ -314,19 +320,19 @@ class TestInjectEdgeCases:
         result = inject(timeseries, other)
 
         # All of timeseries should be filled with ones
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.all(result.value == 1)
 
     def test_inject_partial_overlap_start(self):
         """Test injection with partial overlap at start."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=-0.5,  # Starts before timeseries
             dt=0.1,
@@ -341,14 +347,14 @@ class TestInjectEdgeCases:
 
     def test_inject_partial_overlap_end(self):
         """Test injection with partial overlap at end."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=8.5,  # Extends beyond timeseries end
             dt=0.1,
@@ -366,14 +372,14 @@ class TestInjectNumericalStability:
 
     def test_inject_preserves_sampling_frequency_precision(self):
         """Test that injection preserves sampling frequency without precision loss."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.01,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(50),
             t0=0.25,
             dt=0.01,
@@ -388,7 +394,7 @@ class TestInjectNumericalStability:
 
     def test_inject_accumulation(self):
         """Test that multiple injections accumulate correctly."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -396,7 +402,7 @@ class TestInjectNumericalStability:
         )
 
         # Inject first signal (ones from t=0 to t=2.0, indices 0-20)
-        other1 = GWpyTimeSeries(
+        other1 = _series(
             np.ones(20),
             t0=0,
             dt=0.1,
@@ -406,7 +412,7 @@ class TestInjectNumericalStability:
 
         # Inject second signal (twos from t=1.0 to t=3.0, indices 10-30)
         # This overlaps with the first signal in indices 10-20
-        other2 = GWpyTimeSeries(
+        other2 = _series(
             np.ones(20) * 2,
             t0=1.0,
             dt=0.1,
@@ -426,14 +432,14 @@ class TestInjectNumericalStability:
 
     def test_inject_with_negative_values(self):
         """Test injection with negative signal values."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.ones(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             -np.ones(30),
             t0=2.0,
             dt=0.1,
@@ -448,14 +454,14 @@ class TestInjectNumericalStability:
 
     def test_inject_with_float32_data(self):
         """Test injection preserves data type."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100, dtype=np.float32),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30, dtype=np.float32),
             t0=2.0,
             dt=0.1,
@@ -465,7 +471,7 @@ class TestInjectNumericalStability:
         result = inject(timeseries, other)
 
         # Result should maintain consistency
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value[20:50] != 0)
 
 
@@ -474,14 +480,14 @@ class TestInjectDataTypes:
 
     def test_inject_with_complex_data(self):
         """Test injection with complex-valued data."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100, dtype=complex),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30, dtype=complex),
             t0=2.0,
             dt=0.1,
@@ -490,7 +496,7 @@ class TestInjectDataTypes:
 
         result = inject(timeseries, other)
 
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value[20:50] != 0)
 
 
@@ -499,7 +505,7 @@ class TestInjectCropping:
 
     def test_inject_crops_other_to_fit(self):
         """Test that inject crops other to fit within timeseries bounds."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -507,7 +513,7 @@ class TestInjectCropping:
         )
 
         # Other extends beyond timeseries
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(200),
             t0=-2.0,  # Starts before timeseries
             dt=0.1,
@@ -517,7 +523,7 @@ class TestInjectCropping:
         result = inject(timeseries, other)
 
         # Result should have same length as timeseries
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         # All samples should be injected (since other covers entire range)
         assert np.all(result.value == 1)
 
@@ -527,14 +533,14 @@ class TestInjectZeroValues:
 
     def test_inject_zeros_does_not_change_timeseries(self):
         """Test that injecting zeros doesn't change the timeseries."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.ones(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.zeros(30),
             t0=2.0,
             dt=0.1,
@@ -548,14 +554,14 @@ class TestInjectZeroValues:
 
     def test_inject_into_zero_timeseries(self):
         """Test injection into zero-filled timeseries."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=2.0,
             dt=0.1,
@@ -576,14 +582,14 @@ class TestInjectTimescales:
 
     def test_inject_very_fine_resolution(self):
         """Test injection with very fine time resolution (high sampling rate)."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(10000),
             t0=0,
             dt=1e-4,  # 10 kHz sampling
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(1000),
             t0=0.1,
             dt=1e-4,
@@ -592,19 +598,19 @@ class TestInjectTimescales:
 
         result = inject(timeseries, other)
 
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value != 0)
 
     def test_inject_very_coarse_resolution(self):
         """Test injection with very coarse time resolution (low sampling rate)."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=10.0,  # 0.1 Hz sampling
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=50.0,
             dt=10.0,
@@ -613,7 +619,7 @@ class TestInjectTimescales:
 
         result = inject(timeseries, other)
 
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value != 0)
 
 
@@ -622,14 +628,14 @@ class TestInjectMagnitudes:
 
     def test_inject_very_large_values(self):
         """Test injection with very large signal values."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30) * 1e10,
             t0=2.0,
             dt=0.1,
@@ -643,14 +649,14 @@ class TestInjectMagnitudes:
 
     def test_inject_very_small_values(self):
         """Test injection with very small signal values (close to machine epsilon)."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
             unit="m",
         )
 
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30) * 1e-15,
             t0=2.0,
             dt=0.1,
@@ -668,7 +674,7 @@ class TestInjectOffsetEdgeCases:
 
     def test_inject_very_small_offset(self):
         """Test injection with very small fractional offset."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -676,7 +682,7 @@ class TestInjectOffsetEdgeCases:
         )
 
         # Offset of 0.001 samples (0.0001 seconds)
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=2.50001,  # Very small offset
             dt=0.1,
@@ -685,12 +691,12 @@ class TestInjectOffsetEdgeCases:
 
         result = inject(timeseries, other, interpolate_if_offset=True)
 
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value != 0)
 
     def test_inject_offset_near_rounding_boundary(self):
         """Test injection with offset very close to 0.5 samples."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -698,7 +704,7 @@ class TestInjectOffsetEdgeCases:
         )
 
         # Offset very close to 0.5 samples
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30),
             t0=2.5 + 0.0499,  # Almost 0.5 samples
             dt=0.1,
@@ -707,7 +713,7 @@ class TestInjectOffsetEdgeCases:
 
         result = inject(timeseries, other, interpolate_if_offset=True)
 
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         assert np.any(result.value != 0)
 
 
@@ -716,7 +722,7 @@ class TestInjectInterpolationQuality:
 
     def test_inject_interpolation_preserves_signal_characteristics(self):
         """Test that interpolation preserves signal characteristics."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -727,7 +733,7 @@ class TestInjectInterpolationQuality:
         t = np.arange(20) * 0.1
         signal = np.sin(2 * np.pi * t / 10)  # 0.1 Hz sine wave
 
-        other = GWpyTimeSeries(
+        other = _series(
             signal,
             t0=2.55,  # Fractional offset
             dt=0.1,
@@ -737,7 +743,7 @@ class TestInjectInterpolationQuality:
         result = inject(timeseries, other, interpolate_if_offset=True)
 
         # Check that interpolation occurred and result is reasonable
-        assert len(result) == len(timeseries)
+        assert result.n_samples == timeseries.n_samples
         # Interpolated region should have some non-zero values
         assert np.any(result.value[25:45] != 0)
         # Values should be in reasonable range (approximately -1 to 1 for sine)
@@ -755,11 +761,11 @@ class TestInjectInterpolationQuality:
         which neither implementation computes.
         """
         sampling_frequency = 4096.0
-        timeseries = GWpyTimeSeries(np.zeros(4096), t0=0.0, dt=1 / sampling_frequency)
+        timeseries = _series(np.zeros(4096), t0=0.0, dt=1 / sampling_frequency)
         length, shift, frequency = 2048, 1000.37, 0.8 * sampling_frequency / 2
         envelope = np.hanning(length)
         values = envelope * np.sin(2 * np.pi * frequency * np.arange(length) / sampling_frequency)
-        other = GWpyTimeSeries(values, t0=shift / sampling_frequency, dt=1 / sampling_frequency)
+        other = _series(values, t0=shift / sampling_frequency, dt=1 / sampling_frequency)
 
         result = inject(timeseries, other).value
 
@@ -778,7 +784,7 @@ class TestInjectMixedSigns:
 
     def test_inject_mixed_sign_signal(self):
         """Test injection of signal with mixed positive and negative values."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.1,
@@ -787,7 +793,7 @@ class TestInjectMixedSigns:
 
         # Alternating positive and negative values
         signal = np.array([1, -1] * 15)
-        other = GWpyTimeSeries(
+        other = _series(
             signal,
             t0=2.0,
             dt=0.1,
@@ -802,7 +808,7 @@ class TestInjectMixedSigns:
 
     def test_inject_cancellation_with_negative(self):
         """Test that injection with negatives can cancel previous values."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.ones(100),
             t0=0,
             dt=0.1,
@@ -810,7 +816,7 @@ class TestInjectMixedSigns:
         )
 
         # Inject -0.5 to get partial cancellation
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(30) * -0.5,
             t0=2.0,
             dt=0.1,
@@ -831,7 +837,7 @@ class TestInjectExactBoundaries:
 
     def test_inject_starts_at_exact_sample(self):
         """Test injection that starts at exact sample boundary."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.01,
@@ -839,7 +845,7 @@ class TestInjectExactBoundaries:
         )
 
         # Start exactly at sample 50 (t=0.5)
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(10),
             t0=0.5,
             dt=0.01,
@@ -854,7 +860,7 @@ class TestInjectExactBoundaries:
 
     def test_inject_ends_at_exact_sample(self):
         """Test injection that ends at exact sample boundary."""
-        timeseries = GWpyTimeSeries(
+        timeseries = _series(
             np.zeros(100),
             t0=0,
             dt=0.01,
@@ -862,7 +868,7 @@ class TestInjectExactBoundaries:
         )
 
         # End exactly at sample 75 (t=0.75)
-        other = GWpyTimeSeries(
+        other = _series(
             np.ones(25),
             t0=0.25,
             dt=0.01,
@@ -894,7 +900,7 @@ class TestAlignmentTolerance:
     @staticmethod
     def _series(start_sample: float, sampling_frequency: float = 4096.0, n: int = 8, amplitude: float = 1.0):
         """Return a flat series starting *start_sample* samples after GPS 1e9."""
-        return GWpyTimeSeries(
+        return _series(
             np.full(n, amplitude),
             t0=1e9 + start_sample / sampling_frequency,
             dt=1.0 / sampling_frequency,
@@ -903,7 +909,7 @@ class TestAlignmentTolerance:
 
     @staticmethod
     def _target(n: int, sampling_frequency: float = 4096.0):
-        return GWpyTimeSeries(np.zeros(n), t0=1e9, dt=1.0 / sampling_frequency, unit="m")
+        return _series(np.zeros(n), t0=1e9, dt=1.0 / sampling_frequency, unit="m")
 
     @pytest.mark.parametrize("offset_samples", [10, 1_000, 49_999, 50_001, 200_000])
     def test_a_half_sample_offset_is_interpolated_at_every_scale(self, offset_samples: int):
@@ -919,7 +925,7 @@ class TestAlignmentTolerance:
         if the chunk was snapped to a whole sample.
         """
         target = self._target(offset_samples + 4096)
-        other = GWpyTimeSeries(
+        other = _series(
             np.array([0.0, 0.0, 1.0, 0.0, 0.0]),
             t0=1e9 + (offset_samples + 0.5) / 4096.0,
             dt=1.0 / 4096.0,
@@ -1063,3 +1069,102 @@ class TestAlignmentToleranceDerivation:
         """The property that makes it correct where a constant is not."""
         assert alignment_tolerance(1e10, 4096.0) > alignment_tolerance(1e9, 4096.0)
         assert alignment_tolerance(1e9, 16384.0) > alignment_tolerance(1e9, 1024.0)
+
+
+class TestPlacementByIndex:
+    """Aligned placement adds exactly the overlapping samples, at either edge and anywhere inside."""
+
+    @pytest.mark.parametrize(
+        ("shift", "expected_first", "expected_stop"),
+        [(-3, 0, 5), (0, 0, 8), (5, 5, 13), (17, 17, 20), (-8, 0, 0), (20, 20, 20)],
+    )
+    def test_the_overlap_is_added_and_nothing_else(self, shift, expected_first, expected_stop):
+        """A chunk of 8 samples at offsets before, inside, across the end of and outside a 20-sample target."""
+        rate = 16.0
+        target = _series(np.zeros(20), t0=1_400_000_000.0, sample_rate=rate)
+        chunk = _series(np.arange(1.0, 9.0), t0=1_400_000_000.0 + shift / rate, sample_rate=rate)
+
+        result = inject(target, chunk)
+
+        expected = np.zeros(20)
+        if expected_first < expected_stop:
+            expected[expected_first:expected_stop] = np.arange(1.0, 9.0)[expected_first - shift : expected_stop - shift]
+        np.testing.assert_array_equal(np.asarray(result.data), expected)
+        assert result.t0 == target.t0
+        assert result.sample_rate == target.sample_rate
+
+    def test_the_target_is_not_modified(self):
+        target = _series(np.zeros(10), t0=0.0, sample_rate=4.0)
+        inject(target, _series(np.ones(4), t0=1.0, sample_rate=4.0))
+
+        np.testing.assert_array_equal(np.asarray(target.data), np.zeros(10))
+
+
+class TestAgreesWithGWpy:
+    """On aligned grids the result is GWpy's own ``TimeSeries.inject`` of the same data, sample for sample."""
+
+    @pytest.mark.parametrize("seed", range(12))
+    def test_random_aligned_injections_match(self, seed):
+        gwpy_timeseries = pytest.importorskip("gwpy.timeseries")
+        rng = np.random.default_rng(seed)
+        rate = float(rng.choice([256.0, 1024.0, 4096.0]))
+        t0 = 1_400_000_000.0 + float(rng.integers(0, 1000))
+        n_target = int(rng.integers(64, 512))
+        n_chunk = int(rng.integers(8, 256))
+        shift = int(rng.integers(0, n_target - 1))
+        target = _series(rng.normal(size=n_target), t0=t0, sample_rate=rate)
+        chunk = _series(rng.normal(size=n_chunk), t0=t0 + shift / rate, sample_rate=rate)
+
+        ours = np.asarray(inject(target, chunk).data)
+        reference = gwpy_timeseries.TimeSeries(np.asarray(target.data), t0=t0, sample_rate=rate).inject(
+            gwpy_timeseries.TimeSeries(np.asarray(chunk.data), t0=chunk.t0, sample_rate=rate)
+        )
+
+        np.testing.assert_allclose(ours, np.asarray(reference.value), rtol=0, atol=0)
+
+
+class TestUnits:
+    """Equal units, or any two dimensionless ones, may be summed; nothing else is."""
+
+    @pytest.mark.parametrize(
+        ("target_unit", "chunk_unit"),
+        [("m", "s"), (None, "m"), ("m", None), ("", "m"), ("strain", "m"), ("m", "km")],
+    )
+    def test_incompatible_units_are_refused(self, target_unit, chunk_unit):
+        target = _series(np.zeros(8), t0=0.0, sample_rate=4.0, unit=target_unit)
+        with pytest.raises(ValueError, match="Cannot inject a series in"):
+            inject(target, _series(np.ones(4), t0=0.0, sample_rate=4.0, unit=chunk_unit))
+
+    @pytest.mark.parametrize(
+        ("target_unit", "chunk_unit"),
+        [(None, "strain"), ("strain", None), ("", "strain"), ("dimensionless", "strain"), ("m", "m"), (None, None)],
+    )
+    def test_compatible_units_inject_and_the_target_keeps_its_unit(self, target_unit, chunk_unit):
+        target = _series(np.zeros(8), t0=0.0, sample_rate=4.0, unit=target_unit)
+        result = inject(target, _series(np.ones(4), t0=0.0, sample_rate=4.0, unit=chunk_unit))
+
+        np.testing.assert_array_equal(np.asarray(result.data), [1, 1, 1, 1, 0, 0, 0, 0])
+        assert result.unit == target_unit
+
+
+class TestRefusalsAndEmptyInputs:
+    """Inputs ``inject`` refuses, and the ones it leaves the target unchanged for."""
+
+    def test_a_two_dimensional_series_is_refused(self):
+        target = TimeSeries(np.zeros((2, 8)), t0=0.0, sample_rate=4.0)
+        with pytest.raises(ValueError, match="one-dimensional"):
+            inject(target, _series(np.ones(4), t0=0.0, sample_rate=4.0))
+
+    @pytest.mark.parametrize(("n_target", "n_chunk"), [(0, 4), (8, 0)])
+    def test_an_empty_series_changes_nothing(self, n_target, n_chunk):
+        target = _series(np.zeros(n_target), t0=0.0, sample_rate=4.0)
+        result = inject(target, _series(np.ones(n_chunk), t0=0.0, sample_rate=4.0))
+
+        assert result is target
+
+    def test_a_fractional_chunk_spanning_no_grid_point_changes_nothing(self):
+        """One sample half-way between two grid points: no target sample lies within its span."""
+        target = _series(np.zeros(8), t0=0.0, sample_rate=4.0)
+        result = inject(target, _series(np.ones(1), t0=0.125, sample_rate=4.0))
+
+        assert result is target

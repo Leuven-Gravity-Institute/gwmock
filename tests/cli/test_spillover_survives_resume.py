@@ -33,6 +33,8 @@ Two things had to be right, and they fail independently:
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 from astropy.units.quantity import Quantity
@@ -49,7 +51,8 @@ def _chunk(start: float = 100.0, samples: int = 8, event_id: int = 3) -> TimeSer
         sampling_frequency=Quantity(8.0, unit="Hz"),
     )
     chunk.metadata.update({"injection_parameters": {"coa_time": start + 1.0}, "event_id": event_id})
-    chunk[0].name = "H1:STRAIN"
+    chunk[0] = dataclasses.replace(chunk[0], name="H1:STRAIN")
+    chunk.channels[0] = "H1:STRAIN"
     return chunk
 
 
@@ -74,6 +77,7 @@ class TestTheCheckpointCarriesSpillover:
         assert restored[0].metadata["injection_parameters"] == {"coa_time": 101.0}
         # `restored[0]` is the first *series*; its channels are indexed one level in.
         assert restored[0][0].name == "H1:STRAIN"
+        assert restored[0].channels[0] == "H1:STRAIN"
         assert float(restored[0].start_time.value) == 100.0
 
     def test_a_checkpoint_written_before_this_field_reads_as_no_spillover(self, tmp_path):

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from typing import Any, cast
+import math
+from typing import Any
 
 import numpy as np
-from astropy.units import second  # pylint: disable=no-name-in-module
+from gwmock_data import TimeSeries
 from gwmock_signal.projection.resampling import resample_uniform_sinc
-from gwpy.timeseries import TimeSeries
 
 logger = logging.getLogger("gwmock")
 
@@ -169,97 +170,105 @@ def measure_content_before(
     return n_before, n_before / sampling_frequency, fraction
 
 
-def inject(timeseries: TimeSeries, other: TimeSeries, interpolate_if_offset: bool = True) -> TimeSeries:
-    """Inject one TimeSeries into another, handling time offsets.
+#: Units that carry no dimension: strain is a ratio of lengths, so it adds to a unit-less series.
+_DIMENSIONLESS = frozenset({None, "", "dimensionless", "strain"})
+
+
+def units_are_compatible(target_unit: str | None, other_unit: str | None) -> bool:
+    """Whether samples in *other_unit* may be added to samples in *target_unit*.
+
+    Equal units are compatible, and so are any two of: no unit, ``"dimensionless"`` and ``"strain"``
+    -- gwmock's segments carry no unit and the chunks injected into them carry ``"strain"``. Any other
+    pair is refused, as GWpy refused it, rather than summed under the target's unit: a missing unit is
+    not a wildcard for a dimensional one.
 
     Args:
-        timeseries: The target TimeSeries to inject into.
-        other: The TimeSeries to be injected.
-        interpolate_if_offset: Whether to interpolate if there is a non-integer sample offset.
+        target_unit: The unit of the series added into, or ``None``.
+        other_unit: The unit of the series added, or ``None``.
 
     Returns:
-        TimeSeries: The resulting TimeSeries after injection.
+        Whether the two may be summed.
     """
-    # Check whether timeseries is compatible with other
-    timeseries.is_compatible(other)
+    if target_unit == other_unit:
+        return True
+    return target_unit in _DIMENSIONLESS and other_unit in _DIMENSIONLESS
 
-    # crop to fit
-    if (timeseries.xunit == second) and (other.xspan[0] < timeseries.xspan[0]):
-        other = cast(TimeSeries, other.crop(start=timeseries.xspan[0]))
-    if (timeseries.xunit == second) and (other.xspan[1] > timeseries.xspan[1]):
-        other = cast(TimeSeries, other.crop(end=timeseries.xspan[1]))
 
-    # Check if other is empty after cropping
-    if len(other.times) == 0:
-        logger.debug("Other TimeSeries is empty after cropping to fit; returning original timeseries")
+def inject(timeseries: TimeSeries, other: TimeSeries, interpolate_if_offset: bool = True) -> TimeSeries:
+    """Add *other* into *timeseries* where the two overlap, and return the sum.
+
+    Placement is by sample index on *timeseries*' grid. The offset of *other*'s first sample is
+    ``(other.t0 - timeseries.t0) * sample_rate`` samples; when that is a whole number to within
+    :func:`alignment_tolerance`, the overlapping samples are added one for one. Samples of *other*
+    outside *timeseries*' span are not placed: those before it are lost (the caller reports them,
+    see :func:`measure_content_before`), and those after it are the caller's to carry forward.
+
+    When the offset is fractional, *other* is resampled onto *timeseries*' grid at the grid points
+    inside its own sample span, with the band-limited windowed-sinc kernel gwmock-signal projects
+    with (``resample_uniform_sinc``), and those are added. Positions come from integer grid indices
+    minus one offset rather than from per-sample GPS times, each of which carries float64 rounding
+    of a sizeable fraction of a sample. The whole of *other* is the kernel's input, so samples just
+    outside *timeseries* still give context at its edges.
+
+    Args:
+        timeseries: The series to add into. It is not changed.
+        other: The series to add. Same sample rate as *timeseries*.
+        interpolate_if_offset: Whether to resample a fractional offset; if not, *timeseries* is
+            returned unchanged.
+
+    Returns:
+        A new series with *timeseries*' timing, name and unit, holding the sum.
+
+    Raises:
+        ValueError: If the sample rates or the units are incompatible (see
+            :func:`units_are_compatible`), or either series is not one-dimensional.
+    """
+    if not units_are_compatible(timeseries.unit, other.unit):
+        raise ValueError(f"Cannot inject a series in {other.unit!r} into one in {timeseries.unit!r}.")
+    if other.sample_rate != timeseries.sample_rate:
+        raise ValueError(
+            f"Cannot inject a series sampled at {other.sample_rate} Hz into one sampled at {timeseries.sample_rate} Hz."
+        )
+    if timeseries.data.ndim != 1 or other.data.ndim != 1:
+        raise ValueError("inject works on one channel at a time: both series must be one-dimensional.")
+
+    n_target = timeseries.n_samples
+    n_other = other.n_samples
+    if n_target == 0 or n_other == 0:
+        logger.debug("Nothing to inject: one of the series has no samples; returning the target unchanged")
         return timeseries
 
-    target_times = timeseries.times.value
-    other_times = other.times.value
-    sample_spacing = float(timeseries.dt.value)
-
-    # Calculate offset between start times
-    offset = (other_times[0] - target_times[0]) / sample_spacing
-
-    # Check if offset is aligned (integer number of samples)
-    tolerance = alignment_tolerance(target_times[0], 1.0 / sample_spacing, gps_times=other_times)
-    if not is_aligned(offset, tolerance):
-        if not interpolate_if_offset:
-            logger.debug("Non-integer offset of %s samples; not interpolating, returning original timeseries", offset)
-            return timeseries
-
-        # Interpolate to align grids
-        logger.debug("Injecting with interpolation due to non-integer offset of %s samples", offset)
-
-        # Determine overlap range in target time grid
-        start_idx = int(np.searchsorted(target_times, other_times[0], side="left"))
-        end_idx = int(np.searchsorted(target_times, other_times[-1], side="right")) - 1
-
-        if start_idx >= len(target_times) or end_idx < 0 or start_idx > end_idx:
-            logger.debug("No overlap between timeseries and other after searching; returning original timeseries")
-            return timeseries
-
-        # The band-limited windowed-sinc kernel gwmock-signal's `inject_strain` resamples with, so the
-        # two packages agree on the same operation. Positions come from integer target indices minus
-        # one offset, as there, rather than from per-sample GPS timestamps, each of which carries
-        # float64 rounding of a sizeable fraction of a sample.
-        positions = np.arange(start_idx, end_idx + 1) - offset
-        resampled = resample_uniform_sinc(other.value, positions)
-
-        # Create a new TimeSeries with explicit parameters to avoid floating-point precision issues
-        injected_data = timeseries.value.copy()
-        injected_data[start_idx : end_idx + 1] += resampled
-        injected = TimeSeries(
-            injected_data,
-            t0=timeseries.t0,
-            dt=timeseries.dt,
-            unit=timeseries.unit,
-        )
-        return injected
-
-    # Aligned case: offset is integer
-    logger.debug("Injecting with aligned grids (offset: %s samples)", round(offset))
-    start_idx = round(offset)
-    end_idx = start_idx + len(other.value) - 1
-
-    # Bounds check
-    if start_idx < 0 or end_idx >= len(target_times) or start_idx >= len(target_times):
-        logger.warning(
-            "Injection range [%s:%s] out of bounds for timeseries of length %s; skipping injection",
-            start_idx,
-            end_idx,
-            len(target_times),
-        )
-        return timeseries
-
-    # Create a new TimeSeries with explicit parameters to avoid floating-point precision issues
-    injected_data = timeseries.value.copy()
-    inject_len = min(len(other.value), end_idx - start_idx + 1)
-    injected_data[start_idx : start_idx + inject_len] += other.value[:inject_len]
-    injected = TimeSeries(
-        injected_data,
-        t0=timeseries.t0,
-        dt=timeseries.dt,
-        unit=timeseries.unit,
+    sample_spacing = 1.0 / timeseries.sample_rate
+    offset = (other.t0 - timeseries.t0) / sample_spacing
+    tolerance = alignment_tolerance(
+        timeseries.t0,
+        timeseries.sample_rate,
+        gps_times=(other.t0, other.t0 + (n_other - 1) * sample_spacing),
     )
-    return injected
+    injected_data = np.array(timeseries.data, dtype=np.result_type(timeseries.data, other.data), copy=True)
+
+    if is_aligned(offset, tolerance):
+        shift = round(offset)
+        logger.debug("Injecting with aligned grids (offset: %s samples)", shift)
+        first = max(shift, 0)
+        stop = min(shift + n_other, n_target)
+        if first >= stop:
+            logger.debug("No overlap between the series; returning the target unchanged")
+            return timeseries
+        injected_data[first:stop] += np.asarray(other.data)[first - shift : stop - shift]
+        return dataclasses.replace(timeseries, data=injected_data)
+
+    if not interpolate_if_offset:
+        logger.debug("Non-integer offset of %s samples; not interpolating, returning original timeseries", offset)
+        return timeseries
+
+    logger.debug("Injecting with interpolation due to non-integer offset of %s samples", offset)
+    # Grid points of the target inside the other's sample span [offset, offset + n_other - 1].
+    first = max(math.ceil(offset), 0)
+    last = min(math.floor(offset + n_other - 1), n_target - 1)
+    if first > last:
+        logger.debug("No grid point of the target lies within the other's span; returning the target unchanged")
+        return timeseries
+    positions = np.arange(first, last + 1) - offset
+    injected_data[first : last + 1] += resample_uniform_sinc(np.asarray(other.data), positions)
+    return dataclasses.replace(timeseries, data=injected_data)

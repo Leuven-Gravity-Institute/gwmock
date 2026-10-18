@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from astropy.units.quantity import Quantity
-from gwpy.timeseries import TimeSeries as GWPyTimeSeries
 
 from gwmock.cli.utils.config_resolution import parse_seconds
 from gwmock.cli.utils.segment_layout import SegmentLayout, resolve_segment_count
@@ -18,6 +17,9 @@ from gwmock.data.time_series.inject import measure_content_before
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
 from gwmock.simulator.state import StateAttribute
+
+if TYPE_CHECKING:
+    from gwmock_data import TimeSeries as ChannelSeries
 
 logger = logging.getLogger("gwmock")
 
@@ -613,16 +615,17 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
             )
 
     def _save_gwf_data(  # pylint: disable=unused-argument
-        self, data: GWPyTimeSeries, file_name: str | Path, channel: str | None = None, **kwargs
+        self, data: ChannelSeries, file_name: str | Path, channel: str | None = None, **kwargs
     ) -> None:
-        """Save GWPy TimeSeries data to a GWF file.
+        """Save one channel to a GWF file, through GWpy.
 
         Args:
-            data: GWPy TimeSeries data to save.
+            data: The channel's series.
             file_name: Path to the output GWF file.
-            channel: Optional channel name to set in the data.
+            channel: Optional channel name to write the data as.
             **kwargs: Additional arguments for the write function.
         """
+        frame_series = data.to_gwpy()
         if channel is not None:
-            data.channel = channel
-        data.write(str(file_name))
+            frame_series.channel = channel
+        frame_series.write(str(file_name))

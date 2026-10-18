@@ -1907,7 +1907,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         for detector_name, channel_name, index in zip(
             active_detector_names, channel_names, active_indices, strict=True
         ):
-            series = data[index].copy()
+            # gwmock-signal releases before the one that shares gwmock-data's series take GWpy series here.
+            series = data[index].to_gwpy()
             effective_name = channel_name if channel_name is not None else detector_name
             if effective_name in mapping:
                 effective_name = f"{effective_name}__{detector_name}"
