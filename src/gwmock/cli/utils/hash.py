@@ -12,6 +12,8 @@ import hashlib
 import logging
 from pathlib import Path
 
+from gwmock._optional import MissingExtraError, require
+
 logger = logging.getLogger("gwmock")
 
 
@@ -82,8 +84,10 @@ def _read_content_items(file_path: Path) -> list[tuple[str, dict, object]] | Non
     suffix = file_path.suffix.lower()
 
     if suffix == ".gwf":
-        from gwpy.io.gwf import iter_channel_names
-        from gwpy.timeseries import TimeSeriesDict
+        # Required rather than skipped: falling back to the raw-file hash would change what the
+        # stored hash means for the same file.
+        iter_channel_names = require("gwpy.io.gwf", "gwpy", "Hashing a GWF file").iter_channel_names
+        TimeSeriesDict = require("gwpy.timeseries", "gwpy", "Hashing a GWF file").TimeSeriesDict  # noqa: N806
 
         # The framel reader does not auto-discover channels, so enumerate them.
         channels = sorted(iter_channel_names(str(file_path)))
@@ -98,7 +102,7 @@ def _read_content_items(file_path: Path) -> list[tuple[str, dict, object]] | Non
         return items
 
     if suffix in (".hdf5", ".h5"):
-        import h5py
+        h5py = require("h5py", "hdf5", "Hashing an HDF5 file")
 
         names: list[str] = []
         with h5py.File(file_path, "r") as handle:
@@ -169,6 +173,10 @@ def compute_content_hash(file_path: str | Path, algorithm: str = "sha256") -> st
     path = Path(file_path)
     try:
         items = _read_content_items(path)
+    except MissingExtraError:
+        # Not a file that could not be decoded: falling back to the raw-file hash here would record a
+        # different hash for the same file depending on what is installed.
+        raise
     except Exception as exc:
         logger.debug("Could not compute content hash for %s: %s", path, exc)
         return None

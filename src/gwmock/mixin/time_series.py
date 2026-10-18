@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 from astropy.units.quantity import Quantity
 
+from gwmock._optional import require
 from gwmock.cli.utils.config_resolution import parse_seconds
 from gwmock.cli.utils.segment_layout import SegmentLayout, resolve_segment_count
 from gwmock.cli.utils.template import expand_template_variables
@@ -625,6 +626,7 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
             channel: Optional channel name to write the data as.
             **kwargs: Additional arguments for the write function.
         """
+        require("gwpy.timeseries", "gwpy", "Frame (GWF) output")
         frame_series = data.to_gwpy()
         if channel is not None:
             frame_series.channel = channel

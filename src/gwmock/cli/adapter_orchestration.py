@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
+from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_noise import SimulationResult
 from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
 from gwmock.cli.utils.config import OrchestrationConfig
@@ -1429,7 +1429,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         epoch = float(self.start_time.value)
         sampling_frequency = float(self.sampling_frequency.value)
         total = {
-            detector: GWpyTimeSeries(
+            detector: ChannelSeries(
                 np.zeros(n_samples, dtype=float),
                 t0=epoch,
                 sample_rate=sampling_frequency,
@@ -1452,7 +1452,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             )
             # Feed the running total back in, so the next pulsar adds to it rather than to zeros.
             total = {
-                detector: GWpyTimeSeries(
+                detector: ChannelSeries(
                     np.asarray(strain[index], dtype=float),
                     t0=epoch,
                     sample_rate=sampling_frequency,
@@ -1484,7 +1484,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         self.signal_adapter.set_seed(segment_seed)
         n_samples = round(float(self.duration.value) * float(self.sampling_frequency.value))
         background = {
-            detector: GWpyTimeSeries(
+            detector: ChannelSeries(
                 np.zeros(n_samples, dtype=float),
                 t0=float(self.start_time.value),
                 sample_rate=float(self.sampling_frequency.value),
@@ -1647,12 +1647,12 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             output_path.parent.mkdir(parents=True, exist_ok=True)
             if output_format in {"gwf", "hdf5"}:
                 channel_id = channels_dict[detector] if channels_dict is not None else f"{detector}:{channel_str}"
-                gwpy_ts = GWpyTimeSeries(
+                channel_series = ChannelSeries(
                     np.asarray(chunk[detector], dtype=float),
                     t0=gps_start,
                     sample_rate=float(self.sampling_frequency.value),
                 )
-                DetectorStrainStack.from_mapping([channel_id], {channel_id: gwpy_ts}).write(
+                DetectorStrainStack.from_mapping([channel_id], {channel_id: channel_series}).write(
                     output_path, format=output_format
                 )
             else:
@@ -1907,8 +1907,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         for detector_name, channel_name, index in zip(
             active_detector_names, channel_names, active_indices, strict=True
         ):
-            # gwmock-signal releases before the one that shares gwmock-data's series take GWpy series here.
-            series = data[index].to_gwpy()
+            series = data[index]
             effective_name = channel_name if channel_name is not None else detector_name
             if effective_name in mapping:
                 effective_name = f"{effective_name}__{detector_name}"

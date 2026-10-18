@@ -24,8 +24,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pytest
+from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_signal import DetectorStrainStack
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.cli.adapter_orchestration import AdapterOrchestrator
 from gwmock.cli.utils.config import Config
@@ -81,9 +81,9 @@ class FakeContinuousWaveBackend:
         return DetectorStrainStack.from_mapping(
             names,
             {
-                detector: GWpyTimeSeries(
+                detector: ChannelSeries(
                     np.asarray(background[detector].value, dtype=float) + float(parameters["amplitude_plus"]),
-                    t0=float(background[detector].t0.value),
+                    t0=float(background[detector].t0),
                     sample_rate=sampling_frequency,
                 )
                 for detector in names

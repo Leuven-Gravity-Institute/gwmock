@@ -62,10 +62,12 @@ pip install gwmock
 ```
 
 **Note:** The package requires Python 3.13 or later and is built and tested
-against Python 3.13–3.14. When creating a virtual environment with `uv`, specify
+against Python 3.13–3.15. When creating a virtual environment with `uv`, specify
 the Python version to ensure compatibility: `uv venv --python 3.13` (replace
-`3.13` with your preferred supported version: 3.13 or 3.14). This avoids
-potential issues with unsupported Python versions.
+`3.13` with your preferred supported version: 3.13, 3.14 or 3.15). HDF5 and
+frame (GWF) files need the `hdf5` and `gwpy` extras
+(`pip install "gwmock[hdf5,gwpy]"`), which may not install on Python 3.15 yet;
+NumPy (`.npy`) output needs neither.
 
 ### From PyPI
 

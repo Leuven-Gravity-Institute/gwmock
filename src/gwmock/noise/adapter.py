@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-import h5py
 import numpy as np
 from gwmock_noise import (
     AddLines,
@@ -32,6 +31,7 @@ from gwmock_noise.gaussian import normalize_spectral_lines
 from gwmock_noise.glitches import normalize_glitch_models
 from gwmock_noise.output.frame import compose_frame_name, format_time_token
 
+from gwmock._optional import require
 from gwmock.strain_schema import declare_strain_schema
 from gwmock.utils.download import download_file
 
@@ -694,6 +694,7 @@ class NoiseAdapter:
         Returns:
             The path written for each detector.
         """
+        h5py = require("h5py", "hdf5", "HDF5 noise output")
         output_paths: dict[str, Path] = {}
         for detector, strain in chunk_by_detector.items():
             channel = (
