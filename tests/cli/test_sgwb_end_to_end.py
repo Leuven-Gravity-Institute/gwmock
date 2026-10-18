@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import h5py
 import numpy as np
 import pytest
 import yaml
+from gwmock_data import hdf5
 
 from gwmock.cli.simulate import _simulate_impl
 from gwmock.simulator.seeds import derive_seed
@@ -62,8 +62,7 @@ def _write_config(path: Path) -> None:
 
 def _read_signal_hdf5(path: Path) -> dict[str, np.ndarray]:
     """Read detector arrays from one DetectorStrainStack HDF5 artifact."""
-    with h5py.File(path, "r") as handle:
-        return {name: handle[name][...] for name in handle}
+    return {name: dataset.data for name, dataset in hdf5.read(path).members.items()}
 
 
 def test_cli_generates_valid_sgwb_signal_and_noise_outputs(tmp_path: Path) -> None:

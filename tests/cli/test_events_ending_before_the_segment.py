@@ -168,6 +168,7 @@ def _start_time(orchestrator) -> float:
 class TestTheBatchDoesNotGrowWithTheOffset:
     """The defect: a run starting after its population's first event batches all of them."""
 
+    @pytest.mark.requires_lalsuite
     def test_the_batch_holds_the_events_in_the_window_not_the_ones_before_it(self, tmp_path):
         """The measured failure, reduced to its shape.
 
@@ -188,6 +189,7 @@ class TestTheBatchDoesNotGrowWithTheOffset:
         assert len(events) == 3, f"batched {len(events)} events for a segment containing 3"
         assert sorted(event_ids) == [10, 11, 12]
 
+    @pytest.mark.requires_lalsuite
     def test_the_batch_tracks_the_segment_not_the_distance_from_the_catalogue_start(self, tmp_path):
         """Doubling the offset must not change the batch.
 
@@ -208,6 +210,7 @@ class TestTheBatchDoesNotGrowWithTheOffset:
 
         assert counts == [2, 2, 2], f"batch grew with the offset: {counts}"
 
+    @pytest.mark.requires_lalsuite
     def test_a_finished_event_does_not_stop_the_walk(self, tmp_path):
         """Skipped, not refused -- the distinction the loops' ``break`` makes load-bearing.
 
@@ -226,6 +229,7 @@ class TestTheBatchDoesNotGrowWithTheOffset:
         assert len(events) == 2, "the walk stopped at the finished event instead of stepping over it"
         assert sorted(event_ids) == [1, 2]
 
+    @pytest.mark.requires_lalsuite
     def test_a_skipped_event_is_consumed_so_the_next_segment_does_not_reconsider_it(self, tmp_path):
         """``population_index`` means every event before it is consumed; skipping must keep that.
 
@@ -259,6 +263,7 @@ class TestTheRealAdapterAnswers:
     only ever asked a stand-in that was built to answer.
     """
 
+    @pytest.mark.requires_lalsuite
     def test_the_orchestrators_own_adapter_exposes_the_query(self, tmp_path):
         """The wiring, asserted on the object a run actually holds."""
         orchestrator = _orchestrator(tmp_path)
@@ -268,6 +273,7 @@ class TestTheRealAdapterAnswers:
             "code behind the orchestrator's getattr guard"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_the_real_adapter_returns_a_usable_tail(self, tmp_path):
         """Present is not the same as answering, so the value is checked too.
 
@@ -321,6 +327,7 @@ class TestAgainstRealGeneration:
     whole suite.
     """
 
+    @pytest.mark.requires_lalsuite
     def test_the_predicted_tail_matches_the_generated_buffer(self, tmp_path):
         """Measured on the produced ``TimeSeries``, not recomputed from the same formula."""
         orchestrator = _orchestrator(tmp_path)
@@ -344,6 +351,7 @@ class TestAgainstRealGeneration:
             f"predicted tail {predicted} s but generation ends {measured} s after coalescence"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_the_two_sides_account_for_the_whole_generated_buffer(self, tmp_path):
         """Lead plus tail is the buffer, checked against the buffer that was generated.
 
@@ -369,6 +377,7 @@ class TestAgainstRealGeneration:
 class TestADegradedAdapterIsReported:
     """An adapter that cannot answer must say so once, not disappear into a silent fallback."""
 
+    @pytest.mark.requires_lalsuite
     def test_an_adapter_without_the_query_warns_rather_than_going_quiet(self, tmp_path, caplog):
         """Why the query is called directly instead of behind a ``getattr`` guard.
 
@@ -399,6 +408,7 @@ class TestADegradedAdapterIsReported:
             "the adapter could not answer and the run was told nothing"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_the_warning_is_not_repeated_once_per_event(self, tmp_path, caplog):
         """Deduplicated by reason across a whole walk, not merely on a single call.
 
@@ -436,6 +446,7 @@ class TestTheIndexSurvivesInterleavedSkips:
     later and has already finished. Found by a reviewer, who built the case below by hand.
     """
 
+    @pytest.mark.requires_lalsuite
     def test_a_claimed_event_is_not_left_behind_the_index_when_generation_fails(self, tmp_path):
         """The one that silently drops a real event.
 
@@ -486,6 +497,7 @@ class TestTheIndexSurvivesInterleavedSkips:
             "retry would never generate it"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_an_all_skipped_batch_advances_through_the_real_entry_point(self, tmp_path):
         """The case that justifies advancing inside the walk, exercised through the caller.
 
@@ -511,6 +523,7 @@ class TestTheIndexSurvivesInterleavedSkips:
 class TestUnknownStillClaims:
     """Unknown is not zero, and on this side reading it as zero deletes signal."""
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_whose_tail_is_unknown_is_claimed(self, tmp_path):
         """A backend that cannot say where its buffer ends must not have events dropped for it.
 
@@ -527,6 +540,7 @@ class TestUnknownStillClaims:
 
         assert len(events) == 2, "an event with an unknown tail was dropped; unknown is not zero"
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_still_ringing_into_the_segment_is_claimed(self, tmp_path):
         """The tail is a fixed fraction of the buffer, so for a BNS it is tens of seconds.
 
@@ -543,6 +557,7 @@ class TestUnknownStillClaims:
 
         assert len(events) == 2, "an event whose ringdown reaches into the segment was dropped"
 
+    @pytest.mark.requires_lalsuite
     def test_the_boundary_is_inclusive_the_way_the_upper_one_is(self, tmp_path):
         """An event ending exactly at the segment start contributes its final sample.
 
@@ -562,6 +577,7 @@ class TestUnknownStillClaims:
 class TestBothLoopsAgree:
     """Per-event and batched must place identically, or resume skips or repeats events."""
 
+    @pytest.mark.requires_lalsuite
     @pytest.mark.parametrize("execution", ["per-event", "batched"])
     def test_the_two_modes_claim_the_same_events(self, tmp_path, execution):
         """``population_index`` is checkpointed, so a run switched between modes must not disagree.
@@ -580,6 +596,7 @@ class TestBothLoopsAgree:
 
         assert finished == [True, True, False, False]
 
+    @pytest.mark.requires_lalsuite
     def test_the_per_event_loop_steps_over_finished_events(self, tmp_path):
         """Asserted on what the loop *generated*, not on what the predicate returned.
 

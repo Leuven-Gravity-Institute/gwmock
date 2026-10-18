@@ -132,6 +132,7 @@ import os
 import sys
 import traceback
 
+_interpreter_path = list(sys.path)
 try:
     sys.path[:] = json.loads(os.environ[{ENV_SYS_PATH!r}])
     os.chdir(os.environ[{ENV_ROOT!r}])
@@ -143,6 +144,10 @@ try:
 
     pytest_args = json.loads(os.environ[{ENV_PYTEST_ARGS!r}])
 except BaseException:
+    # From Python 3.15 the traceback module imports parts of the standard library as it formats, which the
+    # replaced path above may no longer reach; without the interpreter's own path back, the report itself
+    # raises and the bootstrap failure leaves as an ordinary exit code 1.
+    sys.path[:] = _interpreter_path
     traceback.print_exc()
     raise SystemExit({WORKER_BOOTSTRAP_FAILURE_EXIT_CODE!r})
 

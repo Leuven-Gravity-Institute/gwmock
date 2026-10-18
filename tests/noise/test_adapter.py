@@ -1080,6 +1080,7 @@ class TestTheNameMatchesWhatTheBackendWrites:
     So the assertion is against the real backend rather than against a second statement of its rule.
     """
 
+    @pytest.mark.requires_gwpy
     @pytest.mark.parametrize("output_format", ["gwf", "hdf5"])
     def test_the_predicted_paths_are_the_paths_written(self, tmp_path: Path, output_format: str):
         """Whatever `expected_output_paths` promises, `run` puts a file there."""
@@ -1132,6 +1133,7 @@ class TestHdf5Output:
             tmp_path / "noise-0_L-L1_100-4.hdf5",
         ]
 
+    @pytest.mark.requires_gwpy
     def test_write_chunk_persists_hdf5_outputs(self, tmp_path: Path):
         """A chunk written as HDF5 lands at the promised path and reads back as the samples given.
 
@@ -1206,7 +1208,7 @@ class TestHdf5Output:
         together: same name, same dataset, same attributes. Run against the real `DefaultNoiseSimulator`,
         since a fake backend could only repeat whatever this module believes.
         """
-        import h5py
+        from gwmock_data import hdf5
 
         real = NoiseAdapter.from_backend(None)
         arguments = {
@@ -1228,15 +1230,14 @@ class TestHdf5Output:
         assert backend_path.name == gwmock_path.name
 
         def layout(path: Path) -> tuple[list[str], dict[str, object], dict[str, object]]:
-            with h5py.File(path, "r") as handle:
-                names: list[str] = []
-                handle.visititems(lambda name, obj: names.append(name) if isinstance(obj, h5py.Dataset) else None)
-                dataset = handle[names[0]]
-                return (
-                    names,
-                    {key: dataset.attrs[key] for key in sorted(dataset.attrs)},
-                    {key: handle.attrs[key] for key in sorted(handle.attrs)},
-                )
+            root = hdf5.read(path, data=False)
+            names = sorted(name for name, member in root.members.items() if isinstance(member, hdf5.Dataset))
+            dataset = root.members[names[0]]
+            return (
+                names,
+                {key: dataset.attrs[key] for key in sorted(dataset.attrs)},
+                {key: root.attrs[key] for key in sorted(root.attrs)},
+            )
 
         # The root attributes are compared too, because that is where the strain schema is declared: a
         # backend-written file that carried no declaration while a gwmock-written one did would make the
@@ -1298,6 +1299,7 @@ class TestTheDeclaredStrainSchema:
         for path in result.output_paths.values():
             assert require_strain_schema(path).version == STRAIN_SCHEMA_VERSION
 
+    @pytest.mark.requires_gwpy
     def test_declaring_it_leaves_the_file_readable(self, tmp_path: Path):
         """The declaration must not cost a consumer the standard reader; see `gwmock.strain_schema`."""
         from gwpy.timeseries import TimeSeries
@@ -1328,7 +1330,7 @@ class TestTheDeclaredStrainSchema:
         """
         import shutil
 
-        import h5py
+        from gwmock_data import hdf5
 
         from gwmock.cli.utils.hash import compute_content_hash
 
@@ -1349,12 +1351,13 @@ class TestTheDeclaredStrainSchema:
 
         undeclared = tmp_path / "undeclared.hdf5"
         shutil.copyfile(written, undeclared)
-        with h5py.File(undeclared, "a") as handle:
-            for key in list(handle.attrs):
-                del handle.attrs[key]
+        stripped = hdf5.read(undeclared)
+        stripped.attrs.clear()
+        hdf5.write(stripped, undeclared)
 
         assert stamped == compute_content_hash(undeclared)
 
+    @pytest.mark.requires_gwpy
     @pytest.mark.parametrize("output_format", ["npy", "gwf"])
     def test_the_formats_that_cannot_carry_it_still_write(self, tmp_path: Path, output_format: str):
         """`.npy` has no metadata space and a GWF frame is composed from a fixed set of fields, so the

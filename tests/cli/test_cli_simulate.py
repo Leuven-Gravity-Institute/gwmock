@@ -409,6 +409,7 @@ class TestSaveBatchMetadata:
             metadata_file = metadata_dir / "mock-0.metadata.json"
             assert metadata_file.exists()
 
+    @pytest.mark.requires_gwpy
     def test_save_batch_metadata_contains_state_and_files(self):
         """Test that metadata contains simulator state and output file list."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -448,6 +449,7 @@ class TestSaveBatchMetadata:
             assert "L1-1234567890-1024.gwf" in metadata["output_files"]
             assert "V1-1234567890-1024.gwf" in metadata["output_files"]
 
+    @pytest.mark.requires_gwpy
     def test_save_batch_metadata_updates_index(self):
         """Test that save_batch_metadata updates the metadata index."""
         with tempfile.TemporaryDirectory() as tmpdir:

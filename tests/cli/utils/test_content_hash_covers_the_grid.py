@@ -30,7 +30,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from gwpy.timeseries import TimeSeries
+from gwmock_data import hdf5
+
+try:
+    from gwpy.timeseries import TimeSeries
+except ModuleNotFoundError as exc:  # Python 3.15: GWpy does not install yet; its tests are skipped
+    if exc.name != "gwpy":
+        raise
+    TimeSeries = None
 
 from gwmock.cli.utils.hash import compute_content_hash
 
@@ -83,12 +90,14 @@ def _written(
     return path
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.parametrize("suffix", FORMATS)
 def test_the_same_file_hashes_the_same(tmp_path: Path, suffix: str) -> None:
     """The baseline the others are read against: nothing moved, nothing changes."""
     assert _digest(_written(tmp_path / "a", suffix)) == _digest(_written(tmp_path / "b", suffix))
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.parametrize("suffix", FORMATS)
 def test_moving_the_epoch_changes_the_hash(tmp_path: Path, suffix: str) -> None:
     """Identical samples at a different GPS time are different data.
@@ -101,6 +110,7 @@ def test_moving_the_epoch_changes_the_hash(tmp_path: Path, suffix: str) -> None:
     assert original != moved
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.parametrize("suffix", FORMATS)
 def test_changing_the_sample_rate_changes_the_hash(tmp_path: Path, suffix: str) -> None:
     """Same samples, half the span. Also collided for HDF5."""
@@ -109,6 +119,7 @@ def test_changing_the_sample_rate_changes_the_hash(tmp_path: Path, suffix: str) 
     assert original != resampled
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.parametrize("suffix", FORMATS)
 def test_changing_a_sample_changes_the_hash(tmp_path: Path, suffix: str) -> None:
     """The property that already held, kept explicit so a metadata-only digest cannot pass this file."""
@@ -131,18 +142,17 @@ class TestTheOtherSpellingOfTheGrid:
 
     @staticmethod
     def _stack_written(path: Path, *, t0: float = 100.0, rate: float = 8.0) -> Path:
+        from gwmock_data import TimeSeries as ChannelSeries
         from gwmock_signal import DetectorStrainStack
 
-        series = TimeSeries(np.arange(8, dtype=float), t0=t0, sample_rate=rate)
+        series = ChannelSeries(np.arange(8, dtype=float), t0=t0, sample_rate=rate)
         path.parent.mkdir(parents=True, exist_ok=True)
         DetectorStrainStack.from_mapping(["H1:MOCK"], {"H1:MOCK": series}).write(str(path), format="hdf5")
         return path
 
     def test_the_writer_really_does_use_the_other_spelling(self, tmp_path: Path) -> None:
         """Pinned, because everything below is only meaningful while it is true."""
-        h5py = pytest.importorskip("h5py")
-        with h5py.File(self._stack_written(tmp_path / "probe.hdf5"), "r") as handle:
-            attributes = set(handle["H1:MOCK"].attrs)
+        attributes = set(hdf5.read(self._stack_written(tmp_path / "probe.hdf5"), data=False).members["H1:MOCK"].attrs)
         assert {"t0", "dt"} <= attributes
 
     def test_moving_the_epoch_changes_the_hash(self, tmp_path: Path) -> None:
@@ -162,13 +172,10 @@ class TestTheOtherSpellingOfTheGrid:
         to the strain schema -- which records `x0`/`dx` alongside the `t0`/`dt` the stack writer leaves
         in place -- hash differently from the same data before it was declared.
         """
-        h5py = pytest.importorskip("h5py")
         aliased = self._stack_written(tmp_path / "a.hdf5")
         both = self._stack_written(tmp_path / "b.hdf5")
-        with h5py.File(both, "a") as handle:
-            dataset = handle["H1:MOCK"]
-            dataset.attrs["x0"] = float(dataset.attrs["t0"])
-            dataset.attrs["dx"] = float(dataset.attrs["dt"])
+        grid = hdf5.read(both, data=False).members["H1:MOCK"].attrs
+        hdf5.update_attrs(both, {"H1:MOCK": {"x0": float(grid["t0"]), "dx": float(grid["dt"])}})
 
         assert _digest(aliased) == _digest(both)
 
@@ -180,9 +187,7 @@ def test_an_hdf5_dataset_without_grid_attributes_still_hashes(tmp_path: Path) ->
     and hashing the samples alone when they are not is the honest behaviour -- the alternative, demanding
     them, would refuse to hash a perfectly good file somebody else produced.
     """
-    h5py = pytest.importorskip("h5py")
     path = tmp_path / "bare.hdf5"
-    with h5py.File(path, "w") as handle:
-        handle.create_dataset("strain", data=SAMPLES)
+    hdf5.write(hdf5.Group({"strain": hdf5.Dataset(SAMPLES)}), path)
 
     assert compute_content_hash(path) is not None

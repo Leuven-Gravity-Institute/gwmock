@@ -21,7 +21,13 @@ import numpy as np
 import pytest
 import typer
 import yaml
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
+
+try:
+    from gwpy.timeseries import TimeSeries as GWpyTimeSeries
+except ModuleNotFoundError as exc:  # Python 3.15: GWpy does not install yet; its tests are skipped
+    if exc.name != "gwpy":
+        raise
+    GWpyTimeSeries = None
 
 from gwmock.cli.simulate import _simulate_impl
 
@@ -110,6 +116,7 @@ def _run(tmp_path: Path) -> Path:
 class TestTheWrittenFramesAreDiscontiguous:
     """Read the layout back out of the data, the way a consumer of the release would."""
 
+    @pytest.mark.requires_gwpy
     def test_every_frame_epoch_comes_off_the_file_and_matches_the_gapped_layout(self, tmp_path):
         """The acceptance assertion: the epochs step by ``duration + gap``, taken from the frames."""
         work = _run(tmp_path / "run")
@@ -118,6 +125,7 @@ class TestTheWrittenFramesAreDiscontiguous:
         for detector in ("H1", "L1"):
             assert _frame_epochs(noise, detector) == EXPECTED_EPOCHS, detector
 
+    @pytest.mark.requires_gwpy
     def test_consecutive_frames_leave_the_gap_unwritten(self, tmp_path):
         """Not just "the epochs differ": each frame ends a whole gap before the next one starts."""
         work = _run(tmp_path / "run")
@@ -197,6 +205,7 @@ class TestResumingAcrossAGapBoundary:
             samples[float(series.t0.value)] = np.asarray(series.value, dtype=float)
         return samples
 
+    @pytest.mark.requires_gwpy
     def test_the_frames_after_the_resume_point_are_bit_identical(self, tmp_path, monkeypatch):
         """Interrupt after batch 1, restart, and compare against an uninterrupted run.
 

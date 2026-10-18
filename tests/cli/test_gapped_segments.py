@@ -124,6 +124,7 @@ def _epoch(orchestrator) -> float:
 class TestTheEpochAdvancesByDurationPlusGap:
     """The requirement itself, asserted as an exact epoch list."""
 
+    @pytest.mark.requires_lalsuite
     def test_the_epoch_list_is_exact_for_the_motivating_layout(self, tmp_path):
         """Four 1024 s segments per block separated by 256 s gaps, eight blocks: 32 epochs.
 
@@ -149,6 +150,7 @@ class TestTheEpochAdvancesByDurationPlusGap:
         assert epochs[-1] == _START + 31 * 1280.0
         assert epochs == [_START + index * 1280.0 for index in range(32)]
 
+    @pytest.mark.requires_lalsuite
     def test_a_run_without_a_gap_still_advances_by_the_duration_alone(self, tmp_path):
         """The default is zero, so nothing configured before this feature moves."""
         orchestrator = _orchestrator(tmp_path, gap=0.0, n_segments=4)
@@ -160,6 +162,7 @@ class TestTheEpochAdvancesByDurationPlusGap:
 
         assert epochs == [_START + index * _SEGMENT_DURATION for index in range(4)]
 
+    @pytest.mark.requires_lalsuite
     def test_the_batch_count_comes_from_the_span_and_not_from_the_livetime(self, tmp_path):
         """40704 s of span at 1024 s segments and 256 s gaps is 32 batches, not 39."""
         orchestrator = _orchestrator(tmp_path, duration=1024.0, gap=256.0, n_segments=32)
@@ -168,6 +171,7 @@ class TestTheEpochAdvancesByDurationPlusGap:
         assert float(orchestrator.total_duration.value) == 40704.0
         assert float(orchestrator.analysed_livetime.value) == 32 * 1024.0
 
+    @pytest.mark.requires_lalsuite
     def test_the_run_ends_where_the_last_segment_ends_and_stops_moving(self, tmp_path):
         """``final_end_time`` is measured from the configured start, not the current segment.
 
@@ -206,6 +210,7 @@ class TestTheEpochAdvancesByDurationPlusGap:
 class TestTheMetadataRecordsTheRealEpoch:
     """Provenance has to describe the frame that was written, not the layout it assumed."""
 
+    @pytest.mark.requires_lalsuite
     def test_each_batch_records_its_own_epoch_and_the_layout_it_came_from(self, tmp_path):
         orchestrator = _orchestrator(tmp_path, n_segments=4)
         orchestrator.update_state()
@@ -224,6 +229,7 @@ class TestTheMetadataRecordsTheRealEpoch:
         assert layout["span"] == 4 * _SEGMENT_DURATION + 3 * _SEGMENT_GAP
         assert layout["analysed_livetime"] == 4 * _SEGMENT_DURATION
 
+    @pytest.mark.requires_lalsuite
     def test_the_frame_name_follows_the_epoch(self, tmp_path):
         """Asserted rather than assumed: the template reads ``start_time`` off the simulator."""
         from gwmock.cli.utils.template import expand_template_variables
@@ -240,6 +246,7 @@ class TestTheMetadataRecordsTheRealEpoch:
 class TestASignalThatFallsInAGap:
     """A catalogue event with nowhere to be written, and one that survives the crossing."""
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_wholly_inside_a_gap_is_excluded_and_recorded(self, tmp_path, caplog):
         """Written to no frame -- and said so, rather than vanishing between two epochs."""
         orchestrator = _orchestrator(tmp_path, n_segments=4)
@@ -263,6 +270,7 @@ class TestASignalThatFallsInAGap:
         ]
         assert "entirely inside the configured segment gap" in caplog.text
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_whose_inspiral_reaches_back_into_a_segment_is_still_generated(self, tmp_path):
         """Only the *whole* event counts; a crossing one is claimed and cropped by injection."""
         orchestrator = _orchestrator(tmp_path, n_segments=4)
@@ -272,6 +280,7 @@ class TestASignalThatFallsInAGap:
 
         assert orchestrator._gap_excluding_event(event) is None
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_whose_ringdown_reaches_the_next_segment_is_still_generated(self, tmp_path):
         orchestrator = _orchestrator(tmp_path, n_segments=4)
         orchestrator.signal_adapter = _StubAdapter(lead=0.5, tail=6.0)
@@ -279,6 +288,7 @@ class TestASignalThatFallsInAGap:
 
         assert orchestrator._gap_excluding_event(event) is None
 
+    @pytest.mark.requires_lalsuite
     def test_an_unknown_tail_claims_the_event_rather_than_excluding_it(self, tmp_path):
         """Unknown is not zero: reading it as zero would exclude a whole backend's events."""
         orchestrator = _orchestrator(tmp_path, n_segments=4)
@@ -286,6 +296,7 @@ class TestASignalThatFallsInAGap:
 
         assert orchestrator._gap_excluding_event({**_COMPLETE_EVENT, "coa_time": _START + 20.0}) is None
 
+    @pytest.mark.requires_lalsuite
     def test_a_contiguous_run_never_excludes_anything(self, tmp_path):
         """There is no gap to fall into, so the check must not invent one."""
         orchestrator = _orchestrator(tmp_path, gap=0.0, n_segments=4)
@@ -293,6 +304,7 @@ class TestASignalThatFallsInAGap:
 
         assert orchestrator._gap_excluding_event({**_COMPLETE_EVENT, "coa_time": _START + 20.0}) is None
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_after_the_run_is_not_reported_as_falling_in_a_gap(self, tmp_path):
         """Past the end of the run is not a hole in the data; it is outside what the run covers."""
         orchestrator = _orchestrator(tmp_path, n_segments=4)

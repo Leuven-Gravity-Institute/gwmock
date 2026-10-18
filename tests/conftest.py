@@ -256,3 +256,30 @@ def _isolated_working_directory(request: pytest.FixtureRequest, tmp_path_factory
         yield
     finally:
         os.chdir(previous)
+
+
+def _installed(package: str) -> bool:
+    """Whether ``package`` imports; a broken installation raises rather than reading as absent."""
+    try:
+        __import__(package)
+    except ModuleNotFoundError as exc:
+        if exc.name != package:
+            raise
+        return False
+    return True
+
+
+def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
+    """Skip the tests marked ``requires_h5py``, ``requires_gwpy`` or ``requires_lalsuite`` where that package
+    is not installed.
+
+    Python 3.15 is the case: h5py, GWpy and lalsuite publish no wheel for it yet, and the dev group and
+    gwmock-signal install them only below it. Everything else still runs there.
+    """
+    for marker, module in (("h5py", "h5py"), ("gwpy", "gwpy"), ("lalsuite", "lalsimulation")):
+        if _installed(module):
+            continue
+        skip = pytest.mark.skip(reason=f"{marker} is not installed")
+        for item in items:
+            if item.get_closest_marker(f"requires_{marker}") is not None:
+                item.add_marker(skip)

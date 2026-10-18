@@ -8,6 +8,7 @@ import sys
 import pytest
 
 
+@pytest.mark.requires_h5py
 @pytest.mark.parametrize(
     ("module", "missing"),
     [
@@ -38,6 +39,7 @@ class _FailsInside:
             raise ModuleNotFoundError(f"No module named '{name}._internal'", name=f"{name}._internal")
 
 
+@pytest.mark.requires_h5py
 @pytest.mark.parametrize(
     ("module", "package"),
     [

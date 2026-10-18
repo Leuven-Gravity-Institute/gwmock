@@ -10,10 +10,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import h5py
+try:
+    import h5py
+except ModuleNotFoundError as exc:  # Python 3.15: h5py does not install yet; its tests are skipped
+    if exc.name != "h5py":
+        raise
+    h5py = None
 import numpy as np
 import pytest
-from gwpy.timeseries import TimeSeries
+
+try:
+    from gwpy.timeseries import TimeSeries
+except ModuleNotFoundError as exc:  # Python 3.15: GWpy does not install yet; its tests are skipped
+    if exc.name != "gwpy":
+        raise
+    TimeSeries = None
+
+from gwmock_data import hdf5
 
 from gwmock.cli.utils.metadata import embed_metadata_record
 from gwmock.strain_schema import (
@@ -41,24 +54,32 @@ RATE = 8.0
 START = 100.0
 
 
+def _plain(value: object) -> object:
+    """An attribute as a Python value: a 0-d array as its item, a string as it is."""
+    return value.item() if hasattr(value, "item") else value
+
+
+def _write(
+    path: Path, datasets: dict[str, tuple[np.ndarray, dict[str, object]]], attrs: dict[str, object] | None = None
+) -> None:
+    """Write top-level datasets, each with its attributes, and the file's own attributes."""
+    hdf5.write(
+        hdf5.Group({name: hdf5.Dataset(data, dict(a)) for name, (data, a) in datasets.items()}, dict(attrs or {})), path
+    )
+
+
 def _attribute_snapshot(path: Path) -> dict[str, dict[str, object]]:
     """Return every dataset's attributes, for comparing a file against itself across a call."""
-    with h5py.File(path, "r") as handle:
-        return {
-            name: {key: handle[name].attrs[key].item() for key in sorted(handle[name].attrs)} for name in sorted(handle)
-        }
+    members = hdf5.read(path, data=False).members
+    return {
+        name: {key: _plain(value) for key, value in sorted(members[name].attrs.items())} for name in sorted(members)
+    }
 
 
 def _hdf5_strain(path: Path, *, channel: str = "H1:MOCK_NOISE") -> Path:
     """Write a strain file laid out the way gwmock lays one out, with nothing declared on it yet."""
-    with h5py.File(path, "w") as handle:
-        dataset = handle.create_dataset(channel, data=np.arange(16, dtype=float))
-        dataset.attrs["x0"] = START
-        dataset.attrs["dx"] = 1.0 / RATE
-        dataset.attrs["xunit"] = "s"
-        dataset.attrs["channel"] = channel
-        dataset.attrs["name"] = channel
-        dataset.attrs["unit"] = "strain"
+    attributes = {"x0": START, "dx": 1.0 / RATE, "xunit": "s", "channel": channel, "name": channel, "unit": "strain"}
+    _write(path, {channel: (np.arange(16, dtype=float), attributes)})
     return path
 
 
@@ -113,11 +134,12 @@ class TestStamping:
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            assert handle.attrs[SCHEMA_ATTRIBUTE] == STRAIN_SCHEMA
-            assert handle.attrs[SCHEMA_VERSION_ATTRIBUTE] == STRAIN_SCHEMA_VERSION
-            assert SCHEMA_VERSION_ATTRIBUTE not in handle["H1:MOCK_NOISE"].attrs
+        root = hdf5.read(path, data=False)
+        assert root.attrs[SCHEMA_ATTRIBUTE] == STRAIN_SCHEMA
+        assert root.attrs[SCHEMA_VERSION_ATTRIBUTE] == STRAIN_SCHEMA_VERSION
+        assert SCHEMA_VERSION_ATTRIBUTE not in root.members["H1:MOCK_NOISE"].attrs
 
+    @pytest.mark.requires_gwpy
     def test_a_stamped_file_still_reads_through_gwpy(self, tmp_path: Path) -> None:
         """The reason the declaration is not a dataset attribute.
 
@@ -140,10 +162,9 @@ class TestStamping:
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            dataset = handle["H1:MOCK_NOISE"]
-            assert np.array_equal(dataset[()], np.arange(16, dtype=float))
-            assert dict(dataset.attrs)["x0"] == START
+        dataset = hdf5.read(path).members["H1:MOCK_NOISE"]
+        assert np.array_equal(dataset.data, np.arange(16, dtype=float))
+        assert dataset.attrs["x0"] == START
 
     def test_stamping_twice_leaves_one_declaration(self, tmp_path: Path) -> None:
         """A file may be re-stamped -- a merge of merges, a re-run over an existing path."""
@@ -152,8 +173,7 @@ class TestStamping:
         declare_strain_schema(path)
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            assert sorted(handle.attrs) == sorted([SCHEMA_ATTRIBUTE, SCHEMA_VERSION_ATTRIBUTE])
+        assert sorted(hdf5.read(path, data=False).attrs) == sorted([SCHEMA_ATTRIBUTE, SCHEMA_VERSION_ATTRIBUTE])
 
     @pytest.mark.parametrize("name", ["strain.npy", "strain.gwf", "strain.txt"])
     def test_a_format_with_no_attribute_space_is_skipped(self, tmp_path: Path, name: str) -> None:
@@ -191,11 +211,7 @@ class TestBringingAFileUpToTheLayout:
     @staticmethod
     def _aliased(path: Path, *, t0: float = START, dt: float = 1.0 / RATE) -> Path:
         """A dataset in the other spelling, as the multichannel writer leaves it."""
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(16, dtype=float))
-            dataset.attrs["t0"] = t0
-            dataset.attrs["dt"] = dt
-            dataset.attrs["unit"] = "strain"
+        _write(path, {"H1:MOCK_NOISE": (np.arange(16, dtype=float), {"t0": t0, "dt": dt, "unit": "strain"})})
         return path
 
     def test_the_grid_is_filled_in_from_the_other_spelling(self, tmp_path: Path) -> None:
@@ -203,11 +219,10 @@ class TestBringingAFileUpToTheLayout:
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            attributes = handle["H1:MOCK_NOISE"].attrs
-            assert attributes["x0"] == START
-            assert attributes["dx"] == 1.0 / RATE
-            assert attributes["xunit"] == "s"
+        attributes = hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
+        assert attributes["x0"] == START
+        assert attributes["dx"] == 1.0 / RATE
+        assert attributes["xunit"] == "s"
 
     def test_the_derived_grid_is_the_one_the_writer_recorded(self, tmp_path: Path) -> None:
         """Derived rather than assumed: a file at another epoch must not acquire the default one."""
@@ -215,10 +230,9 @@ class TestBringingAFileUpToTheLayout:
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            attributes = handle["H1:MOCK_NOISE"].attrs
-            assert attributes["x0"] == 612.0
-            assert attributes["dx"] == 0.5
+        attributes = hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
+        assert attributes["x0"] == 612.0
+        assert attributes["dx"] == 0.5
 
     def test_the_other_spelling_is_left_in_place(self, tmp_path: Path) -> None:
         """Deleting it breaks the writer's own reader: `DetectorStrainStack.read` looks for `t0`."""
@@ -226,19 +240,18 @@ class TestBringingAFileUpToTheLayout:
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            assert handle["H1:MOCK_NOISE"].attrs["t0"] == START
-            assert handle["H1:MOCK_NOISE"].attrs["dt"] == 1.0 / RATE
+        attributes = hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
+        assert attributes["t0"] == START
+        assert attributes["dt"] == 1.0 / RATE
 
     def test_the_channel_is_taken_from_the_dataset_name(self, tmp_path: Path) -> None:
         path = self._aliased(tmp_path / "strain.hdf5")
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            attributes = handle["H1:MOCK_NOISE"].attrs
-            assert attributes["channel"] == "H1:MOCK_NOISE"
-            assert attributes["name"] == "H1:MOCK_NOISE"
+        attributes = hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
+        assert attributes["channel"] == "H1:MOCK_NOISE"
+        assert attributes["name"] == "H1:MOCK_NOISE"
 
     def test_what_the_writer_recorded_is_not_overwritten(self, tmp_path: Path) -> None:
         """The writer's own value is the authoritative one; the completion only fills gaps.
@@ -248,30 +261,22 @@ class TestBringingAFileUpToTheLayout:
         `TestAGridThatContradictsItself`.
         """
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(4, dtype=float))
-            dataset.attrs["t0"] = 9.0
-            dataset.attrs["dt"] = 0.25
-            dataset.attrs["channel"] = "SOMETHING:ELSE"
-            dataset.attrs["xunit"] = "ms"
+        attributes = {"t0": 9.0, "dt": 0.25, "channel": "SOMETHING:ELSE", "xunit": "ms"}
+        _write(path, {"H1:MOCK_NOISE": (np.arange(4, dtype=float), attributes)})
 
         declare_strain_schema(path)
 
-        with h5py.File(path, "r") as handle:
-            attributes = handle["H1:MOCK_NOISE"].attrs
-            assert attributes["channel"] == "SOMETHING:ELSE"
-            assert attributes["xunit"] == "ms"
-            assert attributes["name"] == "H1:MOCK_NOISE", "the gap is still filled"
-            assert attributes["x0"] == 9.0, "and the grid is still derived"
+        attributes = hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
+        assert attributes["channel"] == "SOMETHING:ELSE"
+        assert attributes["xunit"] == "ms"
+        assert attributes["name"] == "H1:MOCK_NOISE", "the gap is still filled"
+        assert attributes["x0"] == 9.0, "and the grid is still derived"
 
     def test_every_dataset_in_the_file_is_completed(self, tmp_path: Path) -> None:
         """A multichannel file holds one dataset per channel, and the contract is about all of them."""
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            for channel in ("H1:MOCK", "L1:MOCK"):
-                dataset = handle.create_dataset(channel, data=np.arange(4, dtype=float))
-                dataset.attrs["t0"] = START
-                dataset.attrs["dt"] = 1.0 / RATE
+        grid = {"t0": START, "dt": 1.0 / RATE}
+        _write(path, {channel: (np.arange(4, dtype=float), dict(grid)) for channel in ("H1:MOCK", "L1:MOCK")})
 
         declare_strain_schema(path)
 
@@ -280,8 +285,7 @@ class TestBringingAFileUpToTheLayout:
     def test_a_dataset_with_no_grid_at_all_is_refused(self, tmp_path: Path) -> None:
         """Nothing is invented from nothing: the alternative is a file declaring a layout it lacks."""
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            handle.create_dataset("H1:MOCK_NOISE", data=np.arange(4, dtype=float))
+        _write(path, {"H1:MOCK_NOISE": (np.arange(4, dtype=float), {})})
 
         with pytest.raises(ValueError, match="carries neither 'x0' nor 't0'"):
             declare_strain_schema(path)
@@ -289,8 +293,7 @@ class TestBringingAFileUpToTheLayout:
     def test_a_file_it_refuses_is_left_undeclared(self, tmp_path: Path) -> None:
         """The root attributes go on last, so a refusal cannot leave a half-declared artifact."""
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            handle.create_dataset("H1:MOCK_NOISE", data=np.arange(4, dtype=float))
+        _write(path, {"H1:MOCK_NOISE": (np.arange(4, dtype=float), {})})
 
         with pytest.raises(ValueError, match="carries neither"):
             declare_strain_schema(path)
@@ -305,6 +308,7 @@ class TestBringingAFileUpToTheLayout:
         assert missing_layout_attributes(path) == {}
         assert require_strain_schema(path).version == STRAIN_SCHEMA_VERSION
 
+    @pytest.mark.requires_gwpy
     def test_a_completed_file_still_reads_through_gwpy(self, tmp_path: Path) -> None:
         """Both spellings of the grid now sit on the dataset, and gwpy passes every one of them to the
         series constructor -- so this is the check that the pair does not collide there."""
@@ -329,26 +333,16 @@ class TestAGridThatContradictsItself:
 
     @staticmethod
     def _written(path: Path, **attributes: float) -> Path:
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(8, dtype=float))
-            dataset.attrs["unit"] = "strain"
-            for name, value in attributes.items():
-                dataset.attrs[name] = value
+        _write(path, {"H1:MOCK_NOISE": (np.arange(8, dtype=float), {"unit": "strain", **attributes})})
         return path
 
     @staticmethod
     def _declared_then_edited(path: Path, **edits: float) -> Path:
         """A file gwmock declared cleanly and something changed afterwards -- the only way a declared
         artifact can reach this state, and the reason the consumer checks rather than trusting."""
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(8, dtype=float))
-            dataset.attrs["t0"] = START
-            dataset.attrs["dt"] = 1.0 / RATE
-            dataset.attrs["unit"] = "strain"
+        _write(path, {"H1:MOCK_NOISE": (np.arange(8, dtype=float), {"t0": START, "dt": 1.0 / RATE, "unit": "strain"})})
         declare_strain_schema(path)
-        with h5py.File(path, "a") as handle:
-            for name, value in edits.items():
-                handle["H1:MOCK_NOISE"].attrs[name] = value
+        hdf5.update_attrs(path, {"H1:MOCK_NOISE": edits})
         return path
 
     def test_an_epoch_conflict_is_refused_at_declaration(self, tmp_path: Path) -> None:
@@ -371,8 +365,7 @@ class TestAGridThatContradictsItself:
             declare_strain_schema(path)
 
         assert read_strain_schema(path) is None
-        with h5py.File(path, "r") as handle:
-            assert "xunit" not in handle["H1:MOCK_NOISE"].attrs
+        assert "xunit" not in hdf5.read(path, data=False).members["H1:MOCK_NOISE"].attrs
 
     def test_an_epoch_conflict_is_refused_at_require_time(self, tmp_path: Path) -> None:
         path = self._declared_then_edited(tmp_path / "strain.hdf5", t0=612.0)
@@ -421,11 +414,13 @@ class TestAGridThatContradictsItself:
             ("conflicting-then-derivable", (l1_second, h1_first)),
         ):
             path = tmp_path / f"{name}.hdf5"
-            with h5py.File(path, "w") as handle:
-                for channel, attributes in (("H1:MOCK", h1), ("L1:MOCK", l1)):
-                    dataset = handle.create_dataset(channel, data=np.arange(4, dtype=float))
-                    for attribute, value in attributes.items():
-                        dataset.attrs[attribute] = value
+            _write(
+                path,
+                {
+                    channel: (np.arange(4, dtype=float), dict(attributes))
+                    for channel, attributes in (("H1:MOCK", h1), ("L1:MOCK", l1))
+                },
+            )
             before = _attribute_snapshot(path)
             before_bytes = path.read_bytes()
 
@@ -439,11 +434,13 @@ class TestAGridThatContradictsItself:
     def test_a_missing_grid_in_a_later_dataset_writes_nothing_either(self, tmp_path: Path) -> None:
         """The other reason to refuse takes the same path, so it gets the same guarantee."""
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            derivable = handle.create_dataset("H1:MOCK", data=np.arange(4, dtype=float))
-            derivable.attrs["t0"] = START
-            derivable.attrs["dt"] = 1.0 / RATE
-            handle.create_dataset("L1:MOCK", data=np.arange(4, dtype=float))
+        _write(
+            path,
+            {
+                "H1:MOCK": (np.arange(4, dtype=float), {"t0": START, "dt": 1.0 / RATE}),
+                "L1:MOCK": (np.arange(4, dtype=float), {}),
+            },
+        )
         before = _attribute_snapshot(path)
 
         with pytest.raises(ValueError, match="carries neither"):
@@ -455,14 +452,14 @@ class TestAGridThatContradictsItself:
     def test_the_conflict_is_reported_for_the_dataset_that_has_it(self, tmp_path: Path) -> None:
         """A multichannel file: one bad dataset must not be hidden by its well-formed neighbours."""
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            for channel in ("H1:MOCK", "L1:MOCK"):
-                dataset = handle.create_dataset(channel, data=np.arange(4, dtype=float))
-                dataset.attrs["x0"] = START
-                dataset.attrs["t0"] = START
-                dataset.attrs["dx"] = 1.0 / RATE
-                dataset.attrs["dt"] = 1.0 / RATE
-            handle["L1:MOCK"].attrs["t0"] = 612.0
+        grid = {"x0": START, "t0": START, "dx": 1.0 / RATE, "dt": 1.0 / RATE}
+        _write(
+            path,
+            {
+                "H1:MOCK": (np.arange(4, dtype=float), dict(grid)),
+                "L1:MOCK": (np.arange(4, dtype=float), {**grid, "t0": 612.0}),
+            },
+        )
 
         assert sorted(conflicting_grid_attributes(path)) == ["L1:MOCK"]
         with pytest.raises(ValueError, match="L1:MOCK"):
@@ -480,8 +477,7 @@ class TestReadingTheDeclaration:
         """A version with no schema name says nothing: `schema_version` is a common attribute name and
         another producer's is not this contract."""
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = "1.0.0"
+        hdf5.update_attrs(path, {"": {SCHEMA_VERSION_ATTRIBUTE: "1.0.0"}})
 
         assert read_strain_schema(path) is None
 
@@ -491,6 +487,7 @@ class TestReadingTheDeclaration:
 
         assert read_strain_schema(path) is None
 
+    @pytest.mark.requires_h5py
     def test_a_byte_string_attribute_is_decoded(self, tmp_path: Path) -> None:
         """h5py hands back `bytes` for an attribute written by a writer that used a fixed-length string
         type, which is what a non-Python producer typically writes."""
@@ -517,9 +514,7 @@ class TestRequiringTheDeclaration:
 
     def test_another_producers_schema_is_refused(self, tmp_path: Path) -> None:
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[SCHEMA_ATTRIBUTE] = "someone-elses-strain"
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = "1.0.0"
+        hdf5.update_attrs(path, {"": {SCHEMA_ATTRIBUTE: "someone-elses-strain", SCHEMA_VERSION_ATTRIBUTE: "1.0.0"}})
 
         with pytest.raises(ValueError, match="declares schema 'someone-elses-strain'"):
             require_strain_schema(path)
@@ -528,9 +523,7 @@ class TestRequiringTheDeclaration:
         """The point of the version: a layout this reader was not written against is a refusal at open
         time rather than a wrong number later."""
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[SCHEMA_ATTRIBUTE] = STRAIN_SCHEMA
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = "2.0.0"
+        hdf5.update_attrs(path, {"": {SCHEMA_ATTRIBUTE: STRAIN_SCHEMA, SCHEMA_VERSION_ATTRIBUTE: "2.0.0"}})
 
         with pytest.raises(ValueError, match="major version 2"):
             require_strain_schema(path)
@@ -538,9 +531,7 @@ class TestRequiringTheDeclaration:
     def test_a_later_minor_version_is_accepted(self, tmp_path: Path) -> None:
         """A minor release adds what an existing reader can ignore, so refusing it would be wrong."""
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[SCHEMA_ATTRIBUTE] = STRAIN_SCHEMA
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = "1.7.3"
+        hdf5.update_attrs(path, {"": {SCHEMA_ATTRIBUTE: STRAIN_SCHEMA, SCHEMA_VERSION_ATTRIBUTE: "1.7.3"}})
 
         assert require_strain_schema(path).version == "1.7.3"
 
@@ -551,25 +542,22 @@ class TestRequiringTheDeclaration:
         the contract did not promise, instead of a consumer discovering it as a missing attribute.
         """
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(4, dtype=float))
-            dataset.attrs["t0"] = START
-            dataset.attrs["dt"] = 1.0 / RATE
-            handle.attrs[SCHEMA_ATTRIBUTE] = STRAIN_SCHEMA
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = STRAIN_SCHEMA_VERSION
+        _write(
+            path,
+            {"H1:MOCK_NOISE": (np.arange(4, dtype=float), {"t0": START, "dt": 1.0 / RATE})},
+            {SCHEMA_ATTRIBUTE: STRAIN_SCHEMA, SCHEMA_VERSION_ATTRIBUTE: STRAIN_SCHEMA_VERSION},
+        )
 
         with pytest.raises(ValueError, match="does not carry its layout"):
             require_strain_schema(path)
 
     def test_the_refusal_names_what_is_missing(self, tmp_path: Path) -> None:
         path = tmp_path / "strain.hdf5"
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("H1:MOCK_NOISE", data=np.arange(4, dtype=float))
-            dataset.attrs["x0"] = START
-            dataset.attrs["dx"] = 1.0 / RATE
-            dataset.attrs["xunit"] = "s"
-            handle.attrs[SCHEMA_ATTRIBUTE] = STRAIN_SCHEMA
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = STRAIN_SCHEMA_VERSION
+        _write(
+            path,
+            {"H1:MOCK_NOISE": (np.arange(4, dtype=float), {"x0": START, "dx": 1.0 / RATE, "xunit": "s"})},
+            {SCHEMA_ATTRIBUTE: STRAIN_SCHEMA, SCHEMA_VERSION_ATTRIBUTE: STRAIN_SCHEMA_VERSION},
+        )
 
         assert missing_layout_attributes(path) == {"H1:MOCK_NOISE": ["channel", "name"]}
         with pytest.raises(ValueError, match=r"H1:MOCK_NOISE is missing channel, name"):
@@ -577,9 +565,7 @@ class TestRequiringTheDeclaration:
 
     def test_a_malformed_version_is_refused(self, tmp_path: Path) -> None:
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[SCHEMA_ATTRIBUTE] = STRAIN_SCHEMA
-            handle.attrs[SCHEMA_VERSION_ATTRIBUTE] = "not-a-version"
+        hdf5.update_attrs(path, {"": {SCHEMA_ATTRIBUTE: STRAIN_SCHEMA, SCHEMA_VERSION_ATTRIBUTE: "not-a-version"}})
 
         with pytest.raises(ValueError, match="semantic versioning"):
             require_strain_schema(path)
@@ -608,8 +594,7 @@ class TestReadingTheEmbeddedRecord:
         """No gwmock wrote it, so it is another producer's attribute of the same name -- and returning
         None would file that under 'no record' rather than under 'this file is not what it claims'."""
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[RUN_METADATA_ATTRIBUTE] = "not json"
+        hdf5.update_attrs(path, {"": {RUN_METADATA_ATTRIBUTE: "not json"}})
 
         with pytest.raises(ValueError, match="is not JSON"):
             read_run_metadata(path)
@@ -623,12 +608,12 @@ class TestReadingTheEmbeddedRecord:
         decodes to None, which is this function's way of saying "no record, read the sidecar", so a
         consumer would be sent to the sidecar rather than told the file carries something unusable."""
         path = _hdf5_strain(tmp_path / "strain.hdf5")
-        with h5py.File(path, "a") as handle:
-            handle.attrs[RUN_METADATA_ATTRIBUTE] = document
+        hdf5.update_attrs(path, {"": {RUN_METADATA_ATTRIBUTE: document}})
 
         with pytest.raises(ValueError, match=f"JSON {described}, not an object"):
             read_run_metadata(path)
 
+    @pytest.mark.requires_gwpy
     def test_the_record_does_not_cost_the_consumer_the_standard_reader(self, tmp_path: Path) -> None:
         """The same reason the declaration goes at the root: gwpy hands every *dataset* attribute to
         the series constructor, so a record written there would make the file unreadable."""

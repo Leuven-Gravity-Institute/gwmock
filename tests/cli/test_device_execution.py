@@ -172,6 +172,7 @@ class TestWaveformConfigurationIsHonoured:
             "discarded and the run silently uses ripple's defaults"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_a_non_ripple_library_is_refused(self, tmp_path):
         """The batched path is ripple-only; substituting it would ignore the configuration.
 
@@ -182,6 +183,7 @@ class TestWaveformConfigurationIsHonoured:
         with pytest.raises(ValueError, match="always generates with ripple"):
             _orchestrator(tmp_path, "batched", waveform_backend="lal")._simulate()
 
+    @pytest.mark.requires_lalsuite
     def test_waveform_options_are_refused(self, tmp_path):
         """There is no equivalent parameter on the batched entry point, so silence would lose them.
 
@@ -210,12 +212,14 @@ class TestTheCheckIsReachedOnThePerEventPath:
         orchestrator._population_events = []
         orchestrator._simulate()
 
+    @pytest.mark.requires_lalsuite
     def test_an_unrecognised_key_warns_through_the_orchestrator(self, tmp_path, caplog):
         with caplog.at_level(logging.WARNING, logger="gwmock"):
             self._simulate_nothing(tmp_path, **{"not-a-real-setting": "x"})
 
         assert "not a recognised setting" in caplog.text
 
+    @pytest.mark.requires_lalsuite
     def test_an_ordinary_configuration_warns_about_nothing(self, tmp_path, caplog):
         """Guards the opposite failure: a check that fires on every run stops being read."""
         with caplog.at_level(logging.WARNING, logger="gwmock"):
@@ -223,6 +227,7 @@ class TestTheCheckIsReachedOnThePerEventPath:
 
         assert caplog.text == ""
 
+    @pytest.mark.requires_lalsuite
     def test_a_refused_configuration_is_refused_again_on_retry(self, tmp_path):
         """The once-per-orchestrator guard must not turn into a once-per-orchestrator bypass.
 
@@ -242,6 +247,7 @@ class TestTheCheckIsReachedOnThePerEventPath:
         with pytest.raises(ValueError, match="would ignore settings"):
             orchestrator._simulate()
 
+    @pytest.mark.requires_lalsuite
     def test_the_check_runs_once_rather_than_once_per_segment(self, tmp_path, caplog):
         """A warning repeated for every segment of a long run is noise, not a warning."""
         orchestrator = _orchestrator(tmp_path, "per-event", waveform_backend=None, **{"not-a-real-setting": "x"})
@@ -261,6 +267,7 @@ class TestSegmentEventSelection:
     no extras.
     """
 
+    @pytest.mark.requires_lalsuite
     def test_events_beyond_the_segment_are_left_for_the_next_one(self, tmp_path):
         """The boundary rule is ``coa_time >= end_time``, and it is checkpointed state."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
@@ -288,6 +295,7 @@ class TestSegmentEventSelection:
             "at the boundary rather than skipping or repeating"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_an_empty_segment_consumes_nothing(self, tmp_path):
         """A segment with no events must not advance the index or invent provenance."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
@@ -300,6 +308,7 @@ class TestSegmentEventSelection:
         assert int(orchestrator.population_index) == 0
         assert orchestrator._batch_injections == []
 
+    @pytest.mark.requires_lalsuite
     def test_the_execution_mode_comes_from_the_config(self, tmp_path):
         assert _orchestrator(tmp_path / "a", "batched", waveform_backend=None)._execution_mode() == "batched"
         assert _orchestrator(tmp_path / "b", "per-event", waveform_backend=None)._execution_mode() == "per-event"
@@ -376,6 +385,7 @@ class TestBothModesAgree:
         assert written.is_file(), f"no output from the {execution} run"
         return np.asarray(TimeSeries.read(written, channel="ET1_SARD:STRAIN").value)
 
+    @pytest.mark.requires_gwpy
     def test_the_two_modes_agree_to_floating_point(self, tmp_path):
         """Same events, same library, different execution: the strain must match.
 
@@ -455,6 +465,7 @@ class TestReferenceFrequencyReachesTheBackend:
         assert captured, "the spy never saw a call, so this test proves nothing"
         assert "f_ref" not in captured
 
+    @pytest.mark.requires_lalsuite
     def test_disagreeing_with_waveform_backend_arguments_is_refused(self, tmp_path):
         """Two keys setting one physical quantity: pick silently and the waveform depends on which
         one a reader happened to look at.
@@ -705,6 +716,7 @@ class TestTheRippleSubstitutionIsHonest:
 
         assert orchestrator._effective_waveform_backend() == "ripple"
 
+    @pytest.mark.requires_lalsuite
     def test_a_per_event_config_still_reports_no_substitution(self, tmp_path):
         """The substitution is batched-only, so per-event provenance must be unchanged."""
         orchestrator = _orchestrator(tmp_path, "per-event", waveform_backend=None)
@@ -718,6 +730,7 @@ class TestTheRippleSubstitutionIsHonest:
 
         assert orchestrator._effective_waveform_backend() == "ripple"
 
+    @pytest.mark.requires_lalsuite
     def test_construction_survives_without_the_jax_extra(self, tmp_path, monkeypatch):
         """A batched orchestrator must still *construct* when ripple is not installed.
 
@@ -765,6 +778,7 @@ class TestTheRippleSubstitutionIsHonest:
             "provenance still claims the library the replaced adapter was built on"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_nothing_is_skipped_on_an_answer_the_run_cannot_stand_behind(self, tmp_path, monkeypatch):
         """The reproducer a reviewer built against the first version of this fallback.
 
