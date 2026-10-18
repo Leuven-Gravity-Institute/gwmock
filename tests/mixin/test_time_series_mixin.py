@@ -113,7 +113,7 @@ class TestTimeSeriesMixin:
 
         assert isinstance(result, TimeSeries)
         assert len(result._data) == 1  # 1 Channel
-        assert len(result._data[0]) == num_of_data_points  # 100 samples
+        assert result._data[0].n_samples == num_of_data_points  # 100 samples
         assert result.start_time == 0
         assert result.sampling_frequency.value == sampling_frequency
 
@@ -130,9 +130,9 @@ class TestTimeSeriesMixin:
 
         assert isinstance(result, TimeSeries)
         assert len(result._data) == num_of_channels  # 3 Channels
-        assert len(result._data[0]) == num_of_data_points  # 100 samples
-        assert len(result._data[1]) == num_of_data_points  # 100 samples
-        assert len(result._data[2]) == num_of_data_points  # 100 samples
+        assert result._data[0].n_samples == num_of_data_points  # 100 samples
+        assert result._data[1].n_samples == num_of_data_points  # 100 samples
+        assert result._data[2].n_samples == num_of_data_points  # 100 samples
 
     def test_simulate_continuity(self):
         """Test that multiple simulate calls maintain continuity via caching."""
@@ -167,7 +167,7 @@ class TestTimeSeriesMixin:
         # The cached data should be injected into the result
         # Since cached_ts starts at 0 and result at 0, it should be included
         assert len(result._data) == 1
-        assert len(result._data[0]) == duration * sampling_frequency
+        assert result._data[0].n_samples == duration * sampling_frequency
 
     def test_metadata(self):
         """Test metadata property."""

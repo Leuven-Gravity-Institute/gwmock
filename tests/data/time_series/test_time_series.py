@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 import numpy as np
@@ -409,7 +410,8 @@ class TestInjectBoundaryOverflow:
         segment = self._segment()
         chunk = self._chunk(900.0)
         chunk.metadata.update({"injection_parameters": {"coa_time": 1234.5}})
-        chunk[0].name = "H1:STRAIN"
+        chunk[0] = dataclasses.replace(chunk[0], name="H1:STRAIN", unit="strain")
+        chunk.channels[0] = "H1:STRAIN"
 
         remaining = segment.inject(chunk)
 
@@ -418,9 +420,60 @@ class TestInjectBoundaryOverflow:
             "the tail lost the injection provenance it was carrying"
         )
         assert remaining[0].name == "H1:STRAIN", "the tail lost its channel identity"
+        assert remaining.channels[0] == "H1:STRAIN", "the tail lost the channel it is written as"
+        assert remaining[0].unit == "strain", "the tail lost its unit"
 
     def test_a_chunk_inside_the_segment_returns_nothing(self):
         """The complement, so the test above cannot pass by always returning a remainder."""
         segment = self._segment()
 
         assert segment.inject(self._chunk(100.5)) is None
+
+
+class TestRefusals:
+    """What the multichannel series refuses, and what makes two of them unequal."""
+
+    @staticmethod
+    def _series(t0=100.0, rate=16.0, n=8, value=0.0):
+        return TimeSeries(np.full((2, n), value), start_time=t0, sampling_frequency=rate)
+
+    def test_timing_must_be_a_number_or_a_quantity(self):
+        with pytest.raises(TypeError, match="number or an astropy Quantity"):
+            TimeSeries(np.zeros((1, 4)), start_time="100", sampling_frequency=16.0)
+
+    def test_quantities_are_converted_to_seconds_and_hertz(self):
+        series = TimeSeries(
+            np.zeros((1, 4)), start_time=Quantity(100_000.0, "ms"), sampling_frequency=Quantity(0.016, "kHz")
+        )
+
+        assert series[0].t0 == 100.0
+        assert series[0].sample_rate == 16.0
+
+    @pytest.mark.parametrize(
+        ("replacement", "message"),
+        [
+            ({"t0": 101.0}, "Start time"),
+            ({"sample_rate": 32.0}, "Sampling frequency"),
+            ({"data": np.zeros(9)}, "Duration"),
+        ],
+    )
+    def test_a_channel_must_keep_the_grid(self, replacement, message):
+        series = self._series()
+        with pytest.raises(ValueError, match=message):
+            series[0] = dataclasses.replace(series[0], **replacement)
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            lambda make: make(value=1.0),
+            lambda make: make(t0=101.0),
+            lambda make: make(rate=32.0),
+            lambda make: TimeSeries(np.zeros((1, 8)), start_time=100.0, sampling_frequency=16.0),
+            lambda make: "not a series",
+        ],
+    )
+    def test_differences_make_series_unequal(self, other):
+        assert self._series() != other(self._series)
+
+    def test_equal_series_are_equal(self):
+        assert self._series() == self._series()
