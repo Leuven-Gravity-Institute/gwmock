@@ -132,8 +132,8 @@ gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.18.0"]
 dev = [
   # HDF5 and frame files in the tests. Neither installs on Python 3.15 yet (no h5py wheel), where those
   # tests skip.
-  "h5py>=3.13.0; python_version < '3.15'",
-  "gwpy>=4.0.0; python_version < '3.15'",
+  "h5py>=3.16.0; python_version < '3.15'",
+  "gwpy>=4.1.0; python_version < '3.15'",
   "prek>=0.5.5",
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.16.0",

@@ -875,8 +875,8 @@ provides-extras = ["cuda", "deepextractor", "gwpy", "hdf5", "jax", "pycbc", "sgw
 [package.metadata.requires-dev]
 build = [{ name = "hatch", specifier = ">=1.18.1" }]
 dev = [
-    { name = "gwpy", marker = "python_full_version < '3.15'", specifier = ">=4.0.0" },
-    { name = "h5py", marker = "python_full_version < '3.15'", specifier = ">=3.13.0" },
+    { name = "gwpy", marker = "python_full_version < '3.15'", specifier = ">=4.1.0" },
+    { name = "h5py", marker = "python_full_version < '3.15'", specifier = ">=3.16.0" },
     { name = "mutmut", specifier = ">=3.8.0" },
     { name = "prek", specifier = ">=0.5.5" },
     { name = "pytest", specifier = ">=9.1.1" },
@@ -993,7 +993,7 @@ wheels = [
 
 [[package]]
 name = "gwpy"
-version = "4.0.2"
+version = "4.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -1012,9 +1012,9 @@ dependencies = [
     { name = "scipy" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/7b/78bf0a0ada615d3ae5121a1ba8ec7874b8878c9c0f060d12b36b2d5d8518/gwpy-4.0.2.tar.gz", hash = "sha256:4bc2babaaf2cb33a68ec472cc224c7d60e65a1d55b1b2f92ef05755a16d919bd", size = 1618769, upload-time = "2026-08-14T16:51:45.607Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/ca/41c5c1d0760451b3e002cac87a92da122d302cda66e6f55485c7f02f77cf/gwpy-4.1.0.tar.gz", hash = "sha256:f77342063a55515f1c49056aea89e052e3a4e615ee5c504ac1f6c64a68e709de", size = 1639390, upload-time = "2026-10-13T11:39:19.494Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/43/34270f2bc754e8da1b3e8acc125eb05daadb98d12f5bd7fb1f5d62f03b6a/gwpy-4.0.2-py3-none-any.whl", hash = "sha256:e394587c00c40d3c168bf3d98e983611a2b638c4bc893bacfcfc1d71eef5f7c3", size = 1559028, upload-time = "2026-08-14T16:51:43.621Z" },
+    { url = "https://files.pythonhosted.org/packages/71/9b/d85f3ca7c5d7565b1d51c64c91171582b1c0d29397e9867381cd41fe33eb/gwpy-4.1.0-py3-none-any.whl", hash = "sha256:06c1bc310b2c53e7fbcf93e0b422aa89aa50832ba77ba58b38de66c884b82108", size = 1571085, upload-time = "2026-10-13T11:39:17.344Z" },
 ]
 
 [[package]]
