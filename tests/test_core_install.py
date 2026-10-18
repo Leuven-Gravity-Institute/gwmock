@@ -79,33 +79,45 @@ def test_the_time_series_injects_and_round_trips_without_h5py_or_gwpy():
     assert outcome["result"] == [8.0, 8.0, True]
 
 
-def test_hdf5_and_frame_files_name_their_extra(tmp_path: Path):
-    """A .npy artifact needs neither package; HDF5 and GWF entry points say what to install."""
-    npy, h5, gwf = tmp_path / "a.npy", tmp_path / "a.h5", tmp_path / "a.gwf"
-    for path in (npy, h5, gwf):
-        path.write_bytes(b"\\0" * 16)
+def test_hdf5_strain_artifacts_work_and_frames_name_their_extra(tmp_path: Path):
+    """An HDF5 artifact is declared, validated, given its record and hashed with h5py hidden; GWF still needs GWpy."""
+    h5, gwf = tmp_path / "H-H1_TEST-100-2.h5", tmp_path / "a.gwf"
+    gwf.write_bytes(b"\\0" * 16)
     outcome = _run(
         f"""
+        import numpy as np
+        from gwmock_data import hdf5
         from gwmock.cli.utils.hash import compute_content_hash
-        from gwmock.strain_schema import declare_strain_schema
+        from gwmock.cli.utils.metadata import embed_metadata_record
+        from gwmock.strain_schema import declare_strain_schema, read_run_metadata, require_strain_schema
 
-        result = {{"npy": declare_strain_schema({str(npy)!r})}}
-        for label, call in {{
-            "declare": lambda: declare_strain_schema({str(h5)!r}),
-            "hash_hdf5": lambda: compute_content_hash({str(h5)!r}),
-            "hash_gwf": lambda: compute_content_hash({str(gwf)!r}),
-        }}.items():
-            try:
-                call()
-            except ModuleNotFoundError as exc:
-                result[label] = str(exc)
+        hdf5.write(hdf5.Group({{"H1:STRAIN": hdf5.Dataset(np.arange(8.0), {{"t0": 100.0, "dt": 0.25}})}}), {str(h5)!r})
+        declared = declare_strain_schema({str(h5)!r})
+        embedded = embed_metadata_record({str(h5)!r}, {{"seed": 7}})
+        result = {{
+            "declared": declared,
+            "schema": require_strain_schema({str(h5)!r}).name,
+            "record": read_run_metadata({str(h5)!r}),
+            "hash": compute_content_hash({str(h5)!r}),
+            "embedded": embedded,
+            "x0": float(hdf5.read({str(h5)!r}, data=False).members["H1:STRAIN"].attrs["x0"]),
+        }}
+        try:
+            compute_content_hash({str(gwf)!r})
+        except ModuleNotFoundError as exc:
+            result["hash_gwf"] = str(exc)
         """
     )
 
-    assert outcome["result"]["npy"] is False
-    assert "pip install 'gwmock[hdf5]'" in outcome["result"]["declare"]
-    assert "pip install 'gwmock[hdf5]'" in outcome["result"]["hash_hdf5"]
-    assert "pip install 'gwmock[gwpy]'" in outcome["result"]["hash_gwf"]
+    result = outcome["result"]
+    assert outcome["loaded"] == []
+    assert result["declared"] is True
+    assert result["embedded"] is True
+    assert result["schema"] == "gwmock-strain"
+    assert result["record"] == {"seed": 7}
+    assert result["x0"] == 100.0
+    assert result["hash"].startswith("sha256:")
+    assert "pip install 'gwmock[gwpy]'" in result["hash_gwf"]
 
 
 @pytest.mark.skipif(sys.version_info < (3, 15), reason="lazy imports (PEP 810) need Python 3.15")

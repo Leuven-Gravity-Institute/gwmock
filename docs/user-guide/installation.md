@@ -20,8 +20,8 @@ pages for more details:
     The package requires Python 3.13 or later and is built and tested against Python 3.13–3.15. When creating a
     virtual environment with `uv`, specify the Python version to ensure compatibility: `uv venv --python 3.13`
     (replace `3.13` with your preferred supported version: 3.13, 3.14 or 3.15). On Python 3.15, h5py
-    publishes no wheel yet, so the `hdf5` and `gwpy` extras may not install there; NumPy (`.npy`) output
-    works without them.
+    publishes no wheel yet, so the `hdf5` and `gwpy` extras may not install there; NumPy (`.npy`) and
+    HDF5 output work without them.
 
 ## Install from PyPI
 
@@ -38,7 +38,7 @@ uv pip install gwmock
 
 | Extra           | Purpose                                                                                |
 | --------------- | -------------------------------------------------------------------------------------- |
-| `hdf5`          | HDF5 output and catalogues, and hashing or validating HDF5 artifacts (`h5py`)          |
+| `hdf5`          | Faster, compressed HDF5 through `h5py`; HDF5 files work without it                     |
 | `gwpy`          | Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts (`gwpy`) |
 | `jax`           | The batched signal path on the CPU (`execution: batched`)                              |
 | `cuda`          | The batched signal path on an NVIDIA GPU                                               |

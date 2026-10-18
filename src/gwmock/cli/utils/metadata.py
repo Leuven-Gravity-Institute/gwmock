@@ -516,10 +516,7 @@ def embed_metadata_record(
         sort_keys=True,
     )
 
-    from gwmock._optional import require  # noqa: PLC0415
+    from gwmock_data import hdf5  # noqa: PLC0415
 
-    h5py = require("h5py", "hdf5", "Recording metadata in an HDF5 artifact")
-
-    with h5py.File(artifact, "a") as handle:
-        handle.attrs[RUN_METADATA_ATTRIBUTE] = document
+    hdf5.update_attrs(artifact, {"": {RUN_METADATA_ATTRIBUTE: document}})
     return True
