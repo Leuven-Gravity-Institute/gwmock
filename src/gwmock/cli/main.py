@@ -65,6 +65,10 @@ def setup_logging(level: LoggingLevel = LoggingLevel.INFO) -> None:
     # Prevent propagation to root logger to avoid duplicate output
     logger.propagate = False
 
+    from gwmock.utils.log import share_logging  # pylint: disable=import-outside-toplevel
+
+    share_logging(logger)
+
 
 @app.callback()
 def main(

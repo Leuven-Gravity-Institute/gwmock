@@ -72,8 +72,9 @@ dependencies = [
   "psutil>=6.1.0",
   "filelock>=3.17.0",
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
-  # The time series the gwmock packages share.
-  "gwmock-data>=0.1.0",
+  # The time series, multichannel series and injection the gwmock packages share; 0.3.0 is the
+  # first release with the multichannel series.
+  "gwmock-data>=0.3.0",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
   # all install them, so they are declared here.
   "numpy>=2.2",

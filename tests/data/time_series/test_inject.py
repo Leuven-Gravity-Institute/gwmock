@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from gwmock_data import TimeSeries
+from gwmock_data.injection import _MAXIMUM_ALIGNMENT_TOLERANCE
 from gwmock_signal.projection.resampling import resample_uniform_sinc
 
 from gwmock.data.time_series.inject import (
-    _MAXIMUM_ALIGNMENT_TOLERANCE,
     alignment_tolerance,
     inject,
     is_aligned,
