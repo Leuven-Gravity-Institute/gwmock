@@ -11,6 +11,25 @@ from gwmock.version import __version__
 
 logger = logging.getLogger("gwmock")
 
+#: The logger of gwmock-data, whose multichannel series and injection gwmock re-exports as its own
+#: (``gwmock.data.TimeSeries``); their warnings, such as signal lost before a segment, are gwmock's.
+SHARED_LOGGER_NAMES = ("gwmock_data",)
+
+
+def share_logging(source: logging.Logger) -> None:
+    """Give the loggers of the code gwmock re-exports the level, handlers and propagation of ``source``.
+
+    Their messages then reach the same console and log file as gwmock's own, at the same verbosity.
+
+    Args:
+        source: The configured ``gwmock`` logger.
+    """
+    for name in SHARED_LOGGER_NAMES:
+        shared = logging.getLogger(name)
+        shared.setLevel(source.level)
+        shared.propagate = source.propagate
+        shared.handlers = list(source.handlers)
+
 
 def get_version_information() -> str:
     """Get the version information.
@@ -138,6 +157,7 @@ def setup_logger(
 
     for handler in logger.handlers:
         handler.setLevel(level)
+    share_logging(logger)
 
     if print_version:
         version = get_version_information()

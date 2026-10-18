@@ -1,6 +1,10 @@
 # `gwmock.data.time_series.time_series`
 
-::: gwmock.data.time_series.time_series
+`gwmock.data.TimeSeries` is `gwmock_data.MultichannelTimeSeries`, shared by the gwmock packages
+and re-exported here under the name gwmock has always used; it is documented from
+`gwmock_data.multichannel_series`.
+
+::: gwmock_data.multichannel_series.MultichannelTimeSeries
     options:
       docstring_style: google
       show_source: true
@@ -15,9 +19,9 @@
 `TimeSeries.inject` adds a chunk to a segment by GPS time. When the chunk's samples fall a
 fraction of a sample off the segment's grid, the chunk is resampled before it is added:
 
-- **Kernel.** The band-limited windowed-sinc kernel
-  `gwmock_signal.projection.resampling.resample_uniform_sinc`, the one gwmock-signal's projection
-  resamples with. Earlier releases interpolated linearly, which at 0.8 x Nyquist was off by ~0.63
+- **Kernel.** The band-limited windowed-sinc kernel `gwmock_data.resampling.resample_uniform_sinc`,
+  shared by the gwmock packages: gwmock-signal's projection and its `inject_strain` resample with
+  it too. Earlier releases interpolated linearly, which at 0.8 x Nyquist was off by ~0.63
   of the signal's peak; the sinc kernel's error there is ~1e-12. Off-grid injections therefore
   produce different samples from earlier releases, most visibly at high frequency.
 - **Whole chunk, once.** The whole chunk is resampled onto the segment's grid, extended past
@@ -33,12 +37,9 @@ fraction of a sample off the segment's grid, the chunk is resampled before it is
 
 ### Agreement with `inject_strain`
 
-`gwmock_signal.injection.core.inject_strain` in gwmock-signal 0.17.3, the minimum version this
-package requires, still interpolates cubically, so off-grid injection through gwmock and through
-`inject_strain` does not yet produce identical samples. This is deliberate and temporary. The
-kernel module is byte-identical between gwmock-signal 0.17.3 and the pending gwmock-signal change
-that moves `inject_strain` onto the same kernel, so the two paths become equal once that change
-is released and required here, with no further change on the gwmock side.
+`gwmock_signal.injection.core.inject_strain` resamples off-grid injections with the same kernel
+(from gwmock-signal 0.17.4; this package requires 0.18.0), so off-grid injection through gwmock
+and through `inject_strain` produces the same samples.
 
 ### Test coverage
 

@@ -57,7 +57,7 @@ class TestTimeSeriesList:
 
     def test_init_with_invalid_items(self):
         """Test initialization with invalid items raises TypeError."""
-        with pytest.raises(TypeError, match="All items must be TimeSeries instances"):
+        with pytest.raises(TypeError, match="All items must be MultichannelTimeSeries instances"):
             TimeSeriesList([1, 2, 3])
 
     def test_validate_items_valid(self, sample_ts, sample_ts2):
@@ -68,7 +68,7 @@ class TestTimeSeriesList:
     def test_validate_items_invalid(self):
         """Test _validate_items with invalid items raises TypeError."""
         ts_list = TimeSeriesList()
-        with pytest.raises(TypeError, match="All items must be TimeSeries instances"):
+        with pytest.raises(TypeError, match="All items must be MultichannelTimeSeries instances"):
             ts_list._validate_items([1])
 
     def test_setitem_int(self, sample_ts, sample_ts2):
@@ -80,7 +80,7 @@ class TestTimeSeriesList:
     def test_setitem_int_invalid(self, sample_ts):
         """Test setting item by integer index with invalid value raises TypeError."""
         ts_list = TimeSeriesList([sample_ts])
-        with pytest.raises(TypeError, match="Value must be a TimeSeries instance"):
+        with pytest.raises(TypeError, match="Value must be a MultichannelTimeSeries instance"):
             ts_list[0] = 1
 
     def test_setitem_slice(self, sample_ts, sample_ts2, sample_ts3):
@@ -93,7 +93,7 @@ class TestTimeSeriesList:
     def test_setitem_slice_invalid(self, sample_ts):
         """Test setting items by slice with invalid values raises TypeError."""
         ts_list = TimeSeriesList([sample_ts])
-        with pytest.raises(TypeError, match="All items must be TimeSeries instances"):
+        with pytest.raises(TypeError, match="All items must be MultichannelTimeSeries instances"):
             ts_list[0:1] = [1]
 
     def test_setitem_invalid_index_type(self, sample_ts):
@@ -137,7 +137,7 @@ class TestTimeSeriesList:
     def test_append_invalid(self, sample_ts):
         """Test appending invalid value raises TypeError."""
         ts_list = TimeSeriesList([sample_ts])
-        with pytest.raises(TypeError, match="Value must be a TimeSeries instance"):
+        with pytest.raises(TypeError, match="Value must be a MultichannelTimeSeries instance"):
             ts_list.append(1)
 
     def test_extend(self, sample_ts, sample_ts2, sample_ts3):
@@ -152,7 +152,7 @@ class TestTimeSeriesList:
     def test_extend_invalid(self, sample_ts):
         """Test extending with invalid values raises TypeError."""
         ts_list = TimeSeriesList([sample_ts])
-        with pytest.raises(TypeError, match="All items must be TimeSeries instances"):
+        with pytest.raises(TypeError, match="All items must be MultichannelTimeSeries instances"):
             ts_list.extend([1])
 
     def test_insert(self, sample_ts, sample_ts2):
@@ -167,7 +167,7 @@ class TestTimeSeriesList:
     def test_insert_invalid(self, sample_ts):
         """Test inserting invalid value raises TypeError."""
         ts_list = TimeSeriesList([sample_ts])
-        with pytest.raises(TypeError, match="Value must be a TimeSeries instance"):
+        with pytest.raises(TypeError, match="Value must be a MultichannelTimeSeries instance"):
             ts_list.insert(0, 1)
 
     def test_pop(self, sample_ts, sample_ts2):
@@ -207,7 +207,7 @@ class TestTimeSeriesList:
     def test_from_json_dict_invalid_item(self):
         """Test from_json_dict with invalid item raises TypeError."""
         data = {"__type__": "TimeSeriesList", "data": [1]}
-        with pytest.raises(TypeError, match="Invalid item in TimeSeriesList JSON data"):
+        with pytest.raises(TypeError, match="Invalid item in MultichannelTimeSeriesList JSON data"):
             TimeSeriesList.from_json_dict(data)
 
     def test_repr(self, sample_ts):
