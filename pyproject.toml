@@ -17,6 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 requires-python = ">=3.13"
 dynamic = ["version"]
@@ -50,7 +51,10 @@ dependencies = [
   # convention) while the detector code applies them clockwise from North (LAL's), so every preset
   # ET arm was mis-oriented and its antenna response wrong; bilby `.interferometer` files were read
   # the same wrong way. Below this floor a locked install generates ET data with those responses.
-  "gwmock-signal>=0.17.5",
+  #
+  # 0.18.0 shares gwmock-data's time series, so the series gwmock passes it (backgrounds, the
+  # strain written as a stack) are gwmock-data's rather than GWpy's; earlier releases require GWpy.
+  "gwmock-signal>=0.18.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -58,11 +62,11 @@ dependencies = [
   # to whichever version happens to resolve. 0.12.0 is the first release with a glitch model's
   # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
   # below it a config using either is refused with a `TypeError` rather than run.
-  "gwmock-noise>=0.16.1",
-  "gwmock-pop>=0.14.3",
+  # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet.
+  "gwmock-noise>=0.17.0",
+  "gwmock-pop>=0.15.0",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
-  "h5py>=3.13.0",
   "pydantic>=2.10.0",
   "pymap3d>=3.2.0",
   "psutil>=6.1.0",
@@ -71,8 +75,7 @@ dependencies = [
   # The time series the gwmock packages share.
   "gwmock-data>=0.1.0",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
-  # all install them (gwmock-signal makes GWpy optional), so they are declared here.
-  "gwpy>=4.0.0",
+  # all install them, so they are declared here.
   "numpy>=2.2",
   "astropy>=7.0",
   "pyyaml>=6.0",
@@ -81,7 +84,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.17.5"]
+sgwb = ["gwmock-signal[sgwb]>=0.18.0"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -97,10 +100,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.17.5"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.17.5"]
+jax = ["gwmock-signal[jax]>=0.18.0"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.17.5", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.18.0", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -110,14 +113,27 @@ cuda = ["gwmock-signal[jax]>=0.17.5", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.16.1"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.17.0"]
 # The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
-pycbc = ["pycbc>=2.6.0", "pandas>=2.2"]
+pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
+# HDF5 output and catalogues, and hashing or validating HDF5 artifacts. h5py publishes no wheel for
+# Python 3.15 yet; output written as NumPy needs no extra.
+hdf5 = [
+  "h5py>=3.13.0",
+  "gwmock-noise[hdf5]>=0.17.0",
+  "gwmock-pop[hdf5]>=0.15.0",
+]
+# Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.18.0"]
 
 [dependency-groups]
 dev = [
+  # HDF5 and frame files in the tests. Neither installs on Python 3.15 yet (no h5py wheel), where those
+  # tests skip.
+  "h5py>=3.13.0; python_version < '3.15'",
+  "gwpy>=4.0.0; python_version < '3.15'",
   "prek>=0.5.5",
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.16.0",

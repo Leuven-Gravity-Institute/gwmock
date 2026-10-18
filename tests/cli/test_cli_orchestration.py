@@ -9,6 +9,7 @@ from typing import ClassVar
 import numpy as np
 import pytest
 import yaml
+from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_signal import DetectorStrainStack
 from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
@@ -80,7 +81,7 @@ class FakeSignalAdapter:
         return DetectorStrainStack.from_mapping(
             detector_names,
             {
-                detector: GWpyTimeSeries(
+                detector: ChannelSeries(
                     np.full(4, parameters["detector_frame_mass_1"]),
                     t0=parameters["coa_time"],
                     sample_rate=sampling_frequency,
@@ -124,12 +125,12 @@ class FakeSgwbSignalAdapter:
                 "seed": self.seed,
             }
         )
-        t0 = 0.0 if background is None else float(next(iter(background.values())).t0.value)
+        t0 = 0.0 if background is None else float(next(iter(background.values())).t0)
         seed_offset = 0.0 if self.seed is None else float(self.seed % 1000)
         return DetectorStrainStack.from_mapping(
             names,
             {
-                detector: GWpyTimeSeries(
+                detector: ChannelSeries(
                     np.full(n_samples, float(parameters["omega_ref"]) + seed_offset + index),
                     t0=t0,
                     sample_rate=sampling_frequency,

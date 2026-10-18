@@ -12,15 +12,16 @@ pages for more details:
 
 ## Requirements
 
-- Python 3.13 or later (3.13 and 3.14 are supported)
+- Python 3.13 or later (3.13, 3.14 and 3.15 are supported)
 - Operating System: Linux, macOS, or Windows
 
 <!-- prettier-ignore -->
 !!!note
-    The package requires Python 3.13 or later and is built and tested against Python 3.13–3.14. When creating a
+    The package requires Python 3.13 or later and is built and tested against Python 3.13–3.15. When creating a
     virtual environment with `uv`, specify the Python version to ensure compatibility: `uv venv --python 3.13`
-    (replace `3.13` with your preferred supported version: 3.13 or 3.14). This avoids potential issues
-    with unsupported Python versions.
+    (replace `3.13` with your preferred supported version: 3.13, 3.14 or 3.15). On Python 3.15, h5py
+    publishes no wheel yet, so the `hdf5` and `gwpy` extras may not install there; NumPy (`.npy`) output
+    works without them.
 
 ## Install from PyPI
 
@@ -32,6 +33,25 @@ uv venv --python 3.13
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv pip install gwmock
 ```
+
+### Optional dependencies (extras)
+
+| Extra           | Purpose                                                                                |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `hdf5`          | HDF5 output and catalogues, and hashing or validating HDF5 artifacts (`h5py`)          |
+| `gwpy`          | Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts (`gwpy`) |
+| `jax`           | The batched signal path on the CPU (`execution: batched`)                              |
+| `cuda`          | The batched signal path on an NVIDIA GPU                                               |
+| `sgwb`          | Stochastic-background signals                                                          |
+| `pycbc`         | The PyCBC helpers in `gwmock.utils` (population files, ET geometry)                    |
+| `deepextractor` | DeepExtractor glitches (`kind: deepextractor` glitch components)                       |
+
+```bash
+uv pip install "gwmock[hdf5,gwpy]"
+```
+
+A feature whose extra is missing raises `ModuleNotFoundError` naming the extra
+to install. Output written as NumPy (`.npy`) needs none of them.
 
 ## Install from Source
 

@@ -74,7 +74,10 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     from typing import cast
 
     import yaml
-    from gwpy.timeseries import TimeSeries
+
+    from gwmock._optional import require
+
+    TimeSeries = require("gwpy.timeseries", "gwpy", "Merging frame or HDF5 files").TimeSeries  # noqa: N806
 
     from gwmock.cli.utils.hash import compute_file_hash
     from gwmock.cli.utils.metadata import embed_metadata_record

@@ -18,8 +18,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pytest
+from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_signal import DetectorStrainStack
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.cli.adapter_orchestration import AdapterOrchestrator
 from gwmock.cli.utils.config import Config
@@ -74,8 +74,8 @@ class FakeStationaryBackend:
                 "background": {
                     name: {
                         "samples": np.asarray(background[name].value, dtype=float),
-                        "t0": float(background[name].t0.value),
-                        "sample_rate": float(background[name].sample_rate.value),
+                        "t0": float(background[name].t0),
+                        "sample_rate": float(background[name].sample_rate),
                         "unit": str(background[name].unit),
                     }
                     for name in names
@@ -85,9 +85,9 @@ class FakeStationaryBackend:
         return DetectorStrainStack.from_mapping(
             names,
             {
-                name: GWpyTimeSeries(
+                name: ChannelSeries(
                     np.asarray(background[name].value, dtype=float) + 1.0,
-                    t0=float(background[name].t0.value),
+                    t0=float(background[name].t0),
                     sample_rate=sampling_frequency,
                 )
                 for name in names

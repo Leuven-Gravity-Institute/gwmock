@@ -516,7 +516,9 @@ def embed_metadata_record(
         sort_keys=True,
     )
 
-    import h5py  # noqa: PLC0415  # deferred so importing the record does not pull in the HDF5 stack
+    from gwmock._optional import require  # noqa: PLC0415
+
+    h5py = require("h5py", "hdf5", "Recording metadata in an HDF5 artifact")
 
     with h5py.File(artifact, "a") as handle:
         handle.attrs[RUN_METADATA_ATTRIBUTE] = document

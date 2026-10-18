@@ -83,6 +83,8 @@ import re
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from gwmock._optional import require
+
 #: The name written to the ``schema`` attribute, identifying which contract the file claims to meet.
 STRAIN_SCHEMA = "gwmock-strain"
 
@@ -221,7 +223,7 @@ def declare_strain_schema(path: str | Path) -> bool:
     if not artifact.exists():
         raise FileNotFoundError(f"Cannot declare the strain schema on a file that does not exist: {artifact}")
 
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     with h5py.File(artifact, "r") as handle:
         for dataset in _datasets(handle):
@@ -250,7 +252,7 @@ def read_strain_schema(path: str | Path) -> StrainSchema | None:
     if not carries_strain_schema(artifact):
         return None
 
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     with h5py.File(artifact, "r") as handle:
         if SCHEMA_ATTRIBUTE not in handle.attrs or SCHEMA_VERSION_ATTRIBUTE not in handle.attrs:
@@ -285,7 +287,7 @@ def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
     if not carries_strain_schema(artifact):
         return None
 
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     with h5py.File(artifact, "r") as handle:
         if RUN_METADATA_ATTRIBUTE not in handle.attrs:
@@ -317,7 +319,7 @@ def missing_layout_attributes(path: str | Path) -> dict[str, list[str]]:
     Returns:
         A mapping of dataset name to the missing attribute names; empty when the file meets the layout.
     """
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     missing: dict[str, list[str]] = {}
     with h5py.File(Path(path), "r") as handle:
@@ -338,7 +340,7 @@ def conflicting_grid_attributes(path: str | Path) -> dict[str, list[str]]:
         A mapping of dataset name to a description of each disagreement; empty when the file is
         self-consistent, which includes a file carrying only one spelling.
     """
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     conflicts: dict[str, list[str]] = {}
     with h5py.File(Path(path), "r") as handle:
@@ -408,7 +410,7 @@ def _datasets(handle: Any) -> list[Any]:
     Returns:
         The datasets it holds.
     """
-    import h5py  # noqa: PLC0415  # deferred so importing the contract does not pull in the HDF5 stack
+    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
 
     found: list[Any] = []
     handle.visititems(lambda _, obj: found.append(obj) if isinstance(obj, h5py.Dataset) else None)

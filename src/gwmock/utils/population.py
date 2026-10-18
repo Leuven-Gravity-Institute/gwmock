@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import h5py
-
 try:
+    import h5py
     import pandas as pd
 except ModuleNotFoundError as exc:
-    if exc.name != "pandas":
+    if exc.name not in {"h5py", "pandas"}:
         raise
     raise ModuleNotFoundError(
-        f"{__name__} needs pandas, which is not installed. Install it with: pip install 'gwmock[pycbc]'",
+        f"{__name__} needs {exc.name}, which is not installed. Install it with: pip install 'gwmock[pycbc]'",
         name=exc.name,
     ) from exc
 
