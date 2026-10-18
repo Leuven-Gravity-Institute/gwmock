@@ -54,7 +54,8 @@ dependencies = [
   #
   # 0.18.0 shares gwmock-data's time series, so the series gwmock passes it (backgrounds, the
   # strain written as a stack) are gwmock-data's rather than GWpy's; earlier releases require GWpy.
-  "gwmock-signal>=0.18.0",
+  # 0.19.0 writes and reads that stack as HDF5 without h5py.
+  "gwmock-signal>=0.19.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -62,9 +63,10 @@ dependencies = [
   # to whichever version happens to resolve. 0.12.0 is the first release with a glitch model's
   # `detectors` selector and a distribution-valued `snr`, which the DeepExtractor examples rely on;
   # below it a config using either is refused with a `TypeError` rather than run.
-  # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet.
-  "gwmock-noise>=0.17.0",
-  "gwmock-pop>=0.15.0",
+  # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet;
+  # 0.18.0 (noise) and 0.16.0 (pop) read and write HDF5 without it.
+  "gwmock-noise>=0.18.0",
+  "gwmock-pop>=0.16.0",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "pydantic>=2.10.0",
@@ -72,9 +74,10 @@ dependencies = [
   "psutil>=6.1.0",
   "filelock>=3.17.0",
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
-  # The time series, multichannel series and injection the gwmock packages share; 0.3.0 is the
-  # first release with the multichannel series.
-  "gwmock-data>=0.3.0",
+  # The time series, multichannel series and injection the gwmock packages share, and HDF5 without
+  # h5py; 0.4.0 is the first release that reads an HDF5 file's attributes alone and updates them in
+  # place.
+  "gwmock-data>=0.4.0",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
   # all install them, so they are declared here.
   "numpy>=2.2",
@@ -119,8 +122,9 @@ deepextractor = ["gwmock-noise[deepextractor]>=0.17.0"]
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
 pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
-# HDF5 output and catalogues, and hashing or validating HDF5 artifacts. h5py publishes no wheel for
-# Python 3.15 yet; output written as NumPy needs no extra.
+# Faster HDF5 through h5py, which also compresses what it writes. HDF5 output and catalogues, and
+# hashing or validating HDF5 artifacts, work without it through gwmock-data's own HDF5 support; h5py
+# publishes no wheel for Python 3.15 yet.
 hdf5 = [
   "h5py>=3.13.0",
   "gwmock-noise[hdf5]>=0.17.0",

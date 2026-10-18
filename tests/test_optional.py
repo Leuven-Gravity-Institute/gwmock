@@ -69,15 +69,15 @@ def test_a_missing_dependency_of_the_package_is_not_reported_as_the_package(monk
 
 
 def test_a_content_hash_does_not_fall_back_when_an_extra_is_missing(monkeypatch, tmp_path):
-    """Hashing an HDF5 file without h5py raises, rather than recording the raw-file hash instead."""
+    """Hashing a frame file without GWpy raises, rather than recording the raw-file hash instead."""
     from gwmock.cli.utils import hash as hash_module
 
     def missing(module, extra, feature):
-        raise MissingExtraError(f"{feature} needs h5py. Install it with: pip install 'gwmock[{extra}]'", name="h5py")
+        raise MissingExtraError(f"{feature} needs GWpy. Install it with: pip install 'gwmock[{extra}]'", name="gwpy")
 
     monkeypatch.setattr(hash_module, "require", missing)
-    path = tmp_path / "artifact.h5"
+    path = tmp_path / "artifact.gwf"
     path.write_bytes(b"\0" * 16)
 
-    with pytest.raises(MissingExtraError, match=r"gwmock\[hdf5\]"):
+    with pytest.raises(MissingExtraError, match=r"gwmock\[gwpy\]"):
         hash_module.compute_content_hash(path)

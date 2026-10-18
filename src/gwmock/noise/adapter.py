@@ -31,7 +31,6 @@ from gwmock_noise.gaussian import normalize_spectral_lines
 from gwmock_noise.glitches import normalize_glitch_models
 from gwmock_noise.output.frame import compose_frame_name, format_time_token
 
-from gwmock._optional import require
 from gwmock.strain_schema import declare_strain_schema
 from gwmock.utils.download import download_file
 
@@ -694,7 +693,8 @@ class NoiseAdapter:
         Returns:
             The path written for each detector.
         """
-        h5py = require("h5py", "hdf5", "HDF5 noise output")
+        from gwmock_data import hdf5  # noqa: PLC0415
+
         output_paths: dict[str, Path] = {}
         for detector, strain in chunk_by_detector.items():
             channel = (
@@ -708,14 +708,15 @@ class NoiseAdapter:
                 gps_start=config.output.gps_start,
                 duration=config.duration,
             )
-            with h5py.File(output_path, "w") as handle:
-                dataset = handle.create_dataset(channel, data=np.asarray(strain, dtype=float))
-                dataset.attrs["x0"] = float(config.output.gps_start)
-                dataset.attrs["dx"] = 1.0 / float(config.sampling_frequency)
-                dataset.attrs["xunit"] = "s"
-                dataset.attrs["channel"] = channel
-                dataset.attrs["name"] = channel
-                dataset.attrs["unit"] = "strain"
+            attrs = {
+                "x0": float(config.output.gps_start),
+                "dx": 1.0 / float(config.sampling_frequency),
+                "xunit": "s",
+                "channel": channel,
+                "name": channel,
+                "unit": "strain",
+            }
+            hdf5.write(hdf5.Group({channel: hdf5.Dataset(np.asarray(strain, dtype=float), attrs)}), output_path)
             # Declared through the same call every other writer uses, rather than composed inline here:
             # one mechanism is one place for the layout to be decided, and gwmock writes this artifact
             # through three different libraries. See `gwmock.strain_schema`.

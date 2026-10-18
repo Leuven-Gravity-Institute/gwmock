@@ -80,10 +80,11 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from gwmock._optional import require
+from gwmock_data import hdf5
 
 #: The name written to the ``schema`` attribute, identifying which contract the file claims to meet.
 STRAIN_SCHEMA = "gwmock-strain"
@@ -223,15 +224,12 @@ def declare_strain_schema(path: str | Path) -> bool:
     if not artifact.exists():
         raise FileNotFoundError(f"Cannot declare the strain schema on a file that does not exist: {artifact}")
 
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
-
-    with h5py.File(artifact, "r") as handle:
-        for dataset in _datasets(handle):
-            _check_dataset(dataset, artifact=artifact)
-    with h5py.File(artifact, "a") as handle:
-        for dataset in _datasets(handle):
-            _complete_dataset(dataset)
-        handle.attrs.update(strain_schema_attributes())
+    datasets = _datasets(artifact)
+    for dataset in datasets:
+        _check_dataset(dataset, artifact=artifact)
+    updates: dict[str, dict[str, Any]] = {dataset.name: _completion(dataset) for dataset in datasets}
+    updates[""] = strain_schema_attributes()
+    hdf5.update_attrs(artifact, {member: attrs for member, attrs in updates.items() if attrs})
     return True
 
 
@@ -252,15 +250,10 @@ def read_strain_schema(path: str | Path) -> StrainSchema | None:
     if not carries_strain_schema(artifact):
         return None
 
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
-
-    with h5py.File(artifact, "r") as handle:
-        if SCHEMA_ATTRIBUTE not in handle.attrs or SCHEMA_VERSION_ATTRIBUTE not in handle.attrs:
-            return None
-        return StrainSchema(
-            name=_as_text(handle.attrs[SCHEMA_ATTRIBUTE]),
-            version=_as_text(handle.attrs[SCHEMA_VERSION_ATTRIBUTE]),
-        )
+    attrs = hdf5.read(artifact, members=[], data=False).attrs
+    if SCHEMA_ATTRIBUTE not in attrs or SCHEMA_VERSION_ATTRIBUTE not in attrs:
+        return None
+    return StrainSchema(name=_as_text(attrs[SCHEMA_ATTRIBUTE]), version=_as_text(attrs[SCHEMA_VERSION_ATTRIBUTE]))
 
 
 def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
@@ -287,12 +280,10 @@ def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
     if not carries_strain_schema(artifact):
         return None
 
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
-
-    with h5py.File(artifact, "r") as handle:
-        if RUN_METADATA_ATTRIBUTE not in handle.attrs:
-            return None
-        document = _as_text(handle.attrs[RUN_METADATA_ATTRIBUTE])
+    attrs = hdf5.read(artifact, members=[], data=False).attrs
+    if RUN_METADATA_ATTRIBUTE not in attrs:
+        return None
+    document = _as_text(attrs[RUN_METADATA_ATTRIBUTE])
     try:
         decoded = json.loads(document)
     except json.JSONDecodeError as exc:
@@ -319,14 +310,11 @@ def missing_layout_attributes(path: str | Path) -> dict[str, list[str]]:
     Returns:
         A mapping of dataset name to the missing attribute names; empty when the file meets the layout.
     """
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
-
     missing: dict[str, list[str]] = {}
-    with h5py.File(Path(path), "r") as handle:
-        for dataset in _datasets(handle):
-            absent = [name for name in REQUIRED_DATASET_ATTRIBUTES if name not in dataset.attrs]
-            if absent:
-                missing[dataset.name.lstrip("/")] = absent
+    for dataset in _datasets(Path(path)):
+        absent = [name for name in REQUIRED_DATASET_ATTRIBUTES if name not in dataset.attrs]
+        if absent:
+            missing[dataset.name] = absent
     return missing
 
 
@@ -340,14 +328,11 @@ def conflicting_grid_attributes(path: str | Path) -> dict[str, list[str]]:
         A mapping of dataset name to a description of each disagreement; empty when the file is
         self-consistent, which includes a file carrying only one spelling.
     """
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
-
     conflicts: dict[str, list[str]] = {}
-    with h5py.File(Path(path), "r") as handle:
-        for dataset in _datasets(handle):
-            disagreements = _grid_conflicts(dataset)
-            if disagreements:
-                conflicts[dataset.name.lstrip("/")] = disagreements
+    for dataset in _datasets(Path(path)):
+        disagreements = _grid_conflicts(dataset)
+        if disagreements:
+            conflicts[dataset.name] = disagreements
     return conflicts
 
 
@@ -401,23 +386,40 @@ def require_strain_schema(path: str | Path) -> StrainSchema:
     return declared
 
 
-def _datasets(handle: Any) -> list[Any]:
-    """Return every dataset in an open HDF5 file, at any depth.
+@dataclass(frozen=True)
+class _StoredDataset:
+    """A dataset of an artifact, read without its samples: its path in the file and its attributes."""
+
+    name: str
+    attrs: dict[str, Any]
+
+
+def _datasets(artifact: Path) -> list[_StoredDataset]:
+    """Return every dataset in an HDF5 file, at any depth, without reading any samples.
+
+    Listed depth-first with the members of each group in name order, as h5py's ``visititems`` lists them.
 
     Args:
-        handle: The open file.
+        artifact: The file.
 
     Returns:
         The datasets it holds.
     """
-    h5py = require("h5py", "hdf5", "Reading or writing an HDF5 strain artifact")
+    found: list[_StoredDataset] = []
 
-    found: list[Any] = []
-    handle.visititems(lambda _, obj: found.append(obj) if isinstance(obj, h5py.Dataset) else None)
+    def visit(group: hdf5.Group, prefix: str) -> None:
+        for name in sorted(group.members, key=lambda member: member.encode("utf-8")):
+            member = group.members[name]
+            if isinstance(member, hdf5.Group):
+                visit(member, f"{prefix}{name}/")
+            else:
+                found.append(_StoredDataset(f"{prefix}{name}", member.attrs))
+
+    visit(hdf5.read(artifact, data=False), "")
     return found
 
 
-def _grid_conflicts(dataset: Any) -> list[str]:
+def _grid_conflicts(dataset: _StoredDataset) -> list[str]:
     """Return a description of each grid quantity the dataset records twice, differently.
 
     Compared exactly rather than within a tolerance. The pair is either derived -- one written from the
@@ -441,7 +443,7 @@ def _grid_conflicts(dataset: Any) -> list[str]:
     return conflicts
 
 
-def _check_dataset(dataset: Any, *, artifact: Path) -> None:
+def _check_dataset(dataset: _StoredDataset, *, artifact: Path) -> None:
     """Refuse a dataset the 1.0.0 layout cannot be completed over, without writing anything.
 
     Kept apart from :func:`_complete_dataset` so that the caller can ask this of every dataset before
@@ -458,7 +460,7 @@ def _check_dataset(dataset: Any, *, artifact: Path) -> None:
     disagreements = _grid_conflicts(dataset)
     if disagreements:
         raise ValueError(
-            f"Cannot declare the strain schema on {artifact}: dataset '{dataset.name.lstrip('/')}' "
+            f"Cannot declare the strain schema on {artifact}: dataset '{dataset.name}' "
             f"records its grid twice and the two disagree ({'; '.join(disagreements)}). The content "
             "hash reads the first spelling and the multichannel reader the second, so declaring this "
             "file would put one artifact at two different times."
@@ -466,30 +468,34 @@ def _check_dataset(dataset: Any, *, artifact: Path) -> None:
     for required, alias in _GRID_ALIASES:
         if required not in dataset.attrs and alias not in dataset.attrs:
             raise ValueError(
-                f"Cannot declare the strain schema on {artifact}: dataset '{dataset.name.lstrip('/')}' "
+                f"Cannot declare the strain schema on {artifact}: dataset '{dataset.name}' "
                 f"carries neither '{required}' nor '{alias}', so the grid version "
                 f"{STRAIN_SCHEMA_VERSION} requires cannot be recorded."
             )
 
 
-def _complete_dataset(dataset: Any) -> None:
-    """Fill in the attributes version 1.0.0 requires, from what the writer already recorded.
+def _completion(dataset: _StoredDataset) -> dict[str, Any]:
+    """Return the attributes version 1.0.0 requires that the dataset lacks, from what the writer recorded.
 
-    Writes only: every reason to refuse has been raised by :func:`_check_dataset`, over every dataset in
-    the file, before this is called on the first of them.
+    Every reason to refuse has been raised by :func:`_check_dataset`, over every dataset in the file,
+    before this is asked of the first of them, and nothing is written until all have been asked.
 
     Args:
         dataset: The dataset to complete.
+
+    Returns:
+        The attributes to add; empty when the dataset already meets the layout.
     """
+    added: dict[str, Any] = {}
     for required, alias in _GRID_ALIASES:
         if required not in dataset.attrs:
-            dataset.attrs[required] = float(dataset.attrs[alias])
+            added[required] = float(dataset.attrs[alias])
     if "xunit" not in dataset.attrs:
-        dataset.attrs["xunit"] = "s"
-    channel = dataset.name.lstrip("/")
+        added["xunit"] = "s"
     for attribute in ("channel", "name"):
         if attribute not in dataset.attrs:
-            dataset.attrs[attribute] = channel
+            added[attribute] = dataset.name
+    return added
 
 
 def _as_text(value: object) -> str:

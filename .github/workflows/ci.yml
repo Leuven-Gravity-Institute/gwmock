@@ -191,8 +191,8 @@ jobs:
 
     test-core:
         # The newest Python, where h5py publishes no wheel yet, so neither h5py nor GWpy installs. The
-        # package installs with its core dependencies only, and everything except HDF5 and frame
-        # files works there without importing either. Only the package and pytest are installed, and
+        # package installs with its core dependencies only, and everything except frame files works
+        # there without importing either: HDF5 goes through gwmock-data's own HDF5 support. Only the package and pytest are installed, and
         # the tests run against the installed package rather than the source tree.
         runs-on: ubuntu-latest
         steps:
@@ -215,6 +215,7 @@ jobs:
                   uv run --no-sync pytest -p no:cacheprovider --noconftest -o
                   addopts= -o pythonpath= tests/test_core_install.py
                   tests/test_lazy_imports.py tests/test_optional.py
+                  tests/test_nested_hdf5_datasets.py
 
     e2e:
         runs-on: ubuntu-latest

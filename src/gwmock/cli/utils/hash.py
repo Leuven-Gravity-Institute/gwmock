@@ -1,7 +1,7 @@
 # ruff: noqa: PLC0415
 """Contains utility functions for hashing operations.
 
-``numpy``/``gwpy``/``h5py`` are imported lazily inside the content-hash helpers
+``numpy``/``gwpy``/``gwmock_data.hdf5`` are imported lazily inside the content-hash helpers
 so importing this module stays cheap; the heavy readers are only pulled in when
 a file is actually decoded for content hashing.
 """
@@ -102,38 +102,50 @@ def _read_content_items(file_path: Path) -> list[tuple[str, dict, object]] | Non
         return items
 
     if suffix in (".hdf5", ".h5"):
-        h5py = require("h5py", "hdf5", "Hashing an HDF5 file")
+        import numpy as np
+        from gwmock_data import hdf5
 
-        names: list[str] = []
-        with h5py.File(file_path, "r") as handle:
-            handle.visititems(lambda name, obj: names.append(name) if isinstance(obj, h5py.Dataset) else None)
-            # The epoch, the sample interval and the length, exactly as the GWF branch above records
-            # them. Without these the digest saw only the samples, so an HDF5 file moved to a different
-            # GPS time -- or written at a different rate -- hashed identically to the original. Measured:
-            # both cases collided for `.hdf5` while `.gwf` distinguished them. That asymmetry did not
-            # matter while HDF5 was the secondary format; it does now that it is the one a run writes by
-            # default.
-            #
-            # gwpy stores them as the `x0` and `dx` dataset attributes, and gwmock-signal's multichannel
-            # writer as `t0` and `dt`. Both spellings are read, because reading only the first one meant
-            # that for a file written through that writer -- which is the path a run's own outputs take
-            # -- the grid fell out of the digest again, and two segments seconds apart hashed alike.
-            # gwmock now records `x0`/`dx` on every strain artifact it declares, so this second spelling
-            # matters for files written before that and for another producer's; a dataset carrying
-            # neither is still hashed on its samples alone, since the check can only be as strong as
-            # what the writer recorded.
-            items = []
-            for name in sorted(names):
-                dataset = handle[name]
-                meta: dict[str, object] = {"n": int(dataset.shape[0]) if dataset.shape else 0}
-                epoch = _first_attribute(dataset, ("x0", "t0"))
-                if epoch is not None:
-                    meta["t0"] = epoch
-                interval = _first_attribute(dataset, ("dx", "dt"))
-                if interval is not None:
-                    meta["dt"] = interval
-                items.append((name, meta, dataset[()]))
-            return items
+        datasets: dict[str, hdf5.Dataset] = {}
+
+        def collect(group: hdf5.Group, prefix: str) -> None:
+            for member_name, member in group.members.items():
+                if isinstance(member, hdf5.Group):
+                    collect(member, f"{prefix}{member_name}/")
+                else:
+                    datasets[f"{prefix}{member_name}"] = member
+
+        collect(hdf5.read(file_path), "")
+        # The epoch, the sample interval and the length, exactly as the GWF branch above records
+        # them. Without these the digest saw only the samples, so an HDF5 file moved to a different
+        # GPS time -- or written at a different rate -- hashed identically to the original. Measured:
+        # both cases collided for `.hdf5` while `.gwf` distinguished them. That asymmetry did not
+        # matter while HDF5 was the secondary format; it does now that it is the one a run writes by
+        # default.
+        #
+        # gwpy stores them as the `x0` and `dx` dataset attributes, and gwmock-signal's multichannel
+        # writer as `t0` and `dt`. Both spellings are read, because reading only the first one meant
+        # that for a file written through that writer -- which is the path a run's own outputs take
+        # -- the grid fell out of the digest again, and two segments seconds apart hashed alike.
+        # gwmock now records `x0`/`dx` on every strain artifact it declares, so this second spelling
+        # matters for files written before that and for another producer's; a dataset carrying
+        # neither is still hashed on its samples alone, since the check can only be as strong as
+        # what the writer recorded.
+        items = []
+        for name in sorted(datasets):
+            dataset = datasets[name]
+            # A scalar string reads as ``str``; h5py's ``dataset[()]`` gave bytes, which is what the
+            # digest has always been taken over.
+            data = dataset.data.encode("utf-8") if isinstance(dataset.data, str) else dataset.data
+            shape = np.shape(data) if not isinstance(data, bytes) else ()
+            meta: dict[str, object] = {"n": int(shape[0]) if shape else 0}
+            epoch = _first_attribute(dataset, ("x0", "t0"))
+            if epoch is not None:
+                meta["t0"] = epoch
+            interval = _first_attribute(dataset, ("dx", "dt"))
+            if interval is not None:
+                meta["dt"] = interval
+            items.append((name, meta, data))
+        return items
 
     if suffix == ".npy":
         import numpy as np
