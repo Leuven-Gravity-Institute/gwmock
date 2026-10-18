@@ -13,16 +13,16 @@ environment. To resolve this:
     We recommend using `uv` for this:
 
     ```bash
-    uv venv --python 3.13  # Replace 3.13 with your preferred supported version (3.12, 3.13, or 3.14)
+    uv venv --python 3.13  # Replace 3.13 with your preferred supported version (3.13 or 3.14)
     source .venv/bin/activate  # On Windows: .venv\Scripts\activate
     uv pip install gwmock
     ```
 
-2. **Check Python Version**: Ensure you're using Python 3.12 or later. The package is built and
-    tested against Python 3.12–3.14. Versions before 3.12 may cause compatibility issues:
+2. **Check Python Version**: Ensure you're using Python 3.13 or later. The package is built and
+    tested against Python 3.13–3.14. Versions before 3.13 are not supported:
 
     ```bash
-    python --version  # Should show 3.12.x or later
+    python --version  # Should show 3.13.x or later
     ```
 
 3. **Update Dependencies**: If conflicts persist, try updating `pip` and `uv`:

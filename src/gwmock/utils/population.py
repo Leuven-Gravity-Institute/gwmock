@@ -5,7 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import h5py
-import pandas as pd
+
+try:
+    import pandas as pd
+except ModuleNotFoundError as exc:
+    if exc.name != "pandas":
+        raise
+    raise ModuleNotFoundError(
+        f"{__name__} needs pandas, which is not installed. Install it with: pip install 'gwmock[pycbc]'",
+        name=exc.name,
+    ) from exc
 
 
 def read_pycbc_population_file(file_name):
