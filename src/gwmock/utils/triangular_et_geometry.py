@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 import pymap3d as pm
-from pycbc.detector import Detector, add_detector_on_earth
+
+try:
+    from pycbc.detector import Detector, add_detector_on_earth
+except ModuleNotFoundError as exc:
+    if exc.name not in {"pycbc", "pycbc.detector"}:
+        raise
+    raise ModuleNotFoundError(
+        f"{__name__} needs PyCBC, which is not installed. Install it with: pip install 'gwmock[pycbc]'",
+        name=exc.name,
+    ) from exc
 
 
 def get_unit_vector_angles(unit_vector: np.ndarray, ellipsoid_position: np.ndarray) -> np.ndarray:

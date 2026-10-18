@@ -10,7 +10,7 @@ Every pull request and every push to `main` runs the full
 [CI workflow](https://github.com/Leuven-Gravity-Institute/gwmock/actions/workflows/ci.yml):
 
 - **Test matrix** — the pytest suite (under `tests/`, mirroring the source
-  layout) runs on Ubuntu and macOS across Python 3.12, 3.13, and 3.14.
+  layout) runs on Ubuntu and macOS across Python 3.13 and 3.14.
 - **Lowest-resolution job** — one job installs every direct dependency at its
   _minimum_ declared version (`uv sync --resolution lowest-direct`) on the
   oldest supported Python. This proves the version floors in `pyproject.toml`

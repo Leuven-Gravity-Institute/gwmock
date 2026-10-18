@@ -22,7 +22,7 @@ materials are collected on the [Workshops](../workshops.md) page.
 first run looks like this:
 
 ```bash
-# 1. Install (Python 3.12–3.14)
+# 1. Install (Python 3.13–3.14)
 uv venv --python 3.13 && source .venv/bin/activate
 uv pip install gwmock
 
@@ -119,7 +119,7 @@ adapter/protocol split.
 Summarized here; full detail on [Maintenance & Quality](maintenance.md).
 
 - **Unit tests & CI** — the pytest suite runs on every pull request across Linux
-  and macOS and Python 3.12–3.14, with coverage tracked on Codecov. A dedicated
+  and macOS and Python 3.13–3.14, with coverage tracked on Codecov. A dedicated
   CI job installs the _oldest_ supported version of every dependency to prove
   the declared minimums actually work.
 - **SPEC 0 dependency policy** — supported versions of Python and scientific

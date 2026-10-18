@@ -15,11 +15,10 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Astronomy",
   "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dynamic = ["version"]
 dependencies = [
   # Two floors, both behavioural rather than conveniences.
@@ -69,6 +68,16 @@ dependencies = [
   "psutil>=6.1.0",
   "filelock>=3.17.0",
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
+  # The time series the gwmock packages share.
+  "gwmock-data>=0.1.0",
+  # Imported directly. They used to arrive only through the sibling packages, which no longer
+  # all install them (gwmock-signal makes GWpy optional), so they are declared here.
+  "gwpy>=4.0.0",
+  "numpy>=2.2",
+  "astropy>=7.0",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "requests>=2.32",
 ]
 
 [project.optional-dependencies]
@@ -102,6 +111,10 @@ cuda = ["gwmock-signal[jax]>=0.17.5", "jax[cuda12]>=0.11.0"]
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
 deepextractor = ["gwmock-noise[deepextractor]>=0.16.1"]
+# The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
+# returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
+# `utils.triangular_et_geometry`). Nothing else in the package imports them.
+pycbc = ["pycbc>=2.6.0", "pandas>=2.2"]
 
 [dependency-groups]
 dev = [
@@ -131,7 +144,7 @@ Tracker = "https://github.com/Leuven-Gravity-Institute/gwmock/issues"
 policy = "spec0"
 groups = ["project", "optional"]
 # ecosystem siblings: Renovate keeps them at latest
-exclude = ["gwmock-signal", "gwmock-noise", "gwmock-pop"]
+exclude = ["gwmock-signal", "gwmock-noise", "gwmock-pop", "gwmock-data"]
 lock = "minimal"
 
 [tool.uv-dynamic-versioning]
@@ -253,7 +266,7 @@ timeout_multiplier = 2.0
 
 [tool.ruff]
 line-length = 120 # Matches Black's default
-target-version = "py312" # Align with requires-python (>=3.12)
+target-version = "py313" # Align with requires-python (>=3.13)
 lint.select = [
   "E",
   "F",
