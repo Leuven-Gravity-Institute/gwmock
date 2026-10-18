@@ -94,6 +94,7 @@ def _active_waveform_backend(orchestrator) -> Any:
 class TestSelection:
     """Which library a config selects."""
 
+    @pytest.mark.requires_lalsuite
     def test_omitting_the_key_keeps_the_default(self, tmp_path):
         """Existing configs must be unaffected; the default stays LAL."""
         backend = _active_waveform_backend(_orchestrator(tmp_path))
@@ -117,6 +118,7 @@ class TestSelection:
 
         assert _active_waveform_backend(orchestrator).taper_fraction == pytest.approx(0.02)
 
+    @pytest.mark.requires_lalsuite
     def test_arguments_without_a_backend_name_are_still_applied(self, tmp_path):
         """Tuning the default library is legitimate, and must not be silently discarded.
 
@@ -132,6 +134,7 @@ class TestSelection:
         # ripple's public `taper_fraction`. The alternative is asserting nothing at all here.
         assert backend._f_ref == pytest.approx(30.0), "the argument was dropped"
 
+    @pytest.mark.requires_lalsuite
     def test_the_default_backend_matches_what_the_factory_would_have_built(self, tmp_path):
         """The fallback library is stated in gwmock and again inside ``WaveformFactory``.
 
@@ -186,6 +189,7 @@ class TestGeneratedData:
         assert written.is_file(), f"no signal file was written to {written}"
         return np.asarray(TimeSeries.read(written, channel="ET1_SARD:STRAIN").value)
 
+    @pytest.mark.requires_gwpy
     def test_the_reference_run_actually_contains_signal(self, tmp_path):
         """An all-zero output is the trap here: the run still reports success.
 
@@ -200,6 +204,7 @@ class TestGeneratedData:
         assert np.count_nonzero(samples) > 0, "the run wrote a file containing no signal"
         assert np.all(np.isfinite(samples))
 
+    @pytest.mark.requires_gwpy
     def test_ripple_and_lal_produce_different_strain(self, tmp_path):
         """The selection has to change the data, otherwise the key is decorative.
 
@@ -245,6 +250,7 @@ class TestProvenance:
         assert signal_metadata["waveform_backend"] == "ripple"
         assert signal_metadata["waveform_backend_arguments"] == {"taper_fraction": 0.02}
 
+    @pytest.mark.requires_lalsuite
     def test_the_default_is_recorded_as_unset(self, tmp_path):
         """``None`` distinguishes "not requested" from a library that was explicitly named."""
         signal_metadata = _orchestrator(tmp_path).metadata["orchestration"]["signal"]

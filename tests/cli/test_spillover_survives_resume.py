@@ -318,6 +318,7 @@ def _peaks(directory) -> list[float]:
     return [float(np.max(np.abs(np.asarray(GWpyTimeSeries.read(f, channel).value)))) for f in files]
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.integration
 def test_a_resumed_run_places_the_tail_end_to_end(tmp_path):
     """Interrupt a real run at a real checkpoint, resume it, and require the merger back.

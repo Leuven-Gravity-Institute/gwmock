@@ -567,15 +567,15 @@ class TestBinaryCatalogues:
         format-blind rewrite mapped them to the same bytes -- so the resume this guard exists to refuse
         went through. Suffixes the loader parses as text are normalised; everything else is hashed raw.
 
-        Written with ``h5py`` rather than a handmade byte string carrying an HDF signature: the first
+        Written as real HDF5 files rather than a handmade byte string carrying an HDF signature: the first
         version of this test did the latter, so it pinned suffix-based hashing while its docstring claimed
-        HDF5 datasets, and ``h5py`` could not have read what it produced.
+        HDF5 datasets, and no HDF5 reader could have read what it produced.
         """
-        h5py = pytest.importorskip("h5py")
+        from gwmock_data import hdf5
+
         first, second = tmp_path / "pop.h5", tmp_path / "other.h5"
         for path, mass in ((first, 13), (second, 10)):
-            with h5py.File(path, "w") as handle:
-                handle.create_dataset("detector_frame_mass_1", data=np.array([mass], dtype=np.int8))
+            hdf5.write(hdf5.Group({"detector_frame_mass_1": hdf5.Dataset(np.array([mass], dtype=np.int8))}), path)
 
         assert first.read_bytes() != second.read_bytes(), "the two catalogues are byte-identical on disk"
         assert checkpoint_utils._input_digest(str(first)) != checkpoint_utils._input_digest(str(second))

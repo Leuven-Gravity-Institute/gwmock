@@ -194,6 +194,7 @@ def _install_third_party_backend_package(tmp_path: Path, monkeypatch: pytest.Mon
     }
 
 
+@pytest.mark.requires_gwpy
 def test_orchestrator_uses_third_party_entry_points(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The orchestrator should resolve custom entry-point backends without built-in aliases."""
     aliases = _install_third_party_backend_package(tmp_path, monkeypatch)

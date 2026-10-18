@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_signal import DetectorStrainStack
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
 
 from gwmock.signal.adapter import SignalAdapter
 
@@ -52,7 +52,7 @@ class FakeBackend:
         return DetectorStrainStack.from_mapping(
             names,
             {
-                name: GWpyTimeSeries(
+                name: ChannelSeries(
                     [10.0 + index, 20.0 + index, 30.0 + index, 40.0 + index], t0=8.0, sample_rate=sampling_frequency
                 )
                 for index, name in enumerate(names)
@@ -195,9 +195,10 @@ class TestSignalAdapter:
                 detectors=["H1"],
             )
 
+    @pytest.mark.requires_lalsuite
     def test_from_source_type_callable_waveform_with_real_backend(self):
         """A callable should be registered and invoked on the public CBC backend."""
-        from gwpy.timeseries import TimeSeries
+        from gwmock_data import TimeSeries
 
         n = 32
         merged_calls: list[dict] = []
@@ -268,11 +269,9 @@ class FailingBackend:
         if "redshift" in params or "lambda_1" in params:
             raise ValueError(f"Unsupported {self.backend_label} waveform parameters: lambda_1, redshift")
         names = tuple(d if isinstance(d, str) else d.name for d in detector_names)
-        from gwpy.timeseries import TimeSeries as GWpyTimeSeries
-
         return DetectorStrainStack.from_mapping(
             names,
-            {name: GWpyTimeSeries([1.0, 2.0], t0=0.0, sample_rate=sampling_frequency) for name in names},
+            {name: ChannelSeries([1.0, 2.0], t0=0.0, sample_rate=sampling_frequency) for name in names},
         )
 
 
@@ -368,11 +367,9 @@ class RecordingBackend:
     ):
         self.received_params.append(dict(params))
         names = tuple(d if isinstance(d, str) else d.name for d in detector_names)
-        from gwpy.timeseries import TimeSeries as GWpyTimeSeries
-
         return DetectorStrainStack.from_mapping(
             names,
-            {name: GWpyTimeSeries([1.0, 2.0], t0=0.0, sample_rate=sampling_frequency) for name in names},
+            {name: ChannelSeries([1.0, 2.0], t0=0.0, sample_rate=sampling_frequency) for name in names},
         )
 
 

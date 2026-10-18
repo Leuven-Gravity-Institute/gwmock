@@ -398,10 +398,9 @@ class TestEmbedMetadataRecord:
 
     @staticmethod
     def _hdf5(path):
-        import h5py
+        from gwmock_data import hdf5
 
-        with h5py.File(path, "w") as handle:
-            handle.create_dataset("H1:STRAIN", data=np.zeros(4))
+        hdf5.write(hdf5.Group({"H1:STRAIN": hdf5.Dataset(np.zeros(4))}), path)
         return path
 
     def test_it_writes_the_record_at_the_root(self, tmp_path):

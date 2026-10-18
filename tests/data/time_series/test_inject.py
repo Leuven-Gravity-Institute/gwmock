@@ -1103,6 +1103,7 @@ class TestPlacementByIndex:
 class TestAgreesWithGWpy:
     """On aligned grids the result is GWpy's own ``TimeSeries.inject`` of the same data, sample for sample."""
 
+    @pytest.mark.requires_gwpy
     @pytest.mark.parametrize("seed", range(12))
     def test_random_aligned_injections_match(self, seed):
         gwpy_timeseries = pytest.importorskip("gwpy.timeseries")

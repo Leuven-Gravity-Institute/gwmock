@@ -10,7 +10,13 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from astropy.units import Quantity
-from gwpy.timeseries import TimeSeries as GWPyTimeSeries
+
+try:
+    from gwpy.timeseries import TimeSeries as GWPyTimeSeries
+except ModuleNotFoundError as exc:  # Python 3.15: GWpy does not install yet; its tests are skipped
+    if exc.name != "gwpy":
+        raise
+    GWPyTimeSeries = None
 
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
@@ -236,6 +242,7 @@ class TestTimeSeriesMixin:
         assert "counter" in state
         # cached_data_chunks is not in state, as it's not a StateAttribute
 
+    @pytest.mark.requires_gwpy
     @patch("gwpy.timeseries.TimeSeries.write")
     def test_save_data_gwf_success(self, mock_write):
         """Test save_data with valid custom TimeSeries and .gwf file."""
@@ -252,6 +259,7 @@ class TestTimeSeriesMixin:
             # Check that GWPy write was called (internally via _save_gwf_data)
             mock_write.assert_called_once_with(str(file_path))
 
+    @pytest.mark.requires_gwpy
     @patch("gwpy.timeseries.TimeSeries.write")
     def test_save_data_gwf_with_channel(self, mock_write):
         """Test save_data with custom TimeSeries converts and saves correctly."""
@@ -268,6 +276,7 @@ class TestTimeSeriesMixin:
             # Check that GWPy write was called (internally via _save_gwf_data)
             mock_write.assert_called_once_with(str(file_path))
 
+    @pytest.mark.requires_gwpy
     def test_save_data_invalid_data_type(self):
         """Test save_data raises error for invalid data type."""
         simulator = MockTimeSeriesSimulator()

@@ -76,8 +76,9 @@ dependencies = [
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
   # The time series, multichannel series and injection the gwmock packages share, and HDF5 without
   # h5py; 0.4.0 is the first release that reads an HDF5 file's attributes alone and updates them in
-  # place.
-  "gwmock-data>=0.4.0",
+  # place, and 0.4.1 the first that writes a string attribute of any length without h5py (a run
+  # record carrying an environment freeze outgrows the 64 KiB a fixed-length one can hold).
+  "gwmock-data>=0.4.1",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
   # all install them, so they are declared here.
   "numpy>=2.2",
@@ -221,6 +222,10 @@ markers = [
   "spark: marks tests which need Spark",
   "slow: marks tests as slow",
   "unit: fast offline tests",
+  # Skipped where the package is not installed: Python 3.15, where neither publishes a wheel yet.
+  "requires_h5py: needs h5py (the hdf5 extra)",
+  "requires_gwpy: needs GWpy (the gwpy extra)",
+  "requires_lalsuite: needs lalsuite, which gwmock-signal's default LAL waveform backend uses",
   # Drives an example configuration through the real CLI. Excluded from the default run via
   # `-m "not e2e"` below, because these generate data and are minutes rather than seconds; the
   # `e2e` CI job runs them, and it installs the extras the matrix needs so the optional-stack

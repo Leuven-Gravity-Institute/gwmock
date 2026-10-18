@@ -322,6 +322,7 @@ class TestWhatReachesTheSimulator:
         with pytest.raises(ValueError, match="silently discard"):
             self._adapter(monkeypatch, _SwallowingSimulator, **{"projection-backend": "jax"})
 
+    @pytest.mark.requires_lalsuite
     @pytest.mark.skipif(
         not _REAL_SIMULATOR_TAKES_IT,
         reason="the installed gwmock-signal predates the projection_backend argument",

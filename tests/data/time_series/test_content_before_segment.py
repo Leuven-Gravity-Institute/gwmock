@@ -184,6 +184,7 @@ class TestTheWarning:
         assert "Discarding" in caplog.text
         assert "unknown" in caplog.text
 
+    @pytest.mark.requires_lalsuite
     def test_a_real_run_warns_when_the_pre_coalescence_duration_is_unavailable(self, tmp_path, caplog):
         """Synthetic arrays cannot show that a real configuration reaches this.
 

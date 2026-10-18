@@ -104,6 +104,7 @@ class TestEventsToStructOfArrays:
 class TestSimulateSegmentsValidation:
     """Input checks that run before any device work, so they need no extra installed."""
 
+    @pytest.mark.requires_lalsuite
     def test_missing_canonical_parameters_are_named(self):
         """The message must list what is absent and say aliases are not accepted.
 
@@ -125,6 +126,7 @@ class TestSimulateSegmentsValidation:
         assert "coa_time" in message
         assert "alias" in message.lower()
 
+    @pytest.mark.requires_lalsuite
     def test_ragged_columns_are_rejected(self):
         """Columns of different lengths cannot describe one catalogue."""
         events = _events(3)
@@ -140,6 +142,7 @@ class TestSimulateSegmentsValidation:
                 end_time=_START + _SPAN,
             )
 
+    @pytest.mark.requires_lalsuite
     def test_a_scalar_required_parameter_is_rejected(self):
         """A per-event parameter given once is not a column, whatever it would broadcast to.
 
@@ -160,6 +163,7 @@ class TestSimulateSegmentsValidation:
             )
         assert "coa_time" in str(raised.value)
 
+    @pytest.mark.requires_lalsuite
     def test_a_scalar_stays_legal_for_a_parameter_that_is_not_per_event(self):
         """Only the required per-event names are forced to be arrays.
 
@@ -187,6 +191,7 @@ class TestSimulateSegmentsValidation:
             )
         assert "must be given as arrays" not in str(raised.value), "a scalar f_ref must not be rejected"
 
+    @pytest.mark.requires_lalsuite
     def test_ragged_numpy_columns_are_rejected(self):
         """Length validation must cover arrays, not only lists and tuples.
 
@@ -278,6 +283,7 @@ class TestDeviceApproximantWithoutTheExtra:
     a base installation. Placing them here rather than behind ``importorskip`` is the assertion.
     """
 
+    @pytest.mark.requires_lalsuite
     def test_a_callable_waveform_model_is_rejected_with_its_own_message(self):
         """A callable is registered under a generated key, which is not an approximant name.
 

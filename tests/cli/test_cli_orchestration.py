@@ -11,7 +11,13 @@ import pytest
 import yaml
 from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_signal import DetectorStrainStack
-from gwpy.timeseries import TimeSeries as GWpyTimeSeries
+
+try:
+    from gwpy.timeseries import TimeSeries as GWpyTimeSeries
+except ModuleNotFoundError as exc:  # Python 3.15: GWpy does not install yet; its tests are skipped
+    if exc.name != "gwpy":
+        raise
+    GWpyTimeSeries = None
 
 from gwmock.cli.adapter_orchestration import AdapterOrchestrator
 from gwmock.cli.simulate import _simulate_impl
@@ -207,17 +213,14 @@ def _write_signal_file(self, path, **kwargs):
     _ = kwargs
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     if Path(path).suffix.lower() in {".hdf5", ".h5"}:
-        import h5py
+        from gwmock_data import hdf5
 
-        with h5py.File(path, "w") as handle:
-            dataset = handle.create_dataset("STRAIN", data=np.zeros(1))
-            # The grid, spelled the way the real writer spells it. Without it the stub produces a file
-            # carrying no epoch, which is not something that writer can emit and which gwmock refuses to
-            # declare a layout over -- so a stub that omitted it would be testing a state that cannot
-            # occur.
-            dataset.attrs["t0"] = 0.0
-            dataset.attrs["dt"] = 1.0
-            dataset.attrs["unit"] = "strain"
+        # The grid, spelled the way the real writer spells it. Without it the stub produces a file
+        # carrying no epoch, which is not something that writer can emit and which gwmock refuses to
+        # declare a layout over -- so a stub that omitted it would be testing a state that cannot
+        # occur.
+        attributes = {"t0": 0.0, "dt": 1.0, "unit": "strain"}
+        hdf5.write(hdf5.Group({"STRAIN": hdf5.Dataset(np.zeros(1), attributes)}), path)
         return
     Path(path).write_text("STRAIN")
 
@@ -320,6 +323,7 @@ def test_signal_only_sgwb_plan_validates(tmp_path: Path):
     assert plan.batches[0].simulator_config.signal.source_type == "sgwb"
 
 
+@pytest.mark.requires_gwpy
 @pytest.mark.parametrize("source_type", ["bbh", "bns", "nsbh", "gengli"])
 def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path, source_type: str):
     """The CLI should execute the adapter-backed orchestration path end to end."""
@@ -368,6 +372,7 @@ def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path
     ]
 
 
+@pytest.mark.requires_gwpy
 def test_orchestration_records_injections_and_signal_lookup(monkeypatch, tmp_path: Path):
     """End-to-end: source parameters are recorded per frame and are looked up (#12)."""
     from gwmock.cli.utils.signal_lookup import find_signals, parse_param_filter
@@ -455,6 +460,7 @@ def _fake_multi_detector_config(working_directory: str) -> Config:
     )
 
 
+@pytest.mark.requires_gwpy
 def test_simulate_reproduces_metadata_with_multi_detector_signal_template(monkeypatch, tmp_path: Path):
     """Replay: metadata from a multi-detector ``{{ detectors }}`` signal template re-runs cleanly.
 
@@ -509,6 +515,7 @@ def test_simulate_reproduces_metadata_with_multi_detector_signal_template(monkey
         assert (repro_dir / "output" / "noise" / name).exists()
 
 
+@pytest.mark.requires_gwpy
 def test_a_runs_hdf5_outputs_declare_the_strain_schema(tmp_path: Path):
     """Both halves of a run declare the contract their strain files meet.
 
@@ -1009,6 +1016,7 @@ def test_noise_batch_gwf_per_detector_channel_from_list(monkeypatch, tmp_path: P
     assert result.output_paths["L1"] == tmp_path / "noise" / "noise-0-L1.gwf"
 
 
+@pytest.mark.requires_gwpy
 def test_simulate_command_records_per_detector_channel_ids_in_metadata(monkeypatch, tmp_path: Path):
     """Per-detector channel names from {{ detectors }}:X template are recorded correctly in metadata."""
     FakeNoiseAdapter.stream_open_calls.clear()

@@ -147,22 +147,19 @@ def _run(
 
 def _embedded_document(path: Path) -> dict[str, Any] | None:
     """Return the run metadata an HDF5 artifact carries, or None if it carries none."""
-    import h5py
+    from gwmock_data import hdf5
 
-    with h5py.File(path, "r") as handle:
-        if RUN_METADATA_ATTRIBUTE not in handle.attrs:
-            return None
-        raw = handle.attrs[RUN_METADATA_ATTRIBUTE]
-    return json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else str(raw))
+    attributes = hdf5.read(path, members=[], data=False).attrs
+    if RUN_METADATA_ATTRIBUTE not in attributes:
+        return None
+    return json.loads(str(attributes[RUN_METADATA_ATTRIBUTE]))
 
 
 def _embedded_text(path: Path) -> str:
     """Return the embedded document as the text it is stored as, for a value-level leak scan."""
-    import h5py
+    from gwmock_data import hdf5
 
-    with h5py.File(path, "r") as handle:
-        raw = handle.attrs[RUN_METADATA_ATTRIBUTE]
-    return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+    return str(hdf5.read(path, members=[], data=False).attrs[RUN_METADATA_ATTRIBUTE])
 
 
 def _keys_named(document: Any, name: str) -> list[Any]:
@@ -286,6 +283,7 @@ class TestWhatEmbeddingMustNotBreak:
 
         assert np.load(noise_output).shape == (16,)
 
+    @pytest.mark.requires_gwpy
     def test_a_gwf_output_is_untouched(self, monkeypatch, tmp_path: Path):
         """A frame is composed from a fixed set of fields, so nothing is written into one."""
         _run(monkeypatch, tmp_path, signal_suffix="gwf")

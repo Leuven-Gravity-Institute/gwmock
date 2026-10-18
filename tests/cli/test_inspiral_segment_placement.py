@@ -144,6 +144,7 @@ def _end_time(orchestrator) -> float:
 class TestTheBoundaryRule:
     """The rule itself, with the lead supplied rather than generated."""
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_coalescing_after_the_segment_is_claimed_when_its_waveform_starts_inside(self, tmp_path):
         """This is the defect. Its ``coa_time`` is past the boundary; 3.6 s of its inspiral is not.
 
@@ -159,6 +160,7 @@ class TestTheBoundaryRule:
             "an event whose waveform begins 2.6 s before the boundary belongs to this segment"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_whose_waveform_also_starts_later_is_left_for_the_next_segment(self, tmp_path):
         """The rule must still end the segment, or every remaining event would be pulled forward."""
         orchestrator = _orchestrator(tmp_path)
@@ -167,6 +169,7 @@ class TestTheBoundaryRule:
 
         assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 10.0})
 
+    @pytest.mark.requires_lalsuite
     def test_the_boundary_is_the_waveform_start_and_not_the_coalescence(self, tmp_path):
         """Pins which quantity is compared, by making the two answers differ.
 
@@ -180,6 +183,7 @@ class TestTheBoundaryRule:
         assert orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 4.0})
         assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 6.0})
 
+    @pytest.mark.requires_lalsuite
     def test_a_waveform_starting_exactly_on_the_boundary_goes_to_the_next_segment(self, tmp_path):
         """The comparison is strict, and which way it resolves matters rather than being arbitrary.
 
@@ -193,6 +197,7 @@ class TestTheBoundaryRule:
 
         assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 4.0})
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_without_a_coalescence_time_always_belongs(self, tmp_path):
         """Non-coalescing sources reach the loop unchanged; there is nothing to place them by."""
         orchestrator = _orchestrator(tmp_path)
@@ -204,6 +209,7 @@ class TestTheBoundaryRule:
 class TestWhenTheLeadIsNotAvailable:
     """Unknown must mean unknown. Reading it as zero would drop the whole inspiral silently."""
 
+    @pytest.mark.requires_lalsuite
     def test_an_unknown_lead_falls_back_to_the_coalescence_time(self, tmp_path):
         """``None`` restores the previous behaviour rather than claiming the waveform starts at tc.
 
@@ -219,6 +225,7 @@ class TestWhenTheLeadIsNotAvailable:
             "without a lead the only rule available is coa_time, which is where this started"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_a_query_that_raises_does_not_fail_the_run(self, tmp_path, caplog):
         """Placement must not be the thing that turns an odd catalogue into a crash.
 
@@ -237,6 +244,7 @@ class TestWhenTheLeadIsNotAvailable:
             "the swallowed reason must appear, or a run silently reverts to the cropping behaviour"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_the_fallback_warns_once_for_a_repeated_reason(self, tmp_path, caplog):
         """A catalogue the query cannot read fails identically for every row; say so once."""
         orchestrator = _orchestrator(tmp_path)
@@ -249,6 +257,7 @@ class TestWhenTheLeadIsNotAvailable:
 
         assert caplog.text.count("Cannot establish how long before coalescence") == 1
 
+    @pytest.mark.requires_lalsuite
     def test_a_second_distinct_reason_is_also_reported(self, tmp_path, caplog):
         """Deduplicating by a flag rather than by reason would name the wrong cause.
 
@@ -274,6 +283,7 @@ class TestWhenTheLeadIsNotAvailable:
         assert "Missing required parameter" in caplog.text
         assert "unsupported operand" in caplog.text
 
+    @pytest.mark.requires_lalsuite
     def test_a_run_without_a_signal_adapter_still_walks_the_catalogue(self, tmp_path):
         """Noise-only orchestration reaches this helper through shared code paths."""
         orchestrator = _orchestrator(tmp_path)
@@ -308,6 +318,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
     def _leads(self, end_time: float) -> dict[float, float]:
         return {end_time + 1.0: 10.0, end_time + 2.0: 1.0, end_time + 3.0: 20.0}
 
+    @pytest.mark.requires_lalsuite
     def test_the_batched_walk_reaches_the_long_lead_event_behind_a_short_lead_one(self, tmp_path):
         orchestrator = _orchestrator(tmp_path, "batched")
         end_time = _end_time(orchestrator)
@@ -322,6 +333,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
         assert len(events) == 2
         assert 1 not in event_ids, "event 1's waveform starts after this segment ends"
 
+    @pytest.mark.requires_lalsuite
     def test_the_per_event_loop_reaches_it_too(self, tmp_path):
         """The two loops must agree, or a mode switch mid-run changes which events exist where."""
         orchestrator = _orchestrator(tmp_path, "per-event")
@@ -338,6 +350,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
 
         assert sorted(claimed) == [0, 2]
 
+    @pytest.mark.requires_lalsuite
     def test_the_deferred_event_is_picked_up_by_the_next_segment(self, tmp_path):
         """Consuming out of catalogue order must not skip or repeat the event left behind.
 
@@ -362,6 +375,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
         assert int(orchestrator.population_index) == 3
         assert sorted(first_ids + second_ids) == [0, 1, 2], "every event claimed exactly once"
 
+    @pytest.mark.requires_lalsuite
     def test_events_without_a_coalescence_time_are_never_left_behind(self, tmp_path):
         """They belong to every segment, so they must not sit behind an event that ends the walk."""
         orchestrator = _orchestrator(tmp_path, "batched")
@@ -376,6 +390,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
 
         assert event_ids == [1]
 
+    @pytest.mark.requires_lalsuite
     def test_the_order_is_stable_for_events_sharing_a_start(self, tmp_path):
         """Equal keys keep catalogue order, so provenance and injection order stay reproducible."""
         orchestrator = _orchestrator(tmp_path, "batched")
@@ -389,6 +404,7 @@ class TestConsumptionOrderDoesNotStrandEvents:
 class TestBothLoopsAgree:
     """``population_index`` is checkpointed, so the two execution modes must claim the same events."""
 
+    @pytest.mark.requires_lalsuite
     def test_the_batched_walk_claims_the_same_events_as_the_rule(self, tmp_path):
         """``_events_for_this_segment`` must apply the boundary rule, not its own copy of one."""
         orchestrator = _orchestrator(tmp_path, "batched")
@@ -406,6 +422,7 @@ class TestBothLoopsAgree:
         assert len(events) == 2
         assert int(orchestrator.population_index) == 0, "reading must not advance the checkpointed index"
 
+    @pytest.mark.requires_lalsuite
     def test_the_per_event_loop_claims_the_same_events(self, tmp_path):
         """The same catalogue through the other loop, so a mode switch cannot skip or repeat."""
         orchestrator = _orchestrator(tmp_path, "batched")
@@ -442,6 +459,7 @@ class TestNothingIsDiscarded:
         second = orchestrator.simulate().signal_segment
         return first, second
 
+    @pytest.mark.requires_lalsuite
     def test_a_waveform_straddling_the_boundary_keeps_all_of_its_energy(self, tmp_path, caplog):
         """No sample is dropped, and the check is the strain itself rather than the absence of a log.
 
@@ -497,6 +515,7 @@ class TestNothingIsDiscarded:
             f"{100.0 * (1.0 - placed_energy / expected_energy):.2f}% of the waveform"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_the_event_is_attributed_to_the_segment_its_waveform_starts_in(self, tmp_path):
         """Provenance follows placement: the frame listing the event is the one its data begins in.
 
@@ -531,6 +550,7 @@ class TestNothingIsDiscarded:
 class TestWhatAConsumerSees:
     """The attribution change reaches serialized metadata and the lookup, so it is checked there."""
 
+    @pytest.mark.requires_lalsuite
     def test_a_signal_crossing_a_boundary_is_recorded_against_both_segments(self, tmp_path):
         """The metadata a consumer reads must name every frame the signal is in, not only the first.
 
@@ -637,6 +657,7 @@ class TestWhatAConsumerSees:
 class TestAgainstRealGeneration:
     """The predicted lead has to be the lead generation actually produces, or placement is wrong."""
 
+    @pytest.mark.requires_lalsuite
     def test_the_predicted_lead_matches_the_generated_buffer(self, tmp_path):
         """Measured against the produced ``TimeSeries``, not against another prediction.
 
@@ -662,6 +683,7 @@ class TestAgainstRealGeneration:
             f"predicted lead {predicted} s but generation starts {measured} s before coalescence"
         )
 
+    @pytest.mark.requires_lalsuite
     def test_an_event_just_past_the_boundary_is_claimed_using_the_real_query(self, tmp_path):
         """End to end through the real adapter: no stub, no supplied lead."""
         orchestrator = _orchestrator(tmp_path)
@@ -694,6 +716,7 @@ class TestAnOffGridCoalescenceTime:
         second = orchestrator.simulate().signal_segment
         return np.concatenate([np.asarray(first), np.asarray(second)], axis=1)
 
+    @pytest.mark.requires_lalsuite
     def test_the_off_grid_run_is_the_on_grid_run_sinc_shifted(self, tmp_path, caplog):
         """Equal, across the seam, to the on-grid run resampled by the same sub-sample shift.
 

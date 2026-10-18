@@ -323,6 +323,7 @@ def test_the_orchestrator_reports_this_batchs_glitches_in_its_metadata(tmp_path:
     assert orchestrator.metadata["orchestration"]["noise"]["glitch_injections"] == []
 
 
+@pytest.mark.requires_gwpy
 def test_an_end_to_end_run_indexes_its_glitches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A full orchestration run writes the rows, the index, and answers the lookup.
 
