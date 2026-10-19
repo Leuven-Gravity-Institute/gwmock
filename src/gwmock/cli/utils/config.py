@@ -179,7 +179,9 @@ class SignalConfig(BaseModel):
         description=(
             "Which waveform library generates the polarizations: a built-in alias "
             "('lal', 'pycbc', 'ripple', 'gwsignal'), an entry point in 'gwmock.waveform', or a "
-            "'module:Class' reference. Defaults to LAL. Note this selects a library, not a "
+            "'module:Class' reference. Defaults to LAL where lalsuite is installed; where it is not, to ripple "
+            "if the jax extra is installed, and otherwise the run stops with an error naming both. Note this "
+            "selects a library, not a "
             "compute device: 'ripple' generates with ripple through the same per-event path."
         ),
     )

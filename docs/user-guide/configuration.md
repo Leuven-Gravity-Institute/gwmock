@@ -380,11 +380,14 @@ and which `gwmock validate` reports separately from the byte hash.
 ### Choosing the waveform library
 
 `signal.waveform-backend` selects which library generates the polarizations —
-`lal` (the default), `pycbc`, `ripple`, or `gwsignal`. It also accepts an entry
-point in the `gwmock.waveform` group or a `module:Class` reference, so a
-third-party backend can be plugged in the same way. Such a backend is matched by
-its public surface — `available_approximants` and `generate_td_waveform` — and
-does not have to subclass gwmock-signal's `WaveformBackend`.
+`lal`, `pycbc`, `ripple`, or `gwsignal`. The default is `lal` where lalsuite is
+installed and `ripple` where it is not (Python 3.15, for now; it needs the `jax`
+extra, and a run without either stops with an error saying how to install them).
+It also accepts an entry point in the `gwmock.waveform` group or a
+`module:Class` reference, so a third-party backend can be plugged in the same
+way. Such a backend is matched by its public surface — `available_approximants`
+and `generate_td_waveform` — and does not have to subclass gwmock-signal's
+`WaveformBackend`.
 
 Constructor arguments for that backend go under
 `signal.waveform-backend-arguments`. These are distinct from `signal.arguments`,

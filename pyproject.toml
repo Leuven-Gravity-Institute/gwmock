@@ -55,7 +55,8 @@ dependencies = [
   # 0.18.0 shares gwmock-data's time series, so the series gwmock passes it (backgrounds, the
   # strain written as a stack) are gwmock-data's rather than GWpy's; earlier releases require GWpy.
   # 0.19.0 writes and reads that stack as HDF5 without h5py.
-  "gwmock-signal>=0.19.0",
+  # 0.20.0 falls back to the ripple waveform backend where lalsuite is not installed.
+  "gwmock-signal>=0.20.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -65,8 +66,9 @@ dependencies = [
   # below it a config using either is refused with a `TypeError` rather than run.
   # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet;
   # 0.18.0 (noise) and 0.16.0 (pop) read and write HDF5 without it.
-  "gwmock-noise>=0.18.0",
-  "gwmock-pop>=0.16.0",
+  # 0.18.1 (noise) and 0.16.1 (pop) import lazily, so importing them loads no SciPy or NetworkX.
+  "gwmock-noise>=0.18.1",
+  "gwmock-pop>=0.16.1",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "pydantic>=2.10.0",

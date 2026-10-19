@@ -30,10 +30,25 @@ from gwmock.simulator.seeds import derive_seed
 from gwmock.simulator.state import StateAttribute
 from gwmock.strain_schema import declare_strain_schema
 
-#: Waveform library used when a config gives ``waveform-backend-arguments`` but names no
-#: backend. It must stay the same library ``WaveformFactory`` defaults to internally, or
-#: supplying arguments would quietly change which library generates the waveforms.
-_DEFAULT_WAVEFORM_BACKEND = "lal"
+
+def _default_waveform_backend_name() -> str:
+    """Waveform library used when a config gives ``waveform-backend-arguments`` but names no backend.
+
+    It must be the library gwmock-signal's ``WaveformFactory`` defaults to, or supplying arguments would
+    quietly change which library generates the waveforms. That default is decided in one place,
+    gwmock-signal's ``default_waveform_backend`` -- LAL where lalsuite is installed, ripple where it is
+    not -- so it is asked rather than restated: its warning when it falls back to ripple, and its error
+    naming both remedies when neither is installed, reach this path too. The instance it builds is
+    discarded; the backend is then constructed with the configured arguments.
+
+    Returns:
+        ``"ripple"`` if the default is the ripple backend, otherwise ``"lal"``.
+    """
+    from gwmock_signal.waveform.backends import RippleBackend  # noqa: PLC0415
+    from gwmock_signal.waveform.factory import default_waveform_backend  # noqa: PLC0415
+
+    return "ripple" if isinstance(default_waveform_backend(), RippleBackend) else "lal"
+
 
 #: Sentinel recorded when a batched config needed ripple for its placement queries and could not
 #: have it. Distinct from ``None`` -- which means nothing was substituted and the default genuinely
@@ -487,7 +502,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         if waveform_backend_name is not None or waveform_backend_arguments:
             backend_arguments["waveform_backend"] = instantiate_backend(
                 "waveform",
-                waveform_backend_name if waveform_backend_name is not None else _DEFAULT_WAVEFORM_BACKEND,
+                waveform_backend_name if waveform_backend_name is not None else _default_waveform_backend_name(),
                 init_kwargs=waveform_backend_arguments,
             )
         # `projection-backend` reaches gwmock-signal as a constructor argument, and only when the
