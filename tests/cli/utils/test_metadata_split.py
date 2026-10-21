@@ -120,6 +120,29 @@ class TestTheSplit:
 
         assert shareable["by_path"] == {"a": 1, "a~2": 2}
 
+    @pytest.mark.parametrize(
+        "mapping",
+        [
+            {"/x/a": 1, "a": 2},
+            {"a": 2, "/x/a": 1},
+            {"/x/a": 1, "/y/a": 2, "a": 3},
+            {"a": 3, "/x/a": 1, "a~2": 4, "/y/a": 2},
+            {"/x/a": {"/p/b": 1, "b": 2}, "a": {"b": 3, "/q/b": {"/r/c": 4, "c": 5}}},
+        ],
+    )
+    def test_a_key_that_already_has_a_reduced_spelling_survives_the_rebuild(self, mapping: dict) -> None:
+        """A renamed key can land on another key's name, which is then renamed in turn; the rebuild
+        has to restore every key of such a chain rather than overwrite one with another."""
+        record = {"m": mapping, "nested": {"deeper": [mapping]}}
+
+        parts = split_metadata_record(record, base_directory=BASE, record_file_name="r.json")
+
+        assert combine_metadata_records(parts.shareable, parts.private) == record
+        assert (
+            combine_metadata_records(json.loads(json.dumps(parts.shareable)), json.loads(json.dumps(parts.private)))
+            == record
+        )
+
     def test_colliding_keys_outside_the_working_directory_name_no_directory(self) -> None:
         """A second key with a taken file name is told apart by a suffix, never by a path out of the
         working directory -- which would spell the home directory it came from."""
@@ -293,6 +316,10 @@ _FREE_TEXT = [
 ]
 
 
+#: The cases of :data:`_FREE_TEXT` that are reduced, numbered, with what they reduce to.
+_REDUCED = list(enumerate((text, expected) for text, expected in _FREE_TEXT if expected is not None))
+
+
 class TestFreeText:
     @pytest.mark.parametrize(("text", "expected"), _FREE_TEXT)
     def test_paths_in_text_are_reduced(self, text: str, expected: str | None) -> None:
@@ -308,6 +335,16 @@ class TestFreeText:
             "nested": {"deeper": [{"text": text, "pair": [text, text]} for text in texts]},
             "by_text": {text: index for index, text in enumerate(texts)},
             "source_files": {text: {"author": "alice", "note": text} for text in texts},
+            # Keys that already have the spelling another key reduces to -- before it and after it,
+            # with a `~2` spelling taken too -- so the rebuild has to unwind chains of renames.
+            "collisions": {
+                **{
+                    f"bare-first-{index}": {reduced: 1, text: 2, f"{reduced}~2": 3}
+                    for index, (text, reduced) in _REDUCED
+                },
+                **{f"bare-last-{index}": {text: 1, reduced: 2} for index, (text, reduced) in _REDUCED},
+                "nested": {"deeper": [{text: {reduced: {text: 0, reduced: 1}}} for _, (text, reduced) in _REDUCED]},
+            },
         }
 
         parts = split_metadata_record(record, base_directory=BASE, record_file_name="r.json")

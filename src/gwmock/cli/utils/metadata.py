@@ -1035,12 +1035,20 @@ def combine_metadata_records(shareable: dict[str, Any], private: dict[str, Any])
             container[int(last)] = value
         else:
             container[last] = value
+    # Two passes, because renames can form a chain: `/x/a` became `a`, so the key that was already
+    # `a` became `a~2`. Restoring them one at a time moves `a~2` back to `a` on top of the value
+    # `/x/a` is still parked under, and an entry is lost. So every renamed entry is taken out first
+    # -- deepest first, while the shareable keys its pointer walks through are all still in place --
+    # and only then put back under its original name.
+    detached: list[tuple[dict[str, Any], str, Any]] = []
     for rename in reversed(private.get("renamed_keys") or []):
         container = document
         for token in _pointer_tokens(rename["object"]):
             container = container[int(token)] if isinstance(container, list) else container[token]
         if rename["key"] in container:
-            container[rename["original"]] = container.pop(rename["key"])
+            detached.append((container, rename["original"], container.pop(rename["key"])))
+    for container, original, value in detached:
+        container[original] = value
     return document
 
 
