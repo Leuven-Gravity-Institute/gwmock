@@ -59,17 +59,29 @@ into the shareable record (`/config/globals/working-directory`, `/author`,
 `/host`, ...), with any renamed mapping key under `renamed_keys`. Together the
 two files rebuild the combined record exactly.
 
-Paths are recognised wherever they occur -- as a whole value, as a mapping key,
-or inside text after any punctuation (`source:/home/...`, `a,/opt/...`,
-`(C:\Users\...)`). Besides POSIX and Windows drive paths this covers `file://`
-URIs, with or without a host, UNC paths (`\\server\share\...`,
-`//server/share/...` or a mixture), home paths (`~/...`, `~user/...`,
-`~user\...`) and a bare `~user`, which becomes `~`. A `~` that does not start a
-user name (`~5 Hz`, `~0.3`, `x ~ y`) is left alone. A URI naming another host, a
-UNC path and a home path are always reduced to their file name, since the host,
-the server and the user are what is withheld; other URIs (`https://...`) are
-left alone. When two mapping keys reduce to the same file name, the later ones
-become `a~2.h5`, `a~3.h5`, ... rather than a longer path, which would spell the
+Paths are recognised as a whole value, as a mapping key, and inside text where a
+path can begin: at the start of the value, or after whitespace, a quote, `=`,
+`:`, `,`, `;` or an opening bracket (`source:/home/...`, `a,/opt/...`,
+`(C:\Users\...)`). A `/` after a letter, digit, `+`, `-`, `^`, `\` or a closing
+bracket is read as notation, not as the start of a path, so `h_+/h_x`,
+`(h_+)/(h_x)`, `m1/m2` and `strain/Hz` are left alone. Besides POSIX and Windows
+drive paths this covers `file://` URIs, with or without a host, UNC paths
+(`\\server\share\...`, `//server/share/...` or a mixture) and home paths. A URI
+naming another host and a UNC path are always reduced to their file name, since
+the host and the server are what is withheld; other URIs (`https://...`,
+`x://...`) are left alone.
+
+`~/...` is always a home path and is reduced to its file name. `~name`, bare or
+followed by `/` or `\`, is a home path only when `name` is an account on the
+machine writing the record -- the current user, or on POSIX systems any name in
+the password database -- and is then reduced (a bare `~name` to `~`). **A
+`~name` that is not an account on the writing machine is left as written**: it
+cannot be told apart from notation such as `~Msun`, `~pi/2` or `~M_\odot`, so a
+home directory of an account that exists only on another machine is not
+recognised.
+
+When two mapping keys reduce to the same file name, the later ones become
+`a~2.h5`, `a~3.h5`, ... rather than a longer path, which would spell the
 directories outside the working directory; the original keys are in
 `renamed_keys`. To rebuild the combined record:
 
@@ -85,9 +97,12 @@ complete = combine_metadata_records(shareable, private)
 
 The private file is created readable and writable by its owner only (mode `0600`
 on POSIX systems, whatever the umask), so on a shared filesystem other users
-cannot read the author, host name and paths in it. The shareable record is
-written with the ordinary mode for new files: it is the one meant to be read by
-others.
+cannot read the author, host name and paths in it. Each write goes to its own
+temporary file beside the target (`.<name>.<random>.tmp`), which is then renamed
+into place, so concurrent writers never leave a mixture of two writes. A writer
+killed mid-write can leave such a temporary file behind; it is safe to delete.
+The shareable record is written with the ordinary mode for new files: it is the
+one meant to be read by others.
 
 The private file also carries a random `nonce`. The shareable record publishes
 the private file's SHA-256, and what the private file holds -- a user name, a
