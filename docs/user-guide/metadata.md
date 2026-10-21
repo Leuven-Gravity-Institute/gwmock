@@ -62,14 +62,16 @@ two files rebuild the combined record exactly.
 Paths are recognised wherever they occur -- as a whole value, as a mapping key,
 or inside text after any punctuation (`source:/home/...`, `a,/opt/...`,
 `(C:\Users\...)`). Besides POSIX and Windows drive paths this covers `file://`
-URIs, with or without a host, UNC paths (`\\server\share\...`) and home paths
-(`~/...`, `~user/...`). A URI naming another host, a UNC path and a home path
-are always reduced to their file name, since the host, the server and the user
-are what is withheld; other URIs (`https://...`) are left alone. When two
-mapping keys reduce to the same file name, the later ones become `a~2.h5`,
-`a~3.h5`, ... rather than a longer path, which would spell the directories
-outside the working directory; the original keys are in `renamed_keys`. To
-rebuild the combined record:
+URIs, with or without a host, UNC paths (`\\server\share\...`,
+`//server/share/...` or a mixture), home paths (`~/...`, `~user/...`,
+`~user\...`) and a bare `~user`, which becomes `~`. A `~` that does not start a
+user name (`~5 Hz`, `~0.3`, `x ~ y`) is left alone. A URI naming another host, a
+UNC path and a home path are always reduced to their file name, since the host,
+the server and the user are what is withheld; other URIs (`https://...`) are
+left alone. When two mapping keys reduce to the same file name, the later ones
+become `a~2.h5`, `a~3.h5`, ... rather than a longer path, which would spell the
+directories outside the working directory; the original keys are in
+`renamed_keys`. To rebuild the combined record:
 
 ```python
 import json
@@ -80,6 +82,12 @@ shareable = json.load(open("metadata/orchestration-0.metadata.json"))
 private = json.load(open("metadata/orchestration-0.private.json"))
 complete = combine_metadata_records(shareable, private)
 ```
+
+The private file is created readable and writable by its owner only (mode `0600`
+on POSIX systems, whatever the umask), so on a shared filesystem other users
+cannot read the author, host name and paths in it. The shareable record is
+written with the ordinary mode for new files: it is the one meant to be read by
+others.
 
 The private file also carries a random `nonce`. The shareable record publishes
 the private file's SHA-256, and what the private file holds -- a user name, a
