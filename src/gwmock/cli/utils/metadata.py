@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import platform
 import re
 import secrets
@@ -593,25 +594,30 @@ _PATH_END = r"""\s"'<>|,;)\]}"""
 #:
 #: - ``uri``: anything ``scheme://...``. A ``file`` URI is reduced (with or without a host); every
 #:   other scheme -- ``https`` above all -- is left as it is.
-#: - ``unc``: a Windows UNC path, ``\\server\share\...``, reduced to its file name: the server is a
-#:   machine name.
+#: - ``unc``: a UNC path -- ``\\server\share\...``, ``//server/share/...`` or a mixture of the
+#:   two -- reduced to its file name: the server is a machine name. A ``//`` after a URI scheme
+#:   belongs to the ``uri`` token, which is tried first.
 #: - ``drive``: a Windows drive path, ``C:\...`` or ``C:/...``.
-#: - ``home``: ``~/...`` or ``~user/...``, a home directory, which is never inside the working
-#:   directory as far as a shared record can tell, and names a user.
+#: - ``home``: ``~/...`` or ``~user/...`` (either separator), a home directory, which is never
+#:   inside the working directory as far as a shared record can tell, and names a user.
+#: - ``user``: a bare ``~user`` at a word boundary, which names the user alone and becomes ``~``. A
+#:   user name starts with a letter or ``_``, so ``~5 Hz``, ``~0.3`` and ``x ~ y`` are not one, and
+#:   the boundary keeps ``a~2.h5`` (a disambiguated key) intact.
 #: - ``posix``: an absolute POSIX path; a lone ``/`` (``1 / Hz``) is not one.
 _PATH_TOKEN = re.compile(
     rf"""
     (?P<uri>\b[A-Za-z][A-Za-z0-9+.\-]+://[^\s"'<>]*)
-  | {_PATH_BOUNDARY}(?P<unc>\\\\[^\s\\"'<>|]+\\[^{_PATH_END}]*)
+  | {_PATH_BOUNDARY}(?P<unc>(?:\\\\|//)[^\s\\/"'<>|]+[\\/][^{_PATH_END}]*)
   | {_PATH_BOUNDARY}(?P<drive>[A-Za-z]:[\\/][^{_PATH_END}]*)
-  | {_PATH_BOUNDARY}(?P<home>~[A-Za-z0-9_.\-]*/[^{_PATH_END}:]*)
+  | {_PATH_BOUNDARY}(?P<home>~(?:[A-Za-z_][A-Za-z0-9_.\-]*)?[\\/][^{_PATH_END}:]*)
+  | {_PATH_BOUNDARY}(?P<user>~[A-Za-z_][A-Za-z0-9_.\-]*)(?![A-Za-z0-9_\-~/\\])
   | {_PATH_BOUNDARY}(?P<posix>/[^{_PATH_END}:/][^{_PATH_END}:]*)
     """,
     re.VERBOSE,
 )
 
 #: A whole value that is a home path: ``~``, ``~user``, or either followed by ``/...``.
-_HOME_PATH = re.compile(r"~[A-Za-z0-9_.\-]*(?:/.*)?")
+_HOME_PATH = re.compile(r"~(?:[A-Za-z_][A-Za-z0-9_.\-]*)?(?:[\\/].*)?")
 
 
 class SplitRecord(NamedTuple):
@@ -730,16 +736,17 @@ class _PathScrubber:
         and the second a machine, and neither can be compared with the working directory.
         """
         if text.startswith("~"):
-            name = PurePosixPath(text).name
+            name = PureWindowsPath(text).name
             return "~" if name.startswith("~") or not name else name
+        if text.startswith(("\\\\", "//")):
+            return PureWindowsPath(text).name or "."
         path: PurePath = PurePosixPath(text) if text.startswith("/") else PureWindowsPath(text)
-        if not text.startswith("\\\\"):
-            for base in self.bases:
-                try:
-                    relative = path.relative_to(base)
-                except (ValueError, TypeError):
-                    continue
-                return relative.as_posix() or "."
+        for base in self.bases:
+            try:
+                relative = path.relative_to(base)
+            except (ValueError, TypeError):
+                continue
+            return relative.as_posix() or "."
         return path.name or "."
 
     def file_uri(self, text: str) -> str:
@@ -1005,7 +1012,9 @@ def write_private_metadata(private: dict[str, Any], private_file: Path | str) ->
     """Write a private details document, returning the SHA-256 (hex) of the bytes written.
 
     JSON or YAML by the file's suffix, as for a record. Written to a temporary name and renamed, so a
-    reader never meets a half-written file under the name the shareable record will point at.
+    reader never meets a half-written file under the name the shareable record will point at, and
+    created with mode 0600 (owner read and write only) where the platform has POSIX modes. The
+    shareable record keeps the ordinary mode: it is the file meant to be read by others.
 
     Args:
         private: The document from :func:`split_metadata_record`.
@@ -1018,8 +1027,21 @@ def write_private_metadata(private: dict[str, Any], private_file: Path | str) ->
     private_file.parent.mkdir(parents=True, exist_ok=True)
     payload = _serialise(private, private_file)
     temporary = private_file.with_name(f".{private_file.name}.tmp")
-    temporary.write_bytes(payload)
-    temporary.replace(private_file)
+    # Owner-only from the moment it exists: the file names a user, a host and directories, and on a
+    # shared filesystem the umask default (often 0644) would let every user read it. Created
+    # exclusively, so it is never opened through a link someone else placed at the name; a stale
+    # temporary from an interrupted write is removed first.
+    temporary.unlink(missing_ok=True)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    os.replace(temporary, private_file)
     return hashlib.sha256(payload).hexdigest()
 
 

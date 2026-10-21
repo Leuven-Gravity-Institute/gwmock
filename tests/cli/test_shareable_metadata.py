@@ -29,6 +29,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -231,6 +232,18 @@ class TestThePrivateFile:
         assert private["values"]["/config/globals/working-directory"] == str(tmp_path / "run")
         assert private["values"]["/config/orchestration/population/arguments/path"] == str(tmp_path / "population.h5")
         assert private["values"]["/host"]["platform"] == platform.platform()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+    def test_only_its_owner_can_read_it(self, monkeypatch, tmp_path: Path, canaries) -> None:
+        """The shareable record keeps the ordinary mode; the private file is 0600 whatever the umask."""
+        previous = os.umask(0o022)
+        try:
+            metadata_directory = _run(monkeypatch, tmp_path)
+        finally:
+            os.umask(previous)
+
+        assert stat.S_IMODE((metadata_directory / "orchestration-0.private.json").stat().st_mode) == 0o600
+        assert stat.S_IMODE((metadata_directory / "orchestration-0.metadata.json").stat().st_mode) == 0o644
 
     def test_it_is_not_taken_for_a_record(self, monkeypatch, tmp_path: Path, canaries) -> None:
         """Every reader finds records by ``*.metadata.json``; the private file must not match."""
