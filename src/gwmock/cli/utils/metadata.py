@@ -18,6 +18,7 @@ complete record instead would put exactly those details into every released data
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
 import logging
@@ -26,6 +27,7 @@ import os
 import platform
 import re
 import secrets
+import tempfile
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 from urllib.parse import unquote, urlparse
@@ -579,45 +581,74 @@ _PERSONAL_KEYS = ("author", "email")
 #: carry their authors and kernel builds into a shareable merged record.
 _NESTED_RECORDS_KEY = "source_files"
 
-#: A character that can sit *inside* a path or a word. A path token is only recognised where the
-#: character before it is not one of these -- the start of the text, whitespace, or any punctuation
-#: (``:``, ``,``, ``=``, a quote, a bracket, ...) -- so ``source:/home/x`` is found while
-#: ``strain/Hz`` and ``relative/a.h5`` are not.
-_PATH_BOUNDARY = r"(?<![A-Za-z0-9_.~\-/\\])"
+#: Where a path may begin: the start of the text, or right after whitespace, a quote, ``=``, ``:``,
+#: ``,``, ``;`` or an opening bracket (``(``, ``[``, ``{``, ``<``). An allow-list rather than a
+#: deny-list, because a ``/`` after anything else is far more often notation than a path: ``h_+/h_x``,
+#: ``(h_+)/(h_x)``, ``h_{+}/h_{x}``, ``x^/y``, ``m1/m2``, ``strain/Hz``. ``source:/home/x`` and
+#: ``(C:\Users\x)`` are still found.
+_PATH_BOUNDARY = r"""(?:^|(?<=[\s"'=:,;(\[{<]))"""
 
 #: Where a path token ends: whitespace, quotes, angle brackets and pipes, and the punctuation that
-#: separates items in text (``,`` ``;`` ``:`` and closing brackets). A trailing ``.`` is kept in the
-#: token and given back afterwards (see :meth:`_PathScrubber.scrub`).
+#: separates items in text (``,`` ``;`` and closing brackets; ``:`` too for POSIX and home paths). A
+#: trailing ``.`` is kept in the token and given back afterwards (see :meth:`_PathScrubber._token`).
 _PATH_END = r"""\s"'<>|,;)\]}"""
+
+#: A user name as it may follow ``~``.
+_USER_NAME = r"[A-Za-z_][A-Za-z0-9_.\-]*"
 
 #: Every path-like token in free text, in one pass so that each character belongs to one token:
 #:
-#: - ``uri``: anything ``scheme://...``. A ``file`` URI is reduced (with or without a host); every
-#:   other scheme -- ``https`` above all -- is left as it is.
+#: - ``uri``: anything ``scheme://...``, a scheme being one letter or more. A ``file`` URI is reduced
+#:   (with or without a host); every other scheme -- ``https`` above all -- is left as it is. A
+#:   drive (``C:\``, ``C:/``) is not a scheme: a scheme is followed by ``://``.
 #: - ``unc``: a UNC path -- ``\\server\share\...``, ``//server/share/...`` or a mixture of the
-#:   two -- reduced to its file name: the server is a machine name. A ``//`` after a URI scheme
-#:   belongs to the ``uri`` token, which is tried first.
+#:   two -- reduced to its file name: the server is a machine name.
 #: - ``drive``: a Windows drive path, ``C:\...`` or ``C:/...``.
-#: - ``home``: ``~/...`` or ``~user/...`` (either separator), a home directory, which is never
-#:   inside the working directory as far as a shared record can tell, and names a user.
-#: - ``user``: a bare ``~user`` at a word boundary, which names the user alone and becomes ``~``. A
-#:   user name starts with a letter or ``_``, so ``~5 Hz``, ``~0.3`` and ``x ~ y`` are not one, and
-#:   the boundary keeps ``a~2.h5`` (a disambiguated key) intact.
+#: - ``home``: ``~``, ``~/...``, ``~name`` or ``~name/...`` (either separator). ``~/`` is always a
+#:   home directory. ``~name`` is one only when *name* is an account on the writing machine (see
+#:   :func:`_is_account`); otherwise it is notation -- ``~Msun``, ``~pi/2``, ``~M_\odot``,
+#:   ``~O(v/c)`` -- and is left exactly as written.
 #: - ``posix``: an absolute POSIX path; a lone ``/`` (``1 / Hz``) is not one.
 _PATH_TOKEN = re.compile(
     rf"""
-    (?P<uri>\b[A-Za-z][A-Za-z0-9+.\-]+://[^\s"'<>]*)
+    (?P<uri>\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]*)
   | {_PATH_BOUNDARY}(?P<unc>(?:\\\\|//)[^\s\\/"'<>|]+[\\/][^{_PATH_END}]*)
   | {_PATH_BOUNDARY}(?P<drive>[A-Za-z]:[\\/][^{_PATH_END}]*)
-  | {_PATH_BOUNDARY}(?P<home>~(?:[A-Za-z_][A-Za-z0-9_.\-]*)?[\\/][^{_PATH_END}:]*)
-  | {_PATH_BOUNDARY}(?P<user>~[A-Za-z_][A-Za-z0-9_.\-]*)(?![A-Za-z0-9_\-~/\\])
+  | {_PATH_BOUNDARY}(?P<home>~(?:{_USER_NAME}(?:[\\/][^{_PATH_END}:]*)?|[\\/][^{_PATH_END}:]*))
   | {_PATH_BOUNDARY}(?P<posix>/[^{_PATH_END}:/][^{_PATH_END}:]*)
     """,
     re.VERBOSE,
 )
 
-#: A whole value that is a home path: ``~``, ``~user``, or either followed by ``/...``.
-_HOME_PATH = re.compile(r"~(?:[A-Za-z_][A-Za-z0-9_.\-]*)?(?:[\\/].*)?")
+#: The start of a URI: a scheme of one letter or more, then ``://``.
+_URI_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
+
+#: A home token split into the user name (if any) and the rest.
+_HOME_PARTS = re.compile(rf"~({_USER_NAME})?(.*)", re.DOTALL)
+
+
+def _is_account(name: str) -> bool:
+    """Return whether *name* is a user account on this machine, which makes ``~name`` a home path.
+
+    The current user always is. On POSIX any name the password database knows is too; elsewhere
+    only the current user is recognised. A ``~name`` that is no account here is left as written in
+    the shareable record -- it cannot be told from notation such as ``~Msun`` -- which is the limit
+    the guide states.
+    """
+    try:
+        if name == getpass.getuser():
+            return True
+    except (KeyError, OSError, ImportError):
+        pass
+    if os.name != "posix":
+        return False
+    try:
+        import pwd  # noqa: PLC0415  # POSIX only
+
+        pwd.getpwnam(name)
+    except (KeyError, ImportError):
+        return False
+    return True
 
 
 class SplitRecord(NamedTuple):
@@ -703,13 +734,17 @@ def _pointer_tokens(pointer: str) -> list[str]:
 
 
 def _is_absolute_path(text: str) -> bool:
-    """Return whether *text* is, as a whole, an absolute path: POSIX, Windows drive or UNC, or home."""
+    """Return whether *text* is, as a whole, an absolute path: POSIX, Windows drive or UNC.
+
+    A home path is not decided here: whether ``~name`` is one depends on *name* (see
+    :func:`_is_account`), and the token pass in :meth:`_PathScrubber.scrub` decides it.
+    """
     if not text or "\n" in text:
         return False
     if text.startswith("/") and len(text) > 1:
         return True
-    if _HOME_PATH.fullmatch(text):
-        return True
+    if _URI_SCHEME.match(text):
+        return False  # `x://host/...` is a URI with a one-letter scheme, not drive `x:`
     return PureWindowsPath(text).is_absolute() and bool(PureWindowsPath(text).drive)
 
 
@@ -780,6 +815,13 @@ class _PathScrubber:
             if not body.lower().startswith("file://"):
                 return token
             return self.file_uri(body) + trailing
+        if kind == "home":
+            parts = _HOME_PARTS.fullmatch(body)
+            name, rest = (parts.group(1), parts.group(2)) if parts else (None, "")
+            if name is not None and not _is_account(name):
+                return token
+            if not rest.strip("\\/"):
+                return "~" + trailing
         return self.relative(body) + trailing
 
 
@@ -1026,22 +1068,23 @@ def write_private_metadata(private: dict[str, Any], private_file: Path | str) ->
     private_file = Path(private_file)
     private_file.parent.mkdir(parents=True, exist_ok=True)
     payload = _serialise(private, private_file)
-    temporary = private_file.with_name(f".{private_file.name}.tmp")
-    # Owner-only from the moment it exists: the file names a user, a host and directories, and on a
-    # shared filesystem the umask default (often 0644) would let every user read it. Created
-    # exclusively, so it is never opened through a link someone else placed at the name; a stale
-    # temporary from an interrupted write is removed first.
-    temporary.unlink(missing_ok=True)
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # A temporary file of its own for every write, in the target's directory so the rename is atomic:
+    # concurrent writers then each publish one complete payload, and the last rename wins. mkstemp
+    # creates it exclusively and owner-only (0600) -- the file names a user, a host and directories,
+    # and the umask default (often 0644) would let every user on a shared filesystem read it.
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=private_file.parent, prefix=f".{private_file.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        os.replace(temporary, private_file)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
-    os.replace(temporary, private_file)
     return hashlib.sha256(payload).hexdigest()
 
 
