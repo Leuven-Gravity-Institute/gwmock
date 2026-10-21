@@ -57,7 +57,19 @@ host name, the full platform string and the working directory at its top level,
 for a person to read, and under `values` every original value at a JSON pointer
 into the shareable record (`/config/globals/working-directory`, `/author`,
 `/host`, ...), with any renamed mapping key under `renamed_keys`. Together the
-two files rebuild the combined record exactly:
+two files rebuild the combined record exactly.
+
+Paths are recognised wherever they occur -- as a whole value, as a mapping key,
+or inside text after any punctuation (`source:/home/...`, `a,/opt/...`,
+`(C:\Users\...)`). Besides POSIX and Windows drive paths this covers `file://`
+URIs, with or without a host, UNC paths (`\\server\share\...`) and home paths
+(`~/...`, `~user/...`). A URI naming another host, a UNC path and a home path
+are always reduced to their file name, since the host, the server and the user
+are what is withheld; other URIs (`https://...`) are left alone. When two
+mapping keys reduce to the same file name, the later ones become `a~2.h5`,
+`a~3.h5`, ... rather than a longer path, which would spell the directories
+outside the working directory; the original keys are in `renamed_keys`. To
+rebuild the combined record:
 
 ```python
 import json
