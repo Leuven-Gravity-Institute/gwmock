@@ -22,7 +22,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import platform
 import re
 import secrets
@@ -579,15 +578,40 @@ _PERSONAL_KEYS = ("author", "email")
 #: carry their authors and kernel builds into a shareable merged record.
 _NESTED_RECORDS_KEY = "source_files"
 
-#: A path-like token inside free text: an absolute POSIX path beginning at the start of the string or
-#: after whitespace, a quote, ``=`` or an opening bracket, with at least one character after the slash.
-_EMBEDDED_POSIX_PATH = re.compile(r"""(?:^|(?<=[\s"'=(\[]))(/[^\s"'\])]+)""")
+#: A character that can sit *inside* a path or a word. A path token is only recognised where the
+#: character before it is not one of these -- the start of the text, whitespace, or any punctuation
+#: (``:``, ``,``, ``=``, a quote, a bracket, ...) -- so ``source:/home/x`` is found while
+#: ``strain/Hz`` and ``relative/a.h5`` are not.
+_PATH_BOUNDARY = r"(?<![A-Za-z0-9_.~\-/\\])"
 
-#: A ``file://`` URI inside free text, with the absolute path it names.
-_EMBEDDED_FILE_URI = re.compile(r"""file://(/[^\s"'\])]*)""")
+#: Where a path token ends: whitespace, quotes, angle brackets and pipes, and the punctuation that
+#: separates items in text (``,`` ``;`` ``:`` and closing brackets). A trailing ``.`` is kept in the
+#: token and given back afterwards (see :meth:`_PathScrubber.scrub`).
+_PATH_END = r"""\s"'<>|,;)\]}"""
 
-#: The same for a Windows drive path.
-_EMBEDDED_WINDOWS_PATH = re.compile(r"""(?:^|(?<=[\s"'=(\[]))([A-Za-z]:[\\/][^\s"'\])]*)""")
+#: Every path-like token in free text, in one pass so that each character belongs to one token:
+#:
+#: - ``uri``: anything ``scheme://...``. A ``file`` URI is reduced (with or without a host); every
+#:   other scheme -- ``https`` above all -- is left as it is.
+#: - ``unc``: a Windows UNC path, ``\\server\share\...``, reduced to its file name: the server is a
+#:   machine name.
+#: - ``drive``: a Windows drive path, ``C:\...`` or ``C:/...``.
+#: - ``home``: ``~/...`` or ``~user/...``, a home directory, which is never inside the working
+#:   directory as far as a shared record can tell, and names a user.
+#: - ``posix``: an absolute POSIX path; a lone ``/`` (``1 / Hz``) is not one.
+_PATH_TOKEN = re.compile(
+    rf"""
+    (?P<uri>\b[A-Za-z][A-Za-z0-9+.\-]+://[^\s"'<>]*)
+  | {_PATH_BOUNDARY}(?P<unc>\\\\[^\s\\"'<>|]+\\[^{_PATH_END}]*)
+  | {_PATH_BOUNDARY}(?P<drive>[A-Za-z]:[\\/][^{_PATH_END}]*)
+  | {_PATH_BOUNDARY}(?P<home>~[A-Za-z0-9_.\-]*/[^{_PATH_END}:]*)
+  | {_PATH_BOUNDARY}(?P<posix>/[^{_PATH_END}:/][^{_PATH_END}:]*)
+    """,
+    re.VERBOSE,
+)
+
+#: A whole value that is a home path: ``~``, ``~user``, or either followed by ``/...``.
+_HOME_PATH = re.compile(r"~[A-Za-z0-9_.\-]*(?:/.*)?")
 
 
 class SplitRecord(NamedTuple):
@@ -673,10 +697,12 @@ def _pointer_tokens(pointer: str) -> list[str]:
 
 
 def _is_absolute_path(text: str) -> bool:
-    """Return whether *text* is, as a whole, an absolute file-system path (POSIX or Windows)."""
+    """Return whether *text* is, as a whole, an absolute path: POSIX, Windows drive or UNC, or home."""
     if not text or "\n" in text:
         return False
     if text.startswith("/") and len(text) > 1:
+        return True
+    if _HOME_PATH.fullmatch(text):
         return True
     return PureWindowsPath(text).is_absolute() and bool(PureWindowsPath(text).drive)
 
@@ -698,29 +724,56 @@ class _PathScrubber:
                     self.bases.append(resolved)
 
     def relative(self, text: str) -> str:
-        """Return *text*, an absolute path, relative to the base -- or its file name outside it."""
+        """Return *text*, an absolute path, relative to the base -- or its file name outside it.
+
+        A home path (``~``, ``~user/...``) and a UNC path are always outside: the first names a user
+        and the second a machine, and neither can be compared with the working directory.
+        """
+        if text.startswith("~"):
+            name = PurePosixPath(text).name
+            return "~" if name.startswith("~") or not name else name
         path: PurePath = PurePosixPath(text) if text.startswith("/") else PureWindowsPath(text)
-        for base in self.bases:
-            try:
-                relative = path.relative_to(base)
-            except (ValueError, TypeError):
-                continue
-            return relative.as_posix() or "."
+        if not text.startswith("\\\\"):
+            for base in self.bases:
+                try:
+                    relative = path.relative_to(base)
+                except (ValueError, TypeError):
+                    continue
+                return relative.as_posix() or "."
         return path.name or "."
+
+    def file_uri(self, text: str) -> str:
+        """Return the shareable spelling of a ``file`` URI: the path it names, reduced.
+
+        A URI naming a host other than this one (``file://server/...``) is reduced to the file name
+        whatever its path, since the host name itself is the thing to withhold.
+        """
+        parsed = urlparse(text)
+        location = unquote(parsed.path)
+        if parsed.netloc not in ("", "localhost"):
+            return PurePosixPath(location).name or "."
+        return self.relative(location) if _is_absolute_path(location) else location
 
     def scrub(self, text: str) -> str:
         """Return *text* with every absolute path in it made relative (see :meth:`relative`)."""
-        if text.startswith("file://"):
-            location = unquote(urlparse(text).path)
-            if _is_absolute_path(location):
-                return self.relative(location)
+        if "\n" not in text and text.lower().startswith("file://"):
+            return self.file_uri(text)
         if _is_absolute_path(text):
             return self.relative(text)
-        if "/" not in text and "\\" not in text:
+        if not any(marker in text for marker in ("/", "\\", "~")):
             return text
-        scrubbed = _EMBEDDED_FILE_URI.sub(lambda match: self.relative(unquote(match.group(1))), text)
-        scrubbed = _EMBEDDED_POSIX_PATH.sub(lambda match: self.relative(match.group(1)), scrubbed)
-        return _EMBEDDED_WINDOWS_PATH.sub(lambda match: self.relative(match.group(1)), scrubbed)
+        return _PATH_TOKEN.sub(self._token, text)
+
+    def _token(self, match: re.Match[str]) -> str:
+        kind = match.lastgroup
+        token = match.group(kind or 0)
+        body = token.rstrip(".")
+        trailing = token[len(body) :]
+        if kind == "uri":
+            if not body.lower().startswith("file://"):
+                return token
+            return self.file_uri(body) + trailing
+        return self.relative(body) + trailing
 
 
 class _Splitter:
@@ -771,10 +824,7 @@ class _Splitter:
         for key in mapping:
             new_key = key
             if isinstance(key, str):
-                for candidate in (scrubber.scrub(key), _relative_fallback(key, scrubber), key):
-                    if candidate not in taken:
-                        new_key = candidate
-                        break
+                new_key = _distinct(scrubber.scrub(key), taken)
             taken.add(new_key)
             if new_key != key:
                 self.renamed_keys.append({"object": pointer, "key": str(new_key), "original": str(key)})
@@ -801,11 +851,24 @@ class _Splitter:
         return value
 
 
-def _relative_fallback(key: str, scrubber: _PathScrubber) -> str:
-    """A second, still-relative spelling for a path key whose file name another key already took."""
-    if not _is_absolute_path(key) or not scrubber.bases:
-        return key
-    return os.path.relpath(key, str(scrubber.bases[0])).replace(os.sep, "/")
+def _distinct(name: str, taken: set[Any]) -> str:
+    """Return *name*, or -- if another key already has it -- the first free ``<stem>~<n><suffix>``.
+
+    Two keys can reduce to one file name (``/home/a/x.h5`` and ``/opt/b/x.h5`` are both ``x.h5``).
+    They are told apart by a counter rather than by a longer path, because any path that tells them
+    apart is a path out of the working directory -- and would name the directory, perhaps a home
+    directory, that the reduction was there to withhold. The originals are in the private file.
+    """
+    if name not in taken:
+        return name
+    head, separator, last = name.rpartition("/")
+    stem, dot, suffix = last.partition(".") if not last.startswith(".") else (last, "", "")
+    counter = 2
+    while True:
+        candidate = f"{head}{separator}{stem}~{counter}{dot}{suffix}"
+        if candidate not in taken:
+            return candidate
+        counter += 1
 
 
 def _record_working_directory(document: dict[str, Any]) -> str | None:
@@ -985,8 +1048,13 @@ def load_private_metadata(metadata_file: Path | str, shareable: dict[str, Any]) 
     # A bare name only: a record is shared data, and must not be able to point a reader elsewhere.
     if not isinstance(name, str) or not name or Path(name).name != name:
         return None
-    private_file = Path(metadata_file).parent / name
+    record_directory = Path(metadata_file).parent
+    private_file = record_directory / name
     if not private_file.is_file():
+        return None
+    # A bare name can still be a symbolic link to anywhere; what is read must be in this directory.
+    if private_file.resolve().parent != record_directory.resolve():
+        _logger.warning("Ignoring %s: it resolves outside the directory of its record.", private_file)
         return None
     payload = private_file.read_bytes()
     if hashlib.sha256(payload).hexdigest() != reference.get("sha256"):

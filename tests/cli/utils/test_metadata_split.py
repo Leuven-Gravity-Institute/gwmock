@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -107,7 +108,23 @@ class TestTheSplit:
     def test_path_keys_stay_distinct_when_their_file_names_collide(self) -> None:
         shareable = split_metadata_record(_record(), base_directory=BASE, record_file_name="r.json").shareable
 
-        assert shareable["by_path"] == {"a": 1, "../../../elsewhere/a": 2}
+        assert shareable["by_path"] == {"a": 1, "a~2": 2}
+
+    def test_colliding_keys_outside_the_working_directory_name_no_directory(self) -> None:
+        """A second key with a taken file name is told apart by a suffix, never by a path out of the
+        working directory -- which would spell the home directory it came from."""
+        record = {
+            "source_files": {
+                f"{BASE}/a.h5": {},
+                "/home/alice/catalogues/a.h5": {},
+                "/opt/other/a.h5": {},
+            }
+        }
+
+        parts = split_metadata_record(record, base_directory=BASE, record_file_name="r.json")
+
+        assert list(parts.shareable["source_files"]) == ["a.h5", "a~2.h5", "a~3.h5"]
+        assert combine_metadata_records(parts.shareable, parts.private) == record
 
     def test_the_private_part_holds_what_was_taken(self) -> None:
         private = split_metadata_record(_record(), base_directory=BASE, record_file_name="r.json").private
@@ -161,6 +178,72 @@ class TestTheSplit:
             combine_metadata_records({}, {"author": "x"})
 
 
+#: Free text in which a path, a home directory, a host or a server must not survive, and what each
+#: becomes. ``None`` means "unchanged".
+_FREE_TEXT = [
+    ("source:/home/alice/input.h5", "source:input.h5"),
+    ("inputs=/home/alice/a.h5,/home/alice/b.h5", "inputs=a.h5,b.h5"),
+    ("paths: /home/alice/a.h5; /opt/b.h5.", "paths: a.h5; b.h5."),
+    ("(read from /home/alice/x.txt)", "(read from x.txt)"),
+    ('{"file": "/home/alice/x.txt"}', '{"file": "x.txt"}'),
+    ("PATH=/usr/alice/bin:/home/alice/bin", "PATH=bin:bin"),
+    (f"under {BASE}/output/a.hdf5, done", "under output/a.hdf5, done"),
+    ("copied from file://canary-host/home/alice/y.txt today", "copied from y.txt today"),
+    ("copied from file:///home/alice/y.txt today", "copied from y.txt today"),
+    ("share \\\\fileserver\\share\\alice\\psd.txt here", "share psd.txt here"),
+    ("drive:C:\\Users\\alice\\psd.txt,", "drive:psd.txt,"),
+    ("(C:/Users/alice/psd.txt)", "(psd.txt)"),
+    ("~alice/catalogues/pop.h5", "pop.h5"),
+    ("from ~alice/catalogues/pop.h5 and ~/x.h5", "from pop.h5 and x.h5"),
+    ("~/x.h5", "x.h5"),
+    ("\\\\fileserver\\share\\alice\\psd.txt", "psd.txt"),
+    ("file://canary-host/home/alice/y.txt", "y.txt"),
+    # Not paths: left exactly as they are.
+    ("https://example.invalid/data/pop.h5", None),
+    ("see https://example.invalid/a/b, then go", None),
+    ("1 / Hz", None),
+    ("strain/Hz", None),
+    ("relative/inputs/a.h5", None),
+    ("H1:STRAIN", None),
+    ("a~2.h5", None),
+]
+
+
+class TestFreeText:
+    @pytest.mark.parametrize(("text", "expected"), _FREE_TEXT)
+    def test_paths_in_text_are_reduced(self, text: str, expected: str | None) -> None:
+        shareable = split_metadata_record({"note": text}, base_directory=BASE, record_file_name="r").shareable
+
+        assert shareable["note"] == (text if expected is None else expected)
+
+    def test_a_corpus_leaves_nothing_identifying_and_rebuilds_exactly(self) -> None:
+        """Every tricky string, as a value, inside lists and as a mapping key, at several depths."""
+        texts = [text for text, _ in _FREE_TEXT]
+        record = {
+            "notes": texts,
+            "nested": {"deeper": [{"text": text, "pair": [text, text]} for text in texts]},
+            "by_text": {text: index for index, text in enumerate(texts)},
+            "source_files": {text: {"author": "alice", "note": text} for text in texts},
+        }
+
+        parts = split_metadata_record(record, base_directory=BASE, record_file_name="r.json")
+
+        for text in _all_strings(parts.shareable):
+            assert not os.path.isabs(text), text
+            assert "alice" not in text, text
+            assert "canary-host" not in text, text
+            assert "fileserver" not in text, text
+            assert "file://" not in text, text
+            assert not text.startswith("~"), text
+            assert "\\\\" not in text, text
+            assert not re.search(r"(?:^|[^A-Za-z0-9])[A-Za-z]:[\\/]", text), text
+        assert combine_metadata_records(parts.shareable, parts.private) == record
+        assert (
+            combine_metadata_records(json.loads(json.dumps(parts.shareable)), json.loads(json.dumps(parts.private)))
+            == record
+        )
+
+
 class TestReadingThePrivateFile:
     @staticmethod
     def _written(tmp_path: Path) -> tuple[Path, dict]:
@@ -201,6 +284,29 @@ class TestReadingThePrivateFile:
         shareable[PRIVATE_REFERENCE_KEY]["file"] = f"../{tmp_path.name}/{shareable[PRIVATE_REFERENCE_KEY]['file']}"
 
         assert load_private_metadata(record_file, shareable) is None
+
+    def test_a_companion_that_links_out_of_the_directory_is_refused(self, tmp_path: Path) -> None:
+        """A bare name that is a symbolic link to a file elsewhere -- even one with the right digest."""
+        record_directory = tmp_path / "records"
+        record_directory.mkdir()
+        record_file, shareable = self._written(record_directory)
+        companion = private_metadata_path(record_file)
+        outside = tmp_path / "elsewhere.json"
+        outside.write_bytes(companion.read_bytes())
+        companion.unlink()
+        companion.symlink_to(outside)
+
+        assert hashlib.sha256(companion.read_bytes()).hexdigest() == shareable[PRIVATE_REFERENCE_KEY]["sha256"]
+        assert load_private_metadata(record_file, shareable) is None
+
+    def test_a_companion_linked_within_the_directory_is_read(self, tmp_path: Path) -> None:
+        record_file, shareable = self._written(tmp_path)
+        companion = private_metadata_path(record_file)
+        target = tmp_path / "actual.json"
+        companion.rename(target)
+        companion.symlink_to(target.name)
+
+        assert load_private_metadata(record_file, shareable) is not None
 
 
 class TestTheHost:
