@@ -87,6 +87,11 @@ Include author information in the metadata files:
 gwmock simulate config.yaml --author <your-name> --email <your-email>
 ```
 
+Without `--author`, the user name of the account running gwmock is recorded.
+Either way the author and email go to the private details file, not to the
+shareable record that travels with the data, unless the split is turned off; see
+[`metadata`](#metadata-shareable-and-private-records) below.
+
 ### Command [`config`](/reference/gwmock/cli/config/)
 
 ```bash
@@ -238,6 +243,8 @@ globals:
         total-duration:
         segment-gap:
     output-arguments: {}
+    metadata:
+        split: true
 ```
 
 **Key parameters:**
@@ -255,6 +262,36 @@ globals:
   layout. See
   [Gapped segments](generating-data.md#gapped-segments-discontiguous-data)
 - `output-arguments`: Additional global arguments passed to the file writer
+- `metadata.split`: Write each metadata record as a shareable record plus a
+  private details file (`true`, the default), or as one combined record
+  (`false`). See [`metadata`](#metadata-shareable-and-private-records)
+
+#### `metadata`: shareable and private records
+
+```yaml
+globals:
+    metadata:
+        split: true # the default
+```
+
+With `split: true` every record a run writes is two files in the metadata
+directory: the shareable record under its usual name
+(`orchestration-<k>.metadata.json`), with no user name, host name or absolute
+path, and a private details file beside it (`orchestration-<k>.private.json`)
+holding exactly what was taken out. The copy embedded in each HDF5 output and
+the signal and glitch indexes are built from the shareable record. What goes
+where is listed in
+[Shareable and private metadata](metadata.md#shareable-and-private-metadata).
+
+`split: false` writes one combined record per batch, with the author, the
+absolute paths and the full platform string in it -- the layout gwmock wrote
+before the split existed, and the one that is embedded in the outputs. No
+private file is written.
+
+`metadata` accepts only `split`, and `split` only a boolean: a misspelt key or
+value is refused when the configuration is loaded rather than ignored, so a run
+cannot silently write the layout its author meant to turn off. `gwmock merge`
+takes the same decision through `--split-metadata` / `--no-split-metadata`.
 
 ### Orchestration
 

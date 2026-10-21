@@ -110,12 +110,14 @@ else:
     print(record["gwmock_version"], record["config"], record["outputs"])
 ```
 
-**Use the sidecar whenever you have one.** It is the complete record, and it is
-the only description at all for `.npy` and `.gwf` — and for the forced merge
-above, which writes neither.
+**Use the sidecar whenever you have one.** It is the complete shareable record,
+and it is the only description at all for `.npy` and `.gwf` — and for the forced
+merge above, which writes neither.
 
-What the file carries is the same record the sidecar holds, with three
-deliberate omissions:
+What the file carries is the same shareable record the sidecar holds — no user
+name, no host name, no absolute path; see
+[Shareable and private metadata](metadata.md#shareable-and-private-metadata) —
+with three deliberate omissions:
 
 - **The injection parameters and the glitch truth**, unless the run that wrote
   the file set `orchestration.include-injection-parameters: true`. The default
@@ -270,7 +272,8 @@ print(metadata["outputs"])  # list of generated files with hashes
 | `signal`              | Signal backend, waveform model, detector network               |
 | `noise`               | Noise backend and PSD                                          |
 | `outputs`             | List of generated files (path, channels, t0, duration, sha256) |
-| `host`                | Platform, Python version, CPU, git SHA                         |
+| `host`                | OS, architecture, Python version, CPU model, git SHA           |
+| `private_metadata`    | Name and SHA-256 of the private details file beside the record |
 
 For a quick guide on how to inspect and reuse metadata files to reproduce a
 dataset, see the [Metadata Files](metadata.md) page.
