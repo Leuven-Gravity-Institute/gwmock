@@ -9,19 +9,32 @@ They are not identical, and the difference is the point. The embedded copy leave
 parameters unless the run asked for them, because a blind mock data challenge is released as the data
 files alone and those parameters are the answer the participants are asked to find; and it leaves out
 the file hashes, which a file cannot carry about itself.
+
+Both copies are, by default, the *shareable* record: :func:`split_metadata_record` takes the user
+name, the host name, the exact platform string and every absolute path out of the record before it
+is embedded or written, and keeps them in a private details file beside the sidecar. Embedding the
+complete record instead would put exactly those details into every released data file.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import math
+import os
+import platform
 import re
-from pathlib import Path
-from typing import Any
+import secrets
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from typing import Any, NamedTuple
+from urllib.parse import unquote, urlparse
 
 import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_logger = logging.getLogger("gwmock")
 
 #: Two changes to the meaning of ``signal.injections`` ride on this constant, and neither altered the
 #: shape of a record -- so a consumer reading an old version parses a new one without noticing, which
@@ -49,7 +62,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: ``signal.gap_discarded_injections`` record what the gaps cost the injected signals. A record
 #: written by an older gwmock has none of these keys, which is not the same fact as a contiguous
 #: run; only ``schema_version`` tells the two apart.
-SCHEMA_VERSION = "1.7.0"
+#:
+#: 1.8.0: a record is written as two files by default -- the shareable record under the usual name
+#: and a private details file beside it (see :func:`split_metadata_record`). The shareable record
+#: has no ``author`` or ``email``, holds every path relative to the run's working directory (or as
+#: a file name, for a path outside it), reduces ``host`` to the operating system, architecture,
+#: Python version, git SHA and processor model, and names its companion under
+#: :data:`PRIVATE_REFERENCE_KEY`. A consumer reading ``author`` or an absolute path from a 1.7.0
+#: record finds neither here, and only ``schema_version`` says why. A run that opts out
+#: (``globals.metadata.split: false``) writes the 1.7.0 layout under this version number.
+SCHEMA_VERSION = "1.8.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 #: The key the source parameters of the injected signals are recorded under. Removed from an embedded
@@ -198,12 +220,22 @@ class OutputRecord(BaseModel):
 
 
 class HostRecord(BaseModel):
-    """Host fingerprint for provenance reporting."""
+    """Host fingerprint for provenance reporting.
+
+    ``platform``, ``python``, ``cpu`` and ``git_sha`` are the fields every record has carried. In a
+    shareable record ``platform`` is reduced to ``<os>-<architecture>`` -- the full string names the
+    exact kernel build, which goes to the private details file -- and ``os``, ``architecture`` and
+    ``cpu_model`` are added. ``cpu_model`` is written as an explicit ``null`` when the platform does
+    not report one, so "unknown" is not confused with a record that predates the field.
+    """
 
     platform: str
     python: str
     cpu: str
     git_sha: str | None = None
+    os: str | None = None
+    architecture: str | None = None
+    cpu_model: str | None = None
 
 
 class MetadataRecord(BaseModel):
@@ -371,8 +403,12 @@ def save_metadata_record(
 ) -> None:
     """Validate and persist a versioned metadata record."""
     record = metadata if isinstance(metadata, MetadataRecord) else MetadataRecord.model_validate(metadata)
+    document = record.model_dump(mode="python", by_alias=True, exclude_none=True)
+    # Unknown is a value here, not an absence: a shareable host says "no model reported" as null.
+    if "cpu_model" in record.host.model_fields_set and record.host.cpu_model is None:
+        document["host"]["cpu_model"] = None
     save_metadata_with_external_state(
-        metadata=_normalize_json_value(record.model_dump(mode="python", by_alias=True, exclude_none=True)),
+        metadata=_normalize_json_value(document),
         metadata_file=metadata_file,
         metadata_dir=metadata_dir,
         encoding=encoding,
@@ -520,3 +556,466 @@ def embed_metadata_record(
 
     hdf5.update_attrs(artifact, {"": {RUN_METADATA_ATTRIBUTE: document}})
     return True
+
+
+# ---------------------------------------------------------------------------------------------------
+# Shareable and private records
+# ---------------------------------------------------------------------------------------------------
+
+#: The key a shareable record names its private companion under: ``{"file": <name>, "sha256": <hex>}``.
+PRIVATE_REFERENCE_KEY = "private_metadata"
+
+#: The ``kind`` written at the top of every private details file, so a reader can tell one from a
+#: record without relying on its name.
+PRIVATE_METADATA_KIND = "gwmock-private-metadata"
+
+#: Record fields that identify a person rather than describe a run. Removed from every shareable
+#: record -- including the source records a merge nests under :data:`_NESTED_RECORDS_KEY` -- and
+#: kept in the private file.
+_PERSONAL_KEYS = ("author", "email")
+
+#: The key under which ``gwmock merge`` nests whole source records. Each one is treated as a record in
+#: its own right, so a merge of records written before the split, or with it turned off, does not
+#: carry their authors and kernel builds into a shareable merged record.
+_NESTED_RECORDS_KEY = "source_files"
+
+#: A path-like token inside free text: an absolute POSIX path beginning at the start of the string or
+#: after whitespace, a quote, ``=`` or an opening bracket, with at least one character after the slash.
+_EMBEDDED_POSIX_PATH = re.compile(r"""(?:^|(?<=[\s"'=(\[]))(/[^\s"'\])]+)""")
+
+#: A ``file://`` URI inside free text, with the absolute path it names.
+_EMBEDDED_FILE_URI = re.compile(r"""file://(/[^\s"'\])]*)""")
+
+#: The same for a Windows drive path.
+_EMBEDDED_WINDOWS_PATH = re.compile(r"""(?:^|(?<=[\s"'=(\[]))([A-Za-z]:[\\/][^\s"'\])]*)""")
+
+
+class SplitRecord(NamedTuple):
+    """A metadata record divided into what may be shared and what stays with its producer."""
+
+    shareable: dict[str, Any]
+    private: dict[str, Any]
+
+
+def private_metadata_path(metadata_file: Path | str) -> Path:
+    """Return where the private details of the record in *metadata_file* are written.
+
+    The record's own name with its ``.metadata.`` part read as ``.private.`` --
+    ``orchestration-0.metadata.json`` becomes ``orchestration-0.private.json`` and a merge's
+    ``merged.metadata.yaml`` becomes ``merged.private.yaml`` -- so the companion sits next to its record,
+    sorts beside it, and is never matched by the ``*.metadata.json`` globs every reader uses to find
+    records.
+
+    Args:
+        metadata_file: The shareable record's path.
+
+    Returns:
+        The private details file's path, in the same directory and the same format.
+    """
+    metadata_file = Path(metadata_file)
+    name = metadata_file.name
+    marker = ".metadata."
+    position = name.rfind(marker)
+    if position >= 0:
+        private_name = f"{name[:position]}.private.{name[position + len(marker) :]}"
+    else:
+        private_name = f"{metadata_file.stem}.private{metadata_file.suffix}"
+    return metadata_file.with_name(private_name)
+
+
+def shareable_host(host: dict[str, Any], *, describes_this_machine: bool) -> dict[str, Any]:
+    """Return the part of a host fingerprint that names a kind of machine rather than a machine.
+
+    Kept: the Python version, the git SHA of the gwmock that ran, the ``cpu`` field as every record
+    has carried it, and -- for a record this process is writing -- the operating system, the
+    architecture and the processor model, which are what explain a numerical difference between two
+    runs. ``platform`` is reduced to ``<os>-<architecture>``: the full string names the exact kernel
+    build and C library, which identifies a particular installation.
+
+    Args:
+        host: The full fingerprint, as a record carries it.
+        describes_this_machine: Whether *host* was taken on the machine running now. Only then can
+            the operating system, architecture and processor model be read; a host nested in a merged
+            source record keeps what it had, without ``platform``.
+
+    Returns:
+        The reduced fingerprint.
+    """
+    from gwmock.cli.utils.environment import cpu_model  # noqa: PLC0415  # deferred: keeps the import light
+
+    reduced: dict[str, Any] = {
+        key: host[key] for key in ("python", "cpu", "git_sha") if key in host and host[key] is not None
+    }
+    if describes_this_machine:
+        system = platform.system() or "unknown"
+        machine = platform.machine() or "unknown"
+        reduced.update(
+            {
+                "platform": f"{system}-{machine}",
+                "os": system,
+                "architecture": machine,
+                "cpu_model": cpu_model(),
+            }
+        )
+        reduced.setdefault("python", platform.python_version())
+        reduced.setdefault("cpu", machine)
+    return reduced
+
+
+def _escape_pointer_token(token: str) -> str:
+    return token.replace("~", "~0").replace("/", "~1")
+
+
+def _pointer_tokens(pointer: str) -> list[str]:
+    if not pointer:
+        return []
+    return [token.replace("~1", "/").replace("~0", "~") for token in pointer.split("/")[1:]]
+
+
+def _is_absolute_path(text: str) -> bool:
+    """Return whether *text* is, as a whole, an absolute file-system path (POSIX or Windows)."""
+    if not text or "\n" in text:
+        return False
+    if text.startswith("/") and len(text) > 1:
+        return True
+    return PureWindowsPath(text).is_absolute() and bool(PureWindowsPath(text).drive)
+
+
+class _PathScrubber:
+    """Rewrite the absolute paths in a record against one base directory, remembering the originals."""
+
+    def __init__(self, base_directory: Path | str | None) -> None:
+        self.bases: list[PurePath] = []
+        if base_directory is not None:
+            base = Path(base_directory)
+            if base.is_absolute():
+                self.bases.append(base)
+                try:
+                    resolved = base.resolve()
+                except OSError:
+                    resolved = base
+                if resolved != base:
+                    self.bases.append(resolved)
+
+    def relative(self, text: str) -> str:
+        """Return *text*, an absolute path, relative to the base -- or its file name outside it."""
+        path: PurePath = PurePosixPath(text) if text.startswith("/") else PureWindowsPath(text)
+        for base in self.bases:
+            try:
+                relative = path.relative_to(base)
+            except (ValueError, TypeError):
+                continue
+            return relative.as_posix() or "."
+        return path.name or "."
+
+    def scrub(self, text: str) -> str:
+        """Return *text* with every absolute path in it made relative (see :meth:`relative`)."""
+        if text.startswith("file://"):
+            location = unquote(urlparse(text).path)
+            if _is_absolute_path(location):
+                return self.relative(location)
+        if _is_absolute_path(text):
+            return self.relative(text)
+        if "/" not in text and "\\" not in text:
+            return text
+        scrubbed = _EMBEDDED_FILE_URI.sub(lambda match: self.relative(unquote(match.group(1))), text)
+        scrubbed = _EMBEDDED_POSIX_PATH.sub(lambda match: self.relative(match.group(1)), scrubbed)
+        return _EMBEDDED_WINDOWS_PATH.sub(lambda match: self.relative(match.group(1)), scrubbed)
+
+
+class _Splitter:
+    """One pass over a record, building the shareable copy and the private remainder together."""
+
+    def __init__(self, base_directory: Path | str | None) -> None:
+        self.default_base = base_directory
+        self.values: dict[str, Any] = {}
+        self.renamed_keys: list[dict[str, str]] = []
+
+    def record(self, document: dict[str, Any], pointer: str, scrubber: _PathScrubber, *, root: bool) -> dict[str, Any]:
+        """Split one record: the root, or a source record a merge nests inside it."""
+        own_base = _record_working_directory(document)
+        if own_base is not None and Path(own_base).is_absolute():
+            scrubber = _PathScrubber(own_base)
+        shareable: dict[str, Any] = {}
+        for key, value in document.items():
+            if key in _PERSONAL_KEYS:
+                self.values[f"{pointer}/{_escape_pointer_token(key)}"] = value
+                continue
+            if key == "host" and isinstance(value, dict):
+                self.values[f"{pointer}/host"] = value
+                shareable[key] = shareable_host(value, describes_this_machine=root)
+                continue
+            child_pointer = f"{pointer}/{_escape_pointer_token(key)}"
+            if key == _NESTED_RECORDS_KEY and isinstance(value, dict):
+                shareable[key] = self.nested_records(value, child_pointer, scrubber)
+                continue
+            shareable[key] = self.value(value, child_pointer, scrubber)
+        return shareable
+
+    def nested_records(self, records: dict[str, Any], pointer: str, scrubber: _PathScrubber) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, new_key in self.keys(records, pointer, scrubber):
+            child_pointer = f"{pointer}/{_escape_pointer_token(new_key)}"
+            value = records[key]
+            result[new_key] = (
+                self.record(value, child_pointer, scrubber, root=False)
+                if isinstance(value, dict)
+                else self.value(value, child_pointer, scrubber)
+            )
+        return result
+
+    def keys(self, mapping: dict[Any, Any], pointer: str, scrubber: _PathScrubber) -> list[tuple[Any, Any]]:
+        """Pair each key with its shareable spelling, keeping keys distinct if two collapse to one name."""
+        taken: set[Any] = set()
+        pairs: list[tuple[Any, Any]] = []
+        for key in mapping:
+            new_key = key
+            if isinstance(key, str):
+                for candidate in (scrubber.scrub(key), _relative_fallback(key, scrubber), key):
+                    if candidate not in taken:
+                        new_key = candidate
+                        break
+            taken.add(new_key)
+            if new_key != key:
+                self.renamed_keys.append({"object": pointer, "key": str(new_key), "original": str(key)})
+            pairs.append((key, new_key))
+        return pairs
+
+    def value(self, value: Any, pointer: str, scrubber: _PathScrubber) -> Any:
+        if isinstance(value, dict):
+            return {
+                new_key: self.value(value[key], f"{pointer}/{_escape_pointer_token(str(new_key))}", scrubber)
+                for key, new_key in self.keys(value, pointer, scrubber)
+            }
+        if isinstance(value, list):
+            return [self.value(item, f"{pointer}/{index}", scrubber) for index, item in enumerate(value)]
+        if isinstance(value, tuple):
+            return [self.value(item, f"{pointer}/{index}", scrubber) for index, item in enumerate(value)]
+        if isinstance(value, Path):
+            value = str(value)
+        if isinstance(value, str):
+            scrubbed = scrubber.scrub(value)
+            if scrubbed != value:
+                self.values[pointer] = value
+            return scrubbed
+        return value
+
+
+def _relative_fallback(key: str, scrubber: _PathScrubber) -> str:
+    """A second, still-relative spelling for a path key whose file name another key already took."""
+    if not _is_absolute_path(key) or not scrubber.bases:
+        return key
+    return os.path.relpath(key, str(scrubber.bases[0])).replace(os.sep, "/")
+
+
+def _record_working_directory(document: dict[str, Any]) -> str | None:
+    """Return the working directory a record's own configuration names, if it names one."""
+    for container in (document.get("config"), {"globals": document.get("globals_config")}):
+        if isinstance(container, dict):
+            globals_section = container.get("globals")
+            if isinstance(globals_section, dict):
+                directory = globals_section.get("working-directory") or globals_section.get("working_directory")
+                if isinstance(directory, str):
+                    return directory
+    return None
+
+
+def split_metadata_record(
+    metadata: dict[str, Any],
+    *,
+    base_directory: Path | str | None,
+    record_file_name: str,
+) -> SplitRecord:
+    """Divide a metadata record into a shareable record and a private details document.
+
+    The shareable record is the one data sets travel with. It differs from the complete record in
+    three ways, and in no other:
+
+    - ``author`` and ``email`` are removed, at the top and in every source record a merge nests.
+    - Every absolute path -- a value, a mapping key, or a path inside free text -- is rewritten
+      relative to *base_directory* (the run's working directory), or to its file name when it lies
+      outside it. ``config.globals.working-directory`` therefore reads ``.``. A nested source record
+      is rewritten against its own working directory when it names an absolute one.
+    - ``host`` is reduced as :func:`shareable_host` describes.
+
+    Everything removed or rewritten is recorded in the private document as the original value at a
+    JSON pointer (RFC 6901) into the shareable record, and every renamed mapping key likewise, so
+    :func:`combine_metadata_records` rebuilds the complete record exactly. The private document also
+    names the author, the hostname, the full platform string and the working directory at its top
+    level, for a reader rather than a program. It carries a random ``nonce``, because the shareable
+    record publishes the private file's SHA-256 and the private contents -- a user name, a host name,
+    a directory layout -- are few enough to guess; the nonce makes that hash useless for confirming a
+    guess.
+
+    Hashes are untouched: ``file_hashes`` and ``content_hashes`` are keyed by file name and
+    ``outputs[].path`` is already relative, so everything gwmock checks from a record works from the
+    shareable one alone.
+
+    Args:
+        metadata: The complete record. Not modified.
+        base_directory: The absolute working directory paths are made relative to; ``None`` or a
+            relative path leaves absolute paths to be reduced to their file names.
+        record_file_name: The shareable record's file name, which the private document names.
+
+    Returns:
+        The shareable record and the private document.
+    """
+    splitter = _Splitter(base_directory)
+    shareable = splitter.record(metadata, "", _PathScrubber(base_directory), root=True)
+    host = metadata.get("host") if isinstance(metadata.get("host"), dict) else {}
+    from gwmock.cli.utils.environment import hostname  # noqa: PLC0415
+
+    private: dict[str, Any] = {
+        "kind": PRIVATE_METADATA_KIND,
+        "schema_version": SCHEMA_VERSION,
+        "describes": record_file_name,
+        "nonce": secrets.token_hex(16),
+        "author": metadata.get("author"),
+        "email": metadata.get("email"),
+        "hostname": hostname(),
+        "platform": host.get("platform"),
+        "working_directory": None if base_directory is None else str(base_directory),
+        "values": _normalize_json_value(splitter.values),
+        "renamed_keys": splitter.renamed_keys,
+    }
+    return SplitRecord(shareable=shareable, private=private)
+
+
+def _copy_containers(document: Any) -> Any:
+    """Copy the dicts and lists of *document*, sharing everything else (arrays included)."""
+    if isinstance(document, dict):
+        return {key: _copy_containers(value) for key, value in document.items()}
+    if isinstance(document, list):
+        return [_copy_containers(item) for item in document]
+    return document
+
+
+def combine_metadata_records(shareable: dict[str, Any], private: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the complete record from a shareable record and its private details.
+
+    The inverse of :func:`split_metadata_record`: every value the split removed or rewrote is put
+    back at its pointer, every renamed key is given its original name, and the reference to the
+    private file is dropped -- so the result has the layout a run writes with the split turned off.
+
+    Args:
+        shareable: The shareable record, as read from its file.
+        private: Its private details document.
+
+    Returns:
+        The complete record. Neither input is modified.
+
+    Raises:
+        ValueError: If *private* is not a private details document.
+    """
+    if not isinstance(private, dict) or private.get("kind") != PRIVATE_METADATA_KIND:
+        raise ValueError("Not a gwmock private metadata document.")
+    document = _copy_containers(shareable)
+    document.pop(PRIVATE_REFERENCE_KEY, None)
+    for pointer, value in (private.get("values") or {}).items():
+        tokens = _pointer_tokens(pointer)
+        if not tokens:
+            continue
+        container: Any = document
+        for token in tokens[:-1]:
+            container = container[int(token)] if isinstance(container, list) else container.setdefault(token, {})
+        last = tokens[-1]
+        if isinstance(container, list):
+            container[int(last)] = value
+        else:
+            container[last] = value
+    for rename in reversed(private.get("renamed_keys") or []):
+        container = document
+        for token in _pointer_tokens(rename["object"]):
+            container = container[int(token)] if isinstance(container, list) else container[token]
+        if rename["key"] in container:
+            container[rename["original"]] = container.pop(rename["key"])
+    return document
+
+
+def _serialise(document: dict[str, Any], path: Path) -> bytes:
+    if path.suffix.lower() == ".json":
+        return (json.dumps(_normalize_json_value(document), indent=2, sort_keys=True) + "\n").encode("utf-8")
+    return yaml.safe_dump(_normalize_json_value(document), default_flow_style=False, sort_keys=False).encode("utf-8")
+
+
+def write_private_metadata(private: dict[str, Any], private_file: Path | str) -> str:
+    """Write a private details document, returning the SHA-256 (hex) of the bytes written.
+
+    JSON or YAML by the file's suffix, as for a record. Written to a temporary name and renamed, so a
+    reader never meets a half-written file under the name the shareable record will point at.
+
+    Args:
+        private: The document from :func:`split_metadata_record`.
+        private_file: Where to write it.
+
+    Returns:
+        The hex digest the shareable record records under :data:`PRIVATE_REFERENCE_KEY`.
+    """
+    private_file = Path(private_file)
+    private_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = _serialise(private, private_file)
+    temporary = private_file.with_name(f".{private_file.name}.tmp")
+    temporary.write_bytes(payload)
+    temporary.replace(private_file)
+    return hashlib.sha256(payload).hexdigest()
+
+
+def private_reference(private_file: Path | str, digest: str) -> dict[str, str]:
+    """Return the value a shareable record holds under :data:`PRIVATE_REFERENCE_KEY`."""
+    return {"file": Path(private_file).name, "sha256": digest}
+
+
+def load_private_metadata(metadata_file: Path | str, shareable: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the private details of a shareable record, when they are beside it and intact.
+
+    ``None`` -- and the caller carries on with the shareable record -- when the record names no
+    private file, the file is absent (the usual case for anyone the data was shared with), or its
+    SHA-256 is not the one the record names. A mismatch is logged as a warning: a private file that
+    is not the one written with this record would put back the wrong paths.
+
+    Args:
+        metadata_file: The shareable record's path; the private file is looked for beside it.
+        shareable: The shareable record, as read.
+
+    Returns:
+        The private document, or ``None``.
+    """
+    reference = shareable.get(PRIVATE_REFERENCE_KEY) if isinstance(shareable, dict) else None
+    name = reference.get("file") if isinstance(reference, dict) else None
+    # A bare name only: a record is shared data, and must not be able to point a reader elsewhere.
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        return None
+    private_file = Path(metadata_file).parent / name
+    if not private_file.is_file():
+        return None
+    payload = private_file.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != reference.get("sha256"):
+        _logger.warning(
+            "Ignoring %s: its SHA-256 is not the one %s records, so it does not describe this record.",
+            private_file,
+            Path(metadata_file).name,
+        )
+        return None
+    try:
+        document = json.loads(payload) if private_file.suffix.lower() == ".json" else yaml.safe_load(payload)
+    except (json.JSONDecodeError, yaml.YAMLError, UnicodeDecodeError):
+        document = None
+    is_private = isinstance(document, dict) and document.get("kind") == PRIVATE_METADATA_KIND
+    return document if is_private else None
+
+
+def with_private_details(metadata_file: Path | str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return the complete record when its private details are available, else *metadata* itself.
+
+    For the readers that act on the producer's own machine -- reproduction and checkpoint resume --
+    where the original absolute paths are the ones to use. Every reader works without them.
+
+    Args:
+        metadata_file: The record's path.
+        metadata: The record, as read.
+
+    Returns:
+        The combined record, or *metadata* unchanged.
+    """
+    private = load_private_metadata(metadata_file, metadata)
+    return metadata if private is None else combine_metadata_records(metadata, private)

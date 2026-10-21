@@ -266,7 +266,8 @@ class TestWhatEmbeddingMustNotBreak:
         metadata_directory = _run(monkeypatch, tmp_path)
 
         sidecar = json.loads((metadata_directory / "orchestration-0.metadata.json").read_text())
-        working_directory = Path(sidecar["config"]["globals"]["working-directory"])
+        # The shareable record holds its working directory as `.`; the run's is `tmp_path`.
+        working_directory = tmp_path
 
         assert sidecar["file_hashes"]
         for name, recorded in sidecar["file_hashes"].items():

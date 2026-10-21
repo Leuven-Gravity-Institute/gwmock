@@ -30,6 +30,7 @@ from gwmock.cli.utils.config import (
     SignalConfig,
     SimulatorOutputConfig,
 )
+from gwmock.cli.utils.metadata import with_private_details
 from gwmock.cli.utils.simulation_plan import SimulationBatch, create_plan_from_config
 from gwmock.simulator.seeds import derive_seed
 from gwmock.strain_schema import STRAIN_SCHEMA_VERSION, missing_layout_attributes, require_strain_schema
@@ -340,7 +341,7 @@ def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path
     assert (tmp_path / "output" / "signal" / "signal-1.gwf").exists()
     _assert_noise_outputs_exist(tmp_path / "output" / "noise")
     metadata = yaml.safe_load((tmp_path / "metadata" / "orchestration-0.metadata.json").read_text())
-    assert metadata["schema_version"] == "1.7.0"
+    assert metadata["schema_version"] == "1.8.0"
     assert metadata["config"]["orchestration"]["population"]["backend"] == FAKE_POPULATION_BACKEND
     assert metadata["config"]["orchestration"]["signal"]["backend"] == FAKE_SIGNAL_BACKEND
     assert metadata["config"]["orchestration"]["noise"]["backend"] == FAKE_NOISE_BACKEND
@@ -353,7 +354,12 @@ def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path
     assert metadata["segment_seeds"] == [derive_seed(7, "signal", 0)]
     assert metadata["simulator_config"]["population"]["backend"] == FAKE_POPULATION_BACKEND
     assert metadata["simulator_config"]["signal"]["detectors"] == ["H1"]
-    assert metadata["simulator_metadata"]["orchestration"]["population"]["metadata"] == FakePopulationBackend.metadata
+    # The shareable record reduces the backend's absolute catalogue path, outside the working
+    # directory, to its file name; with the private details beside it the backend's report is intact.
+    shareable_population = metadata["simulator_metadata"]["orchestration"]["population"]["metadata"]
+    assert shareable_population["resolved_path"] == "catalog.h5"
+    complete = with_private_details(tmp_path / "metadata" / "orchestration-0.metadata.json", metadata)
+    assert complete["simulator_metadata"]["orchestration"]["population"]["metadata"] == FakePopulationBackend.metadata
     assert metadata["simulator_metadata"]["orchestration"]["population"]["seed"] == derive_seed(7, "population")
     assert metadata["simulator_metadata"]["orchestration"]["signal"]["network_resolution"] == {
         "inputs": ["H1"],

@@ -317,14 +317,30 @@ class TestTheMergedMetadata:
         verified its inputs."""
         output = self._merge_with_metadata(tmp_path, two_frames)
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+        # Shareable by default: the output outside the current directory is named by its file name,
+        # which is also what the next merge looks the hash up by.
+        assert record["output_files"] == [output.name]
+        assert record["file_hashes"][output.name] == compute_file_hash(output)
+
+    @pytest.mark.requires_gwpy
+    def test_a_combined_record_keeps_the_output_as_given(self, tmp_path: Path, two_frames) -> None:
+        """With the split turned off the merged record is the layout it always was."""
+        metadata = [str(_metadata_for(path, tmp_path / f"{path.stem}.yaml")) for path in two_frames]
+        output = tmp_path / "merged.gwf"
+        merge_command(list(two_frames), output=str(output), metadata=metadata, split_metadata=False)
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
         assert record["output_files"] == [str(output)]
         assert record["file_hashes"][str(output)] == compute_file_hash(output)
+        assert record["author"] == getpass.getuser()
+        assert not (tmp_path / "merged.private.yaml").exists()
 
     @pytest.mark.requires_gwpy
     def test_the_author_defaults_to_the_user_running_it(self, tmp_path: Path, two_frames) -> None:
         self._merge_with_metadata(tmp_path, two_frames)
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
-        assert record["author"] == getpass.getuser()
+        private = yaml.safe_load((tmp_path / "merged.private.yaml").read_text())
+        assert "author" not in record, "the shareable record names no one"
+        assert private["author"] == getpass.getuser()
 
     @pytest.mark.requires_gwpy
     def test_a_given_author_and_email_are_recorded(self, tmp_path: Path, two_frames) -> None:
@@ -338,8 +354,11 @@ class TestTheMergedMetadata:
             email="person@example.invalid",
         )
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
-        assert record["author"] == "A Person"
-        assert record["email"] == "person@example.invalid"
+        private = yaml.safe_load((tmp_path / "merged.private.yaml").read_text())
+        assert "author" not in record
+        assert "email" not in record
+        assert private["author"] == "A Person"
+        assert private["email"] == "person@example.invalid"
 
     @pytest.mark.requires_gwpy
     def test_it_records_when_and_with_what_versions(self, tmp_path: Path, two_frames) -> None:
@@ -424,7 +443,7 @@ class TestTheRecordInsideTheMergedFile:
         embedded = read_run_metadata(output)
 
         assert embedded is not None
-        source = embedded["source_files"][str(tmp_path / "a.hdf5")]
+        source = embedded["source_files"]["a.hdf5"]
         assert source["signal"]["injections"][0]["parameters"]["detector_frame_mass_1"] == self.CANARY_MASS
 
     @pytest.mark.requires_gwpy
@@ -434,7 +453,7 @@ class TestTheRecordInsideTheMergedFile:
 
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
 
-        source = record["source_files"][str(tmp_path / "a.hdf5")]
+        source = record["source_files"]["a.hdf5"]
         assert source["signal"]["injections"][0]["parameters"]["detector_frame_mass_1"] == self.CANARY_MASS
 
     @pytest.mark.requires_gwpy
@@ -444,7 +463,7 @@ class TestTheRecordInsideTheMergedFile:
 
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
 
-        assert record["file_hashes"][str(output)] == compute_file_hash(output)
+        assert record["file_hashes"][output.name] == compute_file_hash(output)
 
     @pytest.mark.requires_gwpy
     def test_a_forced_merge_embeds_nothing(self, tmp_path: Path) -> None:

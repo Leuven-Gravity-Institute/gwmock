@@ -368,6 +368,27 @@ class OrchestrationConfig(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
+class MetadataSettings(BaseModel):
+    """How a run writes its metadata records (``globals.metadata``).
+
+    ``split`` (default ``true``) writes each record as two files: the shareable record under the usual
+    name, with no user name, no host name, no absolute path and a reduced host fingerprint, and a
+    private details file beside it holding those. ``false`` writes one combined record, the layout
+    gwmock wrote before the split existed.
+
+    Unknown keys are refused rather than ignored, so a misspelt ``split`` cannot silently leave a run
+    writing the layout its author meant to turn off.
+    """
+
+    split: bool = Field(
+        default=True,
+        description="Write each metadata record as a shareable record plus a private details file "
+        "(true, the default), or as one combined record (false).",
+    )
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
 class GlobalsConfig(BaseModel):
     """Global configuration applying to all simulators.
 
@@ -399,8 +420,19 @@ class GlobalsConfig(BaseModel):
         description="Global default arguments for output handlers (e.g., channel names). "
         "Simulator-specific output arguments override these.",
     )
+    # None rather than a default instance, so a config that does not set it records no `metadata`
+    # key: the snapshot of the config in every record stays what the user wrote.
+    metadata: MetadataSettings | None = Field(
+        default=None,
+        description="How metadata records are written; see MetadataSettings.",
+    )
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    @property
+    def split_metadata(self) -> bool:
+        """Whether this run writes shareable records with private details files beside them."""
+        return True if self.metadata is None else self.metadata.split
 
 
 class ChunkConfig(BaseModel):

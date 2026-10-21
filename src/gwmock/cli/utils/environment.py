@@ -16,7 +16,9 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,71 @@ def capture_environment() -> dict[str, Any]:
         "python_implementation": platform.python_implementation(),
         "packages": dict(sorted(packages.items())),
     }
+
+
+#: Where Linux reports the processor model. A module attribute so a test can point it elsewhere.
+_CPUINFO = Path("/proc/cpuinfo")
+
+
+@functools.lru_cache(maxsize=1)
+def cpu_model() -> str | None:
+    """Return the processor's model name, or ``None`` when the platform does not say.
+
+    The marketing name -- ``"AMD Ryzen 7 5800H with Radeon Graphics"`` -- rather than the
+    architecture, which the record already carries. It is what tells two machines of one
+    architecture apart when a numerical difference between them has to be explained, and it names
+    a product rather than a machine, so it belongs in the shareable record.
+
+    Read from ``/proc/cpuinfo`` on Linux (``model name``, with ``Hardware`` and ``Processor`` as the
+    spellings ARM kernels use), from ``sysctl machdep.cpu.brand_string`` on macOS, and from
+    :func:`platform.processor` on Windows, where that is the processor identifier. Anything else,
+    or any failure to read, is ``None``: an explicit "unknown" rather than a guess.
+    """
+    model: str | None = None
+    if sys.platform.startswith("linux"):
+        model = _cpu_model_from_cpuinfo(_CPUINFO)
+    elif sys.platform == "darwin":
+        sysctl = shutil.which("sysctl")
+        if sysctl is not None:
+            try:
+                completed = subprocess.run(  # noqa: S603
+                    [sysctl, "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                completed = None
+            if completed is not None and completed.returncode == 0:
+                model = completed.stdout.strip() or None
+    elif sys.platform == "win32":
+        model = platform.processor().strip() or None
+    return model
+
+
+def _cpu_model_from_cpuinfo(cpuinfo: Path) -> str | None:
+    """Return the processor model named in a ``/proc/cpuinfo``-style file, or ``None``."""
+    try:
+        text = cpuinfo.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields.setdefault(key.strip().lower(), value.strip())
+    for key in ("model name", "hardware", "processor"):
+        value = fields.get(key, "")
+        # x86 kernels also have a `processor` line, holding the core number; that is not a model.
+        if value and not value.isdigit():
+            return value
+    return None
+
+
+def hostname() -> str:
+    """Return this machine's network name -- private provenance, never written to a shareable record."""
+    return socket.gethostname()
 
 
 # A recorded pin must be a plain distribution name and version — never an

@@ -77,7 +77,7 @@ def validate_command(
     from rich.table import Table
 
     from gwmock.cli.utils.hash import compute_content_hash, compute_file_hash
-    from gwmock.cli.utils.metadata import load_metadata_with_external_state
+    from gwmock.cli.utils.metadata import load_metadata_with_external_state, with_private_details
 
     logger = logging.getLogger("gwmock")
 
@@ -124,6 +124,11 @@ def validate_command(
             if "metadata" in file_path.name and file_path.is_file():
                 metadata_files.append(file_path)
 
+    # One key per file, however it was reached: a directory scan and a record's own location can
+    # name the same file by a relative and an absolute path, and it must be checked -- and counted --
+    # once.
+    output_files = [_same_file_key(path) for path in output_files]
+
     # Apply pattern filtering if specified
     if pattern:
         output_files = [f for f in output_files if fnmatch.fnmatch(f.name, pattern)]
@@ -141,6 +146,9 @@ def validate_command(
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Error loading metadata %s: %s", metadata_file, e)
             continue
+        # Only to *locate* the outputs: the private details, when beside the record, give the
+        # original absolute working directory. The hashes compared below are the same either way.
+        metadata = with_private_details(metadata_file, metadata)
 
         outputs = metadata.get("outputs", [])
         # Use the full relative ``path`` recorded in ``outputs`` (e.g.
@@ -162,7 +170,7 @@ def validate_command(
             if pattern and not fnmatch.fnmatch(filename, pattern):
                 continue
 
-            output_file = output_dir / filename
+            output_file = _same_file_key(_locate_output(output_dir / filename, filename, metadata_file, globals_config))
             if output_file not in output_to_metadata:
                 output_to_metadata[output_file] = metadata_file
 
@@ -330,3 +338,40 @@ def validate_command(
         console.print(f"[red]{failed_files} files failed validation[/red]")
         raise typer.Exit(1)
     console.print("[green]All files validated successfully![/green]")
+
+
+def _locate_output(candidate: Path, recorded: str, metadata_file: Path, globals_config: dict) -> Path:
+    """Return where a recorded output is, trying the record's own location when *candidate* is absent.
+
+    A shareable record holds its working directory as ``.``, so *candidate* is relative to wherever
+    ``gwmock validate`` was started. When nothing is there, the working directory is inferred from
+    where the record itself sits: it was written to ``<working-directory>/<metadata-directory>``, so
+    stripping a relative ``metadata-directory`` from the record's directory gives the working
+    directory back -- which lets a shared data set be validated from any directory.
+
+    Args:
+        candidate: The output resolved against the recorded working directory.
+        recorded: The output path as the record holds it.
+        metadata_file: The record's path.
+        globals_config: The record's ``globals`` section.
+
+    Returns:
+        The first location that exists, or *candidate* when neither does.
+    """
+    if candidate.exists() or Path(recorded).is_absolute():
+        return candidate
+    metadata_directory = globals_config.get("metadata-directory") or globals_config.get("metadata_directory")
+    record_directory = metadata_file.parent.absolute()
+    if isinstance(metadata_directory, str) and metadata_directory and not Path(metadata_directory).is_absolute():
+        parts = Path(metadata_directory).parts
+        if record_directory.parts[-len(parts) :] == parts:
+            working_directory = Path(*record_directory.parts[: -len(parts)])
+            inferred = working_directory / recorded
+            if inferred.exists():
+                return inferred
+    return candidate
+
+
+def _same_file_key(path: Path) -> Path:
+    """Return one spelling of *path* for an existing file, so two routes to it compare equal."""
+    return path.resolve() if path.exists() else path

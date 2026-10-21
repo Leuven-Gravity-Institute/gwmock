@@ -44,6 +44,17 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             ),
         ),
     ] = False,
+    split_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--split-metadata/--no-split-metadata",
+            help=(
+                "Write the merged record as a shareable record plus a private details file beside it "
+                "(the default), or as one combined record. Matches 'globals.metadata.split' in a "
+                "run's config."
+            ),
+        ),
+    ] = True,
 ):
     """Merge multiple frame files into a single file.
 
@@ -61,6 +72,10 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             keeps the source parameters of the injected signals. It is off by default for the reason
             a run's own flag is: the sources' metadata files carry those parameters, so a merge that
             embedded them verbatim would put a blind challenge's answers into the file it releases.
+        split_metadata (bool): If True (the default), the merged record is written as a shareable
+            record -- no author, no host name, paths relative to the current directory or reduced to
+            file names -- with the author and the original paths in a private details file beside
+            it. If False, one combined record is written.
 
     Raises:
         ValueError: If metadata files are not provided and force is False, or if the format cannot be
@@ -80,7 +95,14 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     TimeSeries = require("gwpy.timeseries", "gwpy", "Merging frame or HDF5 files").TimeSeries  # noqa: N806
 
     from gwmock.cli.utils.hash import compute_file_hash
-    from gwmock.cli.utils.metadata import embed_metadata_record
+    from gwmock.cli.utils.metadata import (
+        PRIVATE_REFERENCE_KEY,
+        embed_metadata_record,
+        private_metadata_path,
+        private_reference,
+        split_metadata_record,
+        write_private_metadata,
+    )
     from gwmock.strain_schema import declare_strain_schema
     from gwmock.utils.log import get_dependency_versions
 
@@ -103,8 +125,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             with metadata_file.open("r", encoding="utf-8") as f:
                 file_metadata = yaml.safe_load(f)
 
-            file_hashes: dict = file_metadata.get("file_hashes", {})
-            expected_hash = file_hashes.get(file_name.name)
+            expected_hash = _recorded_hash(file_metadata.get("file_hashes") or {}, file_name)
 
             if expected_hash is None:
                 raise ValueError(f"No hash found in metadata for file {file_name.name}")
@@ -183,6 +204,24 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         merged_metadata["timestamp"] = timestamp.isoformat()
         merged_metadata["versions"] = get_dependency_versions()
 
+    merged_metadata_file = Path(output).with_suffix(".metadata.yaml")
+    # The document embedded in the merged file and the one written beside it are the same: the
+    # shareable record, unless the split is turned off. Split before embedding, for the reason a run
+    # does -- the embedded copy is what travels -- with paths made relative to the directory the
+    # merge runs in, the only working directory a merge has.
+    private_file: Path | None = None
+    private_document: dict | None = None
+    if merged_metadata is not None and split_metadata:
+        parts = split_metadata_record(
+            merged_metadata,
+            base_directory=Path.cwd(),
+            record_file_name=merged_metadata_file.name,
+        )
+        merged_metadata = parts.shareable
+        private_file = private_metadata_path(merged_metadata_file)
+        private_document = parts.private
+
+    if merged_metadata is not None:
         # Embedded here for the two reasons the declaration above is placed here: before the rename,
         # so the file is complete the moment it appears under its final name, and before the hash
         # below, since embedding changes the container bytes the hash is of. The sources' records
@@ -202,16 +241,30 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
 
         typer.echo("Creating merged metadata file...")
 
-        merged_metadata["file_hashes"] = {output: compute_file_hash(output)}
+        output_hash = compute_file_hash(output)
+        if private_file is not None and private_document is not None:
+            # Keyed by the file name, which is what a later merge looks the hash up by; the path as
+            # given -- absolute, perhaps -- is what the private details restore.
+            output_key = Path(output).name
+            if output_key != output:
+                private_document["renamed_keys"].append(
+                    {"object": "/file_hashes", "key": output_key, "original": str(output)}
+                )
+            merged_metadata["file_hashes"] = {output_key: output_hash}
+            digest = write_private_metadata(private_document, private_file)
+            merged_metadata[PRIVATE_REFERENCE_KEY] = private_reference(private_file, digest)
+        else:
+            merged_metadata["file_hashes"] = {output: output_hash}
 
         # Atomic write of metadata file
-        merged_metadata_file = Path(output).with_suffix(".metadata.yaml")
         temp_metadata_file = merged_metadata_file.with_suffix(".tmp")
         with temp_metadata_file.open("w", encoding="utf-8") as f:
             yaml.safe_dump(merged_metadata, f)
         temp_metadata_file.rename(merged_metadata_file)
 
         typer.echo(f"Merged metadata file created at {merged_metadata_file}")
+        if private_file is not None:
+            typer.echo(f"Private details (author, absolute paths) written to {private_file}")
 
     else:
         typer.echo("No metadata provided for the source files.")
@@ -254,3 +307,25 @@ def _resolve_output(output: str | None, file_names: list[Path]) -> str:
             f"Pass --output with the extension you want, for example --output merged{suffixes[0]}."
         )
     return f"merged{suffixes[0]}"
+
+
+def _recorded_hash(file_hashes: dict, file_name: Path) -> str | None:
+    """Return the hash a record holds for *file_name*, however the record keyed it.
+
+    A run keys ``file_hashes`` by file name. A merged record keys it by the file name too when it is
+    shareable, and by the ``--output`` value as given when it is combined -- which may be a path.
+    Looked up by name first, then by the path as given, then by the one key naming the same file, so
+    a merged file can itself be merged again from either kind of record.
+
+    Args:
+        file_hashes: The record's ``file_hashes`` mapping.
+        file_name: The file being checked.
+
+    Returns:
+        The recorded hash, or ``None`` if the record holds none for this file.
+    """
+    for key in (file_name.name, str(file_name)):
+        if key in file_hashes:
+            return file_hashes[key]
+    matches = [value for key, value in file_hashes.items() if Path(str(key)).name == file_name.name]
+    return matches[0] if len(matches) == 1 else None

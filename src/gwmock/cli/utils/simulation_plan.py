@@ -14,7 +14,13 @@ from typing import Any
 from gwmock.cli.utils.config import Config, GlobalsConfig, OrchestrationConfig, SimulatorConfig
 from gwmock.cli.utils.config_resolution import resolve_max_samples
 from gwmock.cli.utils.hash import compute_file_hash
-from gwmock.cli.utils.metadata import SCHEMA_VERSION, MetadataRecord, load_metadata_with_external_state
+from gwmock.cli.utils.metadata import (
+    PRIVATE_REFERENCE_KEY,
+    SCHEMA_VERSION,
+    MetadataRecord,
+    load_metadata_with_external_state,
+    with_private_details,
+)
 from gwmock.utils.log import get_dependency_versions
 
 logger = logging.getLogger("gwmock")
@@ -412,6 +418,31 @@ def create_plan_from_config(
     return plan
 
 
+def _replay_record(metadata_file: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return the record a replay works from: the complete one when its private details are present.
+
+    On the producer's machine the private details sit beside the record, and a replay uses the
+    original absolute paths, exactly as from a combined record. Anywhere else the shareable record is
+    replayed as it stands: its paths are relative to the working directory, which reads ``.``, so the
+    replay writes under the current directory and expects an input that lay outside the original
+    working directory -- a population file, say -- by its file name there.
+
+    Args:
+        metadata_file: The record's path.
+        metadata: The record, as parsed.
+
+    Returns:
+        The record to replay.
+    """
+    complete = with_private_details(metadata_file, metadata)
+    if complete is metadata and isinstance(metadata.get(PRIVATE_REFERENCE_KEY), dict):
+        logger.info(
+            "Replaying %s from its shareable record: paths resolve against the current directory.",
+            metadata_file.name,
+        )
+    return complete
+
+
 def create_plan_from_metadata_files(
     metadata_files: list[Path],
     checkpoint_dir: Path,
@@ -449,7 +480,7 @@ def create_plan_from_metadata_files(
         if not metadata_file.exists():
             raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
 
-        metadata = parse_batch_metadata(metadata_file)
+        metadata = _replay_record(metadata_file, parse_batch_metadata(metadata_file))
 
         # Prefer the fully-resolved config so an unpinned run replays to the exact
         # external resources it used (e.g. a pinned dataset revision); fall back to
