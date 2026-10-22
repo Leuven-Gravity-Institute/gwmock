@@ -922,7 +922,7 @@ class TestThePopulationColumnsTheBatchedPathIgnores:
         orchestrator = self._with_columns(
             _orchestrator(tmp_path, "batched", waveform_backend=None),
             redshift=0.1,
-            source_frame_mass_1=27.0,
+            source_frame_mass_1=_COMPLETE_EVENT["detector_frame_mass_1"] / 1.1,
             eccentricity=0.0,
         )
 
@@ -941,5 +941,5 @@ class TestThePopulationColumnsTheBatchedPathIgnores:
     def test_a_nonzero_eccentricity_stops_the_run(self, tmp_path):
         orchestrator = self._with_columns(_orchestrator(tmp_path, "batched", waveform_backend=None), eccentricity=0.2)
 
-        with pytest.raises(ValueError, match="eccentricity are nonzero"):
+        with pytest.raises(ValueError, match=r"eccentricity is 0\.2"):
             orchestrator._require_batched_population_columns()

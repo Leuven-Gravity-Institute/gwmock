@@ -1012,6 +1012,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         signal_config = getattr(getattr(self, "orchestration_config", None), "signal", None)
         if signal_config is not None and hasattr(adapter, "ignore_population_columns"):
             adapter.ignore_population_columns(getattr(signal_config, "ignored_population_columns", ()) or ())
+        if signal_config is not None and hasattr(adapter, "configure_reference_frequency"):
+            adapter.configure_reference_frequency(self._configured_reference_frequency())
         if getattr(self, "_substituted_waveform_backend", None) is not None:
             self._substituted_waveform_backend = None
 
@@ -1448,6 +1450,26 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return None
         return instantiate_backend("waveform", "ripple", init_kwargs=arguments)
 
+    def _configured_reference_frequency(self) -> float | None:
+        """Return ``f_ref`` as configured for the waveform backend, or ``None`` when unset.
+
+        Read from ``waveform-backend-arguments``; in batched execution an ``f_ref`` under
+        ``waveform-arguments`` reaches the backend constructor too (see
+        :meth:`_batched_waveform_backend`). With none, the backends reference the spins to the
+        low-frequency cutoff.
+        """
+        signal_config = getattr(getattr(self, "orchestration_config", None), "signal", None)
+        if signal_config is None:
+            return None
+        arguments = _normalize_keys(dict(getattr(signal_config, "waveform_backend_arguments", {}) or {}))
+        if "f_ref" in arguments and arguments["f_ref"] is not None:
+            return float(arguments["f_ref"])
+        if str(getattr(signal_config, "execution", "per-event")) == "batched":
+            fixed = getattr(signal_config, "waveform_arguments", {}) or {}
+            if fixed.get("f_ref") is not None:
+                return float(fixed["f_ref"])
+        return None
+
     def _require_batched_population_columns(self) -> None:
         """Refuse, once and before anything is generated, a population column the batched path ignores.
 
@@ -1469,6 +1491,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             ignored=getattr(signal_config, "ignored_population_columns", ()) or (),
             reader="the batched path (execution: batched)",
             events=self._population_events,
+            reference_frequency=(
+                self._configured_reference_frequency()
+                if self._configured_reference_frequency() is not None
+                else float(self.minimum_frequency)
+            ),
         )
         self._batched_population_columns_checked = True
 

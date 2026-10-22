@@ -13,7 +13,7 @@ import numpy as np
 from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
 
 from gwmock.data.time_series.time_series import TimeSeries
-from gwmock.signal.population_columns import require_population_columns_read, require_zero_only_columns_zero
+from gwmock.signal.population_columns import require_population_columns_read, require_redundant_columns_agree
 from gwmock.utils.errors import DeterministicRefusalError
 
 logger = logging.getLogger("gwmock")
@@ -225,6 +225,22 @@ class SignalAdapter:
         self._unsupported_params: set[str] = set()
         #: Population columns the configuration declares are not waveform inputs, left out quietly.
         self._ignored_population_columns: frozenset[str] = frozenset()
+        #: ``f_ref`` from ``signal.waveform-backend-arguments``; ``None`` means each call's cutoff.
+        self._configured_reference_frequency: float | None = None
+
+    def configure_reference_frequency(self, f_ref: float | None) -> None:
+        """Record the reference frequency the waveform backend was configured with, if any.
+
+        Args:
+            f_ref: ``f_ref`` from ``signal.waveform-backend-arguments``, or ``None`` when unset, in
+                which case the backends reference the spins to each call's ``minimum_frequency``.
+        """
+        self._configured_reference_frequency = None if f_ref is None else float(f_ref)
+
+    def _reference_frequency(self, minimum_frequency: float) -> float:
+        """Return the frequency the waveform backend references the spins to on this call."""
+        configured = self._configured_reference_frequency
+        return float(minimum_frequency) if configured is None else configured
 
     def ignore_population_columns(self, names: Collection[str]) -> None:
         """Declare population columns that are not waveform inputs, to be left out without refusal.
@@ -619,6 +635,7 @@ class SignalAdapter:
         parameters: Mapping[str, Any],
         waveform_arguments: Mapping[str, Any] | None,
         waveform_options: Mapping[str, Any] | None,
+        minimum_frequency: float,
     ) -> dict[str, Any]:
         """Build the mapping a backend call takes, from per-event and fixed settings.
 
@@ -632,6 +649,8 @@ class SignalAdapter:
             parameters: Per-event source parameters.
             waveform_arguments: Fixed waveform parameters merged flat; per-event values win.
             waveform_options: Extra options passed through as the backend's ``waveform_arguments``.
+            minimum_frequency: The call's low-frequency cutoff, which is the reference frequency
+                when none is configured.
 
         Returns:
             The merged mapping, less any parameters this backend has already rejected.
@@ -649,13 +668,15 @@ class SignalAdapter:
             backend_parameters["waveform_arguments"] = dict(waveform_options)
         if self._unsupported_params:
             _refuse_configured_rejections(self._unsupported_params, waveform_arguments)
-            # The columns were classified when the backend first rejected them; a zero-only column
-            # is still checked per event, because only a zero value may be left out.
-            require_zero_only_columns_zero(
+            # The columns were classified when the backend first rejected them; a conditional
+            # column is still checked per event, because whether it may be left out depends on
+            # the event's own values.
+            require_redundant_columns_agree(
                 self._unsupported_params,
                 ignored=self._ignored_population_columns,
                 reader="the waveform backend",
                 events=(parameters,),
+                reference_frequency=self._reference_frequency(minimum_frequency),
             )
             backend_parameters = {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
         return backend_parameters
@@ -665,6 +686,7 @@ class SignalAdapter:
         exc: ValueError,
         backend_parameters: Mapping[str, Any],
         waveform_arguments: Mapping[str, Any] | None,
+        minimum_frequency: float,
     ) -> dict[str, Any] | None:
         """Return *backend_parameters* less what *exc* says the backend rejects, or ``None``.
 
@@ -683,6 +705,8 @@ class SignalAdapter:
             exc: The ``ValueError`` a backend call raised.
             backend_parameters: The mapping that call was given.
             waveform_arguments: The configured fixed waveform arguments merged into that mapping.
+            minimum_frequency: The call's low-frequency cutoff, which is the reference frequency
+                when none is configured.
 
         Returns:
             The filtered mapping, or ``None`` when *exc* is some other failure.
@@ -712,6 +736,7 @@ class SignalAdapter:
                     ignored=self._ignored_population_columns,
                     reader=f"the {match.group(1)} waveform backend",
                     events=(backend_parameters,),
+                    reference_frequency=self._reference_frequency(minimum_frequency),
                 )
             except ValueError as refusal:
                 raise refusal from exc
@@ -750,7 +775,9 @@ class SignalAdapter:
         query = getattr(self._backend, "pre_coalescence_duration", None)
         if query is None:
             return None
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
             return query(
                 backend_parameters,
@@ -761,7 +788,7 @@ class SignalAdapter:
             # The same unsupported-parameter dance generation does, for the same reason: a
             # population column the backend does not know must not be the thing that decides
             # whether an inspiral is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
             if filtered is None:
                 raise
             return query(
@@ -806,7 +833,9 @@ class SignalAdapter:
         query = getattr(self._backend, "post_coalescence_duration", None)
         if query is None:
             return None
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
             return query(
                 backend_parameters,
@@ -816,7 +845,7 @@ class SignalAdapter:
         except ValueError as exc:
             # As on the pre side: a population column the backend does not know must not be what
             # decides whether an event is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
             if filtered is None:
                 raise
             return query(
@@ -853,7 +882,9 @@ class SignalAdapter:
         Returns:
             A DetectorStrainStack instance.
         """
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
             return self._backend.simulate(
                 backend_parameters,
@@ -864,7 +895,7 @@ class SignalAdapter:
                 earth_rotation=earth_rotation,
             )
         except ValueError as exc:
-            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
             if filtered is None:
                 raise
             return self._backend.simulate(

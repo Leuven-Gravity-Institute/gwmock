@@ -455,13 +455,25 @@ A population catalogue usually carries more columns than the waveform reads.
 Each is recorded in the injection parameters either way; what happens in the
 waveform call depends on the column:
 
-- **Known population-only columns are left out quietly**: `redshift`,
-  `source_frame_mass_1`/`_2`, the spin magnitudes and tilts `spin_1`, `spin_2`,
-  `tilt_1`, `tilt_2`, `theta_jn` (recorded beside the `inclination` the waveform
-  reads), a per-event `f_ref` (backends take it from
-  `waveform-backend-arguments`), and labels and indices (`event_id`,
-  `source_type`, `source_class`, `class`). These are what gwmock-pop writes
-  besides the waveform's parameters.
+- **Population-only columns are left out quietly**: `redshift` and labels and
+  indices (`event_id`, `source_type`, `source_class`, `class`).
+- **Columns that restate what the waveform reads are left out only when, for
+  each event, the waveform's own copy is present and agrees**; otherwise the run
+  stops, naming the event:
+    - `source_frame_mass_1`/`_2`: the detector-frame mass is present, and with
+      `redshift` present equals `m_src (1 + z)` to a relative 1e-6.
+    - `spin_1`, `spin_2`, `tilt_1`, `tilt_2`: all three Cartesian components of
+      that spin are present, and the magnitude is their norm and the tilt
+      `arccos(z / |chi|)`, to 1e-6 (the tilt is not checked at zero spin). A
+      catalogue giving spins only as magnitude and tilt would otherwise generate
+      non-spinning binaries.
+    - `theta_jn`: `inclination` is present, and where neither body has an
+      in-plane spin component — the binary has no precession, so the two are the
+      same angle — equals it to 1e-6 rad.
+    - A per-event `f_ref`: equals, to a relative 1e-6, the reference frequency
+      the waveform backend uses: `f_ref` under `waveform-backend-arguments`, or
+      the `minimum-frequency` when that is unset. A catalogue whose spins refer
+      to 20 Hz needs `f_ref: 20` there.
 - **`eccentricity`, `long_asc_node` and `mean_per_ano` are left out only while
   they are zero.** gwmock generates quasi-circular waveforms, which are exact at
   zero eccentricity; a nonzero value stops the run.

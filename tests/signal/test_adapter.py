@@ -310,7 +310,7 @@ class TestSimulateStackUnsupportedParams:
         backend = FailingBackend(waveform_model="IMRPhenomXPHM", backend_label=backend_label)
         adapter = _make_adapter_with_backend(backend)
 
-        params = {"mass_1": 1.4, "redshift": 0.05, "source_frame_mass_1": 1.3, "coa_time": 0.0}
+        params = {"detector_frame_mass_1": 1.43, "redshift": 0.1, "source_frame_mass_1": 1.3, "coa_time": 0.0}
 
         with patch("gwmock.signal.adapter.logger") as mock_logger:
             adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
@@ -319,7 +319,7 @@ class TestSimulateStackUnsupportedParams:
         assert backend.call_count == 2
         assert "redshift" not in backend.received_params[1]
         assert "source_frame_mass_1" not in backend.received_params[1]
-        assert "mass_1" in backend.received_params[1]
+        assert "detector_frame_mass_1" in backend.received_params[1]
 
     def test_known_columns_are_cached_after_the_first_call(self):
         """Subsequent calls pre-filter and do NOT trigger a second backend failure."""
@@ -383,10 +383,37 @@ class TestSimulateStackUnsupportedParams:
         adapter.simulate_stack(
             {"mass_1": 1.4, "eccentricity": 0.0, "coa_time": 0.0}, sampling_frequency=4.0, minimum_frequency=20.0
         )
-        with pytest.raises(ValueError, match="eccentricity are nonzero"):
+        with pytest.raises(ValueError, match=r"eccentricity is 0\.1"):
             adapter.simulate_stack(
                 {"mass_1": 1.4, "eccentricity": 0.1, "coa_time": 0.0}, sampling_frequency=4.0, minimum_frequency=20.0
             )
+
+    def test_spins_given_only_as_magnitude_and_tilt_stop_the_run(self):
+        """Dropping them would generate a non-spinning binary from a spinning catalogue."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"spin_1", "tilt_1"})
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match="spin_1, tilt_1 are given without all of spin_1x"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "spin_1": 0.5, "tilt_1": 0.6, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+            )
+
+    def test_a_per_event_f_ref_must_be_the_one_the_backend_uses(self):
+        """Without a configured f_ref the backends reference the spins to the call's cutoff."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"f_ref"})
+        adapter = _make_adapter_with_backend(backend)
+        event = {"mass_1": 1.4, "f_ref": 20.0, "coa_time": 0.0}
+
+        adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=20.0)
+        with pytest.raises(ValueError, match=r"f_ref is 20\.0 Hz.*5\.0 Hz"):
+            adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=5.0)
+
+        adapter.configure_reference_frequency(20.0)
+        adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=5.0)
 
     def test_a_rejected_configured_waveform_argument_fails_the_run(self):
         """A key the user set under ``waveform-arguments`` is refused, not dropped.

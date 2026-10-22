@@ -15,8 +15,9 @@ import pytest
 
 from gwmock.signal.device_chunks import BATCHED_PARAMETERS, canonicalise_parameters
 from gwmock.signal.population_columns import (
-    POPULATION_ONLY_COLUMNS,
+    KNOWN_COLUMNS,
     ZERO_ONLY_COLUMNS,
+    require_redundant_columns_agree,
     unread_columns_to_refuse,
 )
 
@@ -34,7 +35,10 @@ def test_the_canonical_parameter_names_gwmock_pop_exports_are_covered():
     assert _refused(CBC_PARAMETER_NAMES) == []
 
 
-@pytest.mark.parametrize("preset", ["bbh_flat", "bbh_gwtc4", "bns_flat", "nsbh_flat"])
+_PRESETS = ["bbh_flat", "bbh_gwtc4", "bns_flat", "nsbh_flat"]
+
+
+@pytest.mark.parametrize("preset", _PRESETS)
 def test_a_real_gwmock_pop_draw_is_covered_and_its_zero_only_columns_are_zero(preset):
     from gwmock_pop.simulators.graph import GraphSimulator
 
@@ -68,4 +72,35 @@ def test_a_misspelt_spin_is_not_known():
 
 
 def test_no_known_column_is_one_the_waveform_reads():
-    assert not (set(POPULATION_ONLY_COLUMNS) | ZERO_ONLY_COLUMNS) & BATCHED_PARAMETERS
+    assert not KNOWN_COLUMNS & BATCHED_PARAMETERS
+
+
+def _events(draw) -> list[dict]:
+    names = list(draw.keys())
+    columns = {name: np.asarray(draw[name], dtype=float) for name in names}
+    return [{name: float(columns[name][i]) for name in names} for i in range(len(columns[names[0]]))]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason=(
+        "gwmock-pop defect: its presets draw theta_jn independently of inclination although they "
+        "draw no in-plane spin, so the two must be the same angle"
+    ),
+)
+@pytest.mark.parametrize("preset", _PRESETS)
+def test_a_real_gwmock_pop_draw_is_left_out_consistently(preset):
+    """Every conditional column of a real draw holds its condition, for a run referencing 20 Hz.
+
+    gwmock-pop draws ``f_ref = 20``, so a run on its output sets ``f_ref: 20`` under
+    ``signal.waveform-backend-arguments``; 20 Hz is what is passed here.
+    """
+    from gwmock_pop.simulators.graph import GraphSimulator
+
+    draw = GraphSimulator.from_preset(preset, seed=1).simulate(8)
+    canonical = set(canonicalise_parameters(dict.fromkeys(draw.keys(), 0.0)))
+
+    require_redundant_columns_agree(
+        canonical - BATCHED_PARAMETERS, ignored=(), reader="test", events=_events(draw), reference_frequency=20.0
+    )

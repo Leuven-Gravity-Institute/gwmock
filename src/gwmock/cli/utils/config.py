@@ -220,8 +220,9 @@ class SignalConfig(BaseModel):
         alias="ignored-population-columns",
         description=(
             "Population columns that are not waveform inputs and may be left out of the waveform "
-            "call. A column the waveform does not read stops the run unless it is a known "
-            "population-only column (redshift, source-frame masses, labels) or listed here."
+            "call. A column the waveform does not read stops the run unless it is population-only "
+            "(redshift, labels), restates a column the waveform reads and agrees with it (source-frame "
+            "masses, spin magnitudes and tilts, theta_jn, a per-event f_ref), or is listed here."
         ),
     )
     waveform_options: dict[str, Any] = Field(
