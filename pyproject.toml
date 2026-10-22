@@ -91,7 +91,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.19.1"]
+sgwb = ["gwmock-signal[sgwb]>=0.20.0"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -107,10 +107,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.19.1"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.19.1"]
+jax = ["gwmock-signal[jax]>=0.20.0"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.19.1", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.20.0", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -134,7 +134,7 @@ hdf5 = [
   "gwmock-pop[hdf5]>=0.18.0",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
-gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.19.1"]
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.20.0"]
 
 [dependency-groups]
 dev = [
@@ -142,7 +142,7 @@ dev = [
   # tests skip.
   "h5py>=3.16.0; python_version < '3.15'",
   "gwpy>=4.1.0; python_version < '3.15'",
-  "prek>=0.5.5",
+  "prek>=0.5.6",
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.17.0",
   "pytest>=9.1.1",
