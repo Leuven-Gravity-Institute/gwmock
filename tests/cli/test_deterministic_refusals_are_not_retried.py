@@ -466,3 +466,64 @@ class TestTheWholeChainIsRead:
                 raise ValueError("glitch model could not be configured") from wrapper
 
         assert _stream_open_attempts(tmp_path, monkeypatch, wrapped) == 1
+
+
+class TestAContextLinkMeansRaisedWhileHandling:
+    """An implicit context is an earlier failure, not the cause of the one raised while handling it."""
+
+    @staticmethod
+    def _requests_404():
+        import requests
+
+        response = requests.Response()
+        response.status_code = 404
+        return requests.HTTPError("404", response=response)
+
+    def _mixed_chain(self) -> ValueError:
+        """ValueError <- context ConnectionError <- context 404."""
+        try:
+            try:
+                try:
+                    raise self._requests_404()
+                except OSError:
+                    raise ConnectionError("reset while falling back")  # noqa: B904 -- the implicit link under test
+            except OSError:
+                raise ValueError("glitch model could not be configured")  # noqa: B904
+        except ValueError as error:
+            return error
+
+    def test_a_connection_failure_raised_while_handling_a_404_is_transient(self) -> None:
+        from gwmock.utils.errors import wraps_transient_failure
+
+        assert wraps_transient_failure(self._mixed_chain())
+
+    def test_the_mixed_chain_is_retried_while_opening_the_noise_stream(self, tmp_path, monkeypatch):
+        chain = self._mixed_chain()
+
+        def open_stream(**_kwargs):
+            raise chain
+
+        assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 4
+
+    def test_causes_from_an_os_error_down_to_a_404_are_final(self) -> None:
+        from gwmock.utils.errors import wraps_transient_failure
+
+        wrapper = OSError("could not fetch")
+        wrapper.__cause__ = self._requests_404()
+        error = ValueError("glitch model")
+        error.__cause__ = wrapper
+        assert not wraps_transient_failure(error)
+
+    def test_a_value_error_raised_while_handling_a_404_is_final(self) -> None:
+        from gwmock.utils.errors import wraps_transient_failure
+
+        caught: ValueError | None = None
+        try:
+            try:
+                raise self._requests_404()
+            except OSError:
+                raise ValueError("no catalogue at that URL")  # noqa: B904 -- the implicit link under test
+        except ValueError as error:
+            caught = error
+        assert caught is not None
+        assert not wraps_transient_failure(caught)

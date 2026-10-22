@@ -63,22 +63,28 @@ def wraps_transient_failure(error: BaseException) -> bool:
     subclasses, so one check covers them. Used where a ``ValueError`` or ``TypeError`` from a whole
     subsystem is marked final, so such a wrapping stays retryable.
 
-    The whole chain is walked from *error* outwards before deciding. A
-    :class:`DeterministicRefusalError` or a permanent HTTP failure (see
-    :func:`is_permanent_http_failure`) anywhere in it wins -- *not transient* -- because something
-    along the chain already shows the failure is final, however many ``OSError`` wrappers sit
-    above it. Otherwise the answer is whether any :class:`OSError` was seen. A cycle in the chain
-    ends the walk.
+    The chain is walked from *error* outwards, and the two kinds of link mean different things.
+    ``__cause__`` (``raise X from Y``) says ``Y`` is why ``X`` happened. ``__context__`` only says
+    ``X`` was raised while ``Y`` was being handled; it is followed at all because a library may wrap
+    a network failure without chaining it explicitly, and that must stay retryable. It is not
+    followed when ``__suppress_context__`` is set -- ``raise X from None`` is the author saying the
+    earlier failure is not the reason.
 
-    **Which links are followed.** ``__cause__`` always: ``raise X from Y`` says ``Y`` is why. The
-    implicit ``__context__`` only when nothing suppresses it -- ``raise X from None`` sets
-    ``__suppress_context__`` and is the author saying the earlier failure is not the reason. The
-    context is followed at all because a library may wrap a network failure without chaining it
-    explicitly, and that must stay retryable.
+    **Precedence.**
 
-    **Residual risk.** Following ``__context__`` can still misread a deterministic error raised
-    while an :class:`OSError` was being handled -- a configuration check failing inside an
-    ``except FileNotFoundError`` fallback, say -- as transient. The cost of that misreading is a
+    - Until an :class:`OSError` has been met, a :class:`DeterministicRefusalError` or a permanent
+      HTTP failure (see :func:`is_permanent_http_failure`) means *not transient*, whichever kind of
+      link reached it: something along the chain already shows the failure is final.
+    - Once a non-permanent :class:`OSError` has been met, only explicit ``__cause__`` links are
+      followed from it. A refusal or permanent HTTP failure reached that way is still final -- an
+      ``OSError`` wrapper raised from a 404 is the 404 -- but the first ``__context__`` link ends the
+      walk with *transient*: a connection reset raised while an earlier 404 was being handled is a
+      new failure, and the 404 behind it says nothing about whether a retry would get past it.
+    - A cycle ends the walk.
+
+    **Residual risk.** Before an :class:`OSError` is met, following ``__context__`` can misread a
+    deterministic error raised while an :class:`OSError` was being handled -- a configuration check
+    failing inside an ``except FileNotFoundError`` fallback, say -- as transient. That costs a
     bounded number of wasted retries before the same error is reported, while the opposite mistake
     would make a real network failure final; the rule is chosen for the cheaper error.
 
@@ -86,18 +92,22 @@ def wraps_transient_failure(error: BaseException) -> bool:
         error: The exception to inspect.
 
     Returns:
-        Whether the followed chain holds an :class:`OSError` and no refusal or permanent HTTP failure.
+        Whether a transient :class:`OSError` is met, under the precedence above.
     """
     seen: set[int] = set()
     saw_io_failure = False
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
+        seen.add(id(current))
         if isinstance(current, DeterministicRefusalError) or is_permanent_http_failure(current):
             return False
         saw_io_failure = saw_io_failure or isinstance(current, OSError)
-        seen.add(id(current))
         if current.__cause__ is not None:
             current = current.__cause__
+        elif saw_io_failure:
+            # Past an I/O failure only causes are followed; what it was raised while handling is
+            # an earlier, separate failure.
+            return True
         elif not current.__suppress_context__:
             current = current.__context__
         else:
