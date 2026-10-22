@@ -19,7 +19,7 @@ globals:
         duration: 4096
         total-duration: 4096
         # 1 Jan 2030, as the noise examples use. Chosen to contain the population's event
-        # (GPS 1577491300): a segment placed elsewhere still runs, and writes only zeros.
+        # (GPS 1577491300): a segment placed elsewhere still runs and writes only zeros, with a warning.
         start-time: 1577491218
         seed: 42
     working-directory: .

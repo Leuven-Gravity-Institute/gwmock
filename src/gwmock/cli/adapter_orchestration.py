@@ -210,6 +210,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # `_placement_order`, because it costs one query per event and the continuous-wave and
         # stochastic paths never consume the catalogue this way.
         self._placement_order_cache: tuple[int, ...] | None = None
+        #: Whether the run has been checked for a span that no event reaches. Once per orchestrator.
+        self._empty_span_checked = False
 
         #: Events the catalogue holds that lie wholly inside a segment gap, recorded as the walk
         #: steps over them. Per batch, like `_batch_injections`: the record belongs to the batch
@@ -734,6 +736,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         if self._source_type == "cw":
             return self._simulate_continuous_wave_segment()
 
+        self._warn_if_no_event_reaches_the_run()
+
         if self._execution_mode() == "batched":
             return self._simulate_batched_segment()
 
@@ -778,6 +782,59 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             if strain.start_time >= self.end_time:
                 break
         return chunks
+
+    def _warn_if_no_event_reaches_the_run(self) -> None:
+        """Warn, once per orchestrator, when no event of the population reaches the requested span.
+
+        A run whose span misses every event writes signal files holding only zeros and otherwise
+        looks like a success -- the usual cause is shortening ``duration`` without moving
+        ``start-time`` to bracket an event. The warning names the span and the nearest event, so
+        the fix is obvious. It is a warning rather than an error, because a span with no events is
+        also what a long population sliced into per-day jobs legitimately produces for a quiet day.
+
+        An event reaches the span when its waveform does: its coalescence time lies in it, or its
+        inspiral (``coa_time - lead``) or tail (``coa_time + tail``) crosses into it. Only the
+        nearest event on each side is queried, so the check costs two queries however long the
+        catalogue is. An unknown lead or tail counts as zero here, which is how placement treats an
+        unknown lead too.
+        """
+        if self._empty_span_checked:
+            return
+        self._empty_span_checked = True
+        coa_times = sorted(
+            float(event["coa_time"]) for event in self._population_events if event.get("coa_time") is not None
+        )
+        if not coa_times or len(coa_times) != len(self._population_events):
+            # No catalogue, or sources without a coalescence time, which belong to every segment.
+            return
+        layout = self.segment_layout
+        run_start, run_end = layout.start_time, layout.end_time
+        before = [coa for coa in coa_times if coa < run_start]
+        after = [coa for coa in coa_times if coa >= run_end]
+        if len(before) + len(after) < len(coa_times):
+            return
+        events_by_coa = {float(event["coa_time"]): event for event in self._population_events}
+        if after:
+            lead = self._pre_coalescence_duration(events_by_coa[after[0]]) or 0.0
+            if after[0] - float(lead) < run_end:
+                return
+        if before:
+            tail = self._post_coalescence_duration(events_by_coa[before[-1]]) or 0.0
+            if before[-1] + float(tail) > run_start:
+                return
+        nearest = min(
+            [*before[-1:], *after[:1]],
+            key=lambda coa: run_start - coa if coa < run_start else coa - run_end,
+        )
+        logger.warning(
+            "No event of the population (%d event(s)) reaches the requested span [%s, %s): the "
+            "nearest coalescence time is %s. The signal output of this run will hold only zeros. To "
+            "shorten a run, move start-time so that the span brackets an event.",
+            len(coa_times),
+            run_start,
+            run_end,
+            nearest,
+        )
 
     def _placement_waveform_arguments(self) -> dict[str, Any]:
         """Return the fixed waveform arguments the placement queries should be given.

@@ -241,8 +241,19 @@ total-duration: # GPS span of the dataset
 segment-gap: # GPS seconds between consecutive segments (default 0)
 ```
 
-To change the dataset duration, simply adjust these parameters in your
-configuration file.
+To change the dataset duration, adjust these parameters in your configuration
+file.
+
+**Shortening a run with signals:** the signals come from the population, and
+each one is injected only where its waveform falls inside the span
+`[start-time, start-time + total-duration)`. Shortening `duration` and
+`total-duration` moves the end of the span but not its start, so it can leave
+every event outside it. Such a run writes signal files that hold only zeros;
+gwmock warns when this happens, naming the span and the nearest event. To get a
+short dataset with a signal in it, also move `start-time` so that the span
+brackets an event's `coa_time` — for the quick-start's single event
+(`coa_time = 1577491300`), `start-time: 1577491268` with `duration: 64` puts it
+32 s into the segment.
 
 You can also change the sampling frequency of your dataset (the number of
 samples per second, measured in Hz), using the `sampling-frequency` argument.
