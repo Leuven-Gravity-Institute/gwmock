@@ -29,7 +29,7 @@ from gwmock.simulator.base import Simulator
 from gwmock.simulator.seeds import derive_seed
 from gwmock.simulator.state import StateAttribute
 from gwmock.strain_schema import declare_strain_schema
-from gwmock.utils.errors import DeterministicRefusalError
+from gwmock.utils.errors import DeterministicRefusalError, wraps_transient_failure
 
 
 def _default_waveform_backend_name() -> str:
@@ -2004,7 +2004,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         except (ValueError, TypeError) as exc:
             # Opening the stream validates the noise configuration -- the PSDs, the CSD pairs, the
             # spectral lines and glitch models -- and resolves it into a generator. A ValueError or
-            # TypeError there is the configuration's, and a retry of the batch would meet it again.
+            # TypeError there is the configuration's, and a retry of the batch would meet it again
+            # -- unless it was raised from an I/O failure, such as a glitch population download a
+            # library reported as a ValueError, which stays retryable.
+            if wraps_transient_failure(exc):
+                raise
             raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
         self._noise_stream_position = 0
         for _ in range(target_position):

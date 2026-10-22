@@ -2305,6 +2305,10 @@ def restore_batch_state(
                 batch.batch_index,
                 simulator.counter,
             )
+        except OSError:
+            # Restoring can read state back from disk; an I/O failure is reported as itself, so a
+            # caller can tell it from a state that does not fit the simulator.
+            raise
         except Exception as e:
             logger.error("Failed to restore batch state: %s", e)
             raise ValueError(f"Failed to restore state for batch {batch.batch_index}") from e
@@ -2334,6 +2338,10 @@ def restore_batch_state(
                 batch.batch_index,
                 simulator.counter,
             )
+        except OSError:
+            # Restoring can read state back from disk; an I/O failure is reported as itself, so a
+            # caller can tell it from a state that does not fit the simulator.
+            raise
         except Exception as e:
             logger.error("Failed to restore batch state: %s", e)
             raise ValueError(f"Failed to restore state for batch {batch.batch_index}") from e

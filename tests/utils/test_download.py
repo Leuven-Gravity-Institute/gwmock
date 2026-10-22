@@ -13,6 +13,7 @@ import pytest
 import requests
 
 from gwmock.utils.download import determine_dest_path, download_file, download_file_with_lock, handle_existing_file
+from gwmock.utils.errors import TransientDownloadError
 
 
 @pytest.fixture
@@ -118,7 +119,7 @@ def test_download_file_request_exception(temp_dir, mocker):
     url = "https://example.com/file.txt"
     mocker.patch("gwmock.utils.download.requests.get", side_effect=requests.RequestException("Network error"))
 
-    with pytest.raises(ValueError, match="Failed to download file"):
+    with pytest.raises(TransientDownloadError, match="Failed to download file"):
         download_file(url, outdir=temp_dir)
 
 
@@ -128,7 +129,7 @@ def test_download_file_lock_timeout(temp_dir, mocker, mock_response):
     mocker.patch("gwmock.utils.download.requests.get", return_value=mock_response)
     mocker.patch("gwmock.utils.download.filelock.FileLock", side_effect=filelock.Timeout("Lock timeout"))
 
-    with pytest.raises(ValueError, match="Timeout waiting for download lock"):
+    with pytest.raises(TransientDownloadError, match="Timeout waiting for download lock"):
         download_file(url, outdir=temp_dir, timeout=1)
 
 
@@ -265,7 +266,7 @@ class TestWhatTheDownloadIsActuallyToldToDo:
     def test_a_lock_timeout_names_the_url(self, temp_dir, mocker, mock_response):
         self._capture_get(mocker, mock_response)
         mocker.patch("gwmock.utils.download.filelock.FileLock", side_effect=filelock.Timeout("held elsewhere"))
-        with pytest.raises(ValueError, match=re.escape("https://example.com/file.txt")):
+        with pytest.raises(TransientDownloadError, match=re.escape("https://example.com/file.txt")):
             download_file("https://example.com/file.txt", outdir=temp_dir)
 
 
@@ -369,7 +370,7 @@ class TestAnInterruptedOverwrite:
         dest_path.write_text("the good copy")
         self._failing_response(mocker, self._dying_chunks())
 
-        with pytest.raises(ValueError, match="Failed to download file"):
+        with pytest.raises(TransientDownloadError, match="Failed to download file"):
             download_file("https://example.com/file.txt", outdir=temp_dir, overwrite=True)
 
         assert dest_path.read_text() == "the good copy"
@@ -380,7 +381,7 @@ class TestAnInterruptedOverwrite:
         dest_path.write_text("the good copy")
         self._failing_response(mocker, self._dying_chunks())
 
-        with pytest.raises(ValueError, match="Failed to download file"):
+        with pytest.raises(TransientDownloadError, match="Failed to download file"):
             download_file("https://example.com/file.txt", outdir=temp_dir, overwrite=True)
 
         assert self._files_ignoring_the_lock(temp_dir) == ["file.txt"]
@@ -388,7 +389,7 @@ class TestAnInterruptedOverwrite:
     def test_a_first_download_that_dies_leaves_nothing(self, temp_dir, mocker):
         self._failing_response(mocker, self._dying_chunks())
 
-        with pytest.raises(ValueError, match="Failed to download file"):
+        with pytest.raises(TransientDownloadError, match="Failed to download file"):
             download_file("https://example.com/file.txt", outdir=temp_dir)
 
         assert self._files_ignoring_the_lock(temp_dir) == []
@@ -403,3 +404,30 @@ class TestAnInterruptedOverwrite:
         assert result == dest_path
         assert dest_path.read_text() == "test data"
         assert self._files_ignoring_the_lock(temp_dir) == ["file.txt"]
+
+
+class TestWhichFailuresAreTransient:
+    """A failure a later attempt may not meet is an ``OSError``; a client error is a ``ValueError``."""
+
+    @staticmethod
+    def _status(mocker, status: int):
+        response = requests.Response()
+        response.status_code = status
+        error = requests.HTTPError(f"{status}", response=response)
+        mocker.patch("gwmock.utils.download.requests.get", side_effect=error)
+
+    @pytest.mark.parametrize("status", [500, 503, 408, 429])
+    def test_a_server_error_or_rate_limit_is_transient(self, temp_dir, mocker, status):
+        self._status(mocker, status)
+        with pytest.raises(TransientDownloadError):
+            download_file("https://example.com/file.txt", outdir=temp_dir)
+
+    def test_transient_failures_are_os_errors(self) -> None:
+        assert issubclass(TransientDownloadError, OSError)
+
+    @pytest.mark.parametrize("status", [403, 404])
+    def test_a_client_error_is_not(self, temp_dir, mocker, status):
+        self._status(mocker, status)
+        with pytest.raises(ValueError, match="Failed to download file") as excinfo:
+            download_file("https://example.com/file.txt", outdir=temp_dir)
+        assert not isinstance(excinfo.value, OSError)

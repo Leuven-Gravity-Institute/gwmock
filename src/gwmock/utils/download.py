@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import filelock
 import requests
 
+from gwmock.utils.errors import TransientDownloadError
+
 logger = logging.getLogger("gwmock")
 
 
@@ -138,6 +140,11 @@ def download_file(
 
     Returns:
         The path to the downloaded file.
+
+    Raises:
+        TransientDownloadError: If the network, the server or another process's download lock
+            fails in a way a later attempt may not -- an :class:`OSError`, so it is retried.
+        ValueError: If the server answers with a client error such as 404, which no retry changes.
     """
     dest_path = determine_dest_path(
         url=url,
@@ -158,7 +165,32 @@ def download_file(
             url=url, dest_path=dest_path, lock_path=lock_path, timeout=timeout, overwrite=overwrite
         )
     except filelock.Timeout as e:
-        raise ValueError(f"Timeout waiting for download lock on {url}: {e}") from e
+        raise TransientDownloadError(f"Timeout waiting for download lock on {url}: {e}") from e
     except requests.RequestException as e:
-        raise ValueError(f"Failed to download file from {url}: {e}") from e
+        if _is_permanent(e):
+            raise ValueError(f"Failed to download file from {url}: {e}") from e
+        raise TransientDownloadError(f"Failed to download file from {url}: {e}") from e
     return dest_path
+
+
+#: HTTP client errors that a later attempt may not meet: a request timeout, too early, rate limited.
+_RETRYABLE_CLIENT_STATUSES = frozenset({408, 425, 429})
+_CLIENT_ERROR_RANGE = range(400, 500)
+
+
+def _is_permanent(error: requests.RequestException) -> bool:
+    """Return whether a failed request would fail the same way if repeated.
+
+    Only an HTTP client error is: the URL is wrong or forbidden (404, 403, ...). A connection error,
+    a timeout, a server error or a rate limit can pass, so those are raised as
+    :class:`~gwmock.utils.errors.TransientDownloadError` for the caller to retry.
+
+    Args:
+        error: The exception ``requests`` raised.
+
+    Returns:
+        Whether repeating the request cannot help.
+    """
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    return isinstance(status, int) and status in _CLIENT_ERROR_RANGE and status not in _RETRYABLE_CLIENT_STATUSES

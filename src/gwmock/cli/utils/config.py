@@ -735,6 +735,9 @@ def save_config(
     except Exception as e:
         if temp_file.exists():
             temp_file.unlink()
+        if isinstance(e, OSError):
+            # A disk or permission failure is reported as itself, not as a configuration error.
+            raise
         raise ValueError(f"Failed to save configuration: {e}") from e
 
 

@@ -14,7 +14,7 @@ from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_
 
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.signal.population_columns import require_population_columns_read, require_redundant_columns_agree
-from gwmock.utils.errors import DeterministicRefusalError
+from gwmock.utils.errors import DeterministicRefusalError, wraps_transient_failure
 
 logger = logging.getLogger("gwmock")
 
@@ -913,7 +913,10 @@ class SignalAdapter:
             # Generation is a pure function of the event's parameters and the configuration, so a
             # ValueError or TypeError from the simulator -- a missing parameter, aliases mixed for
             # one quantity, a value out of range -- recurs on every retry of the batch. Marked final
-            # here, in one place, rather than by matching each message.
+            # here, in one place, rather than by matching each message. One raised from an I/O
+            # failure -- a waveform or ephemeris file a simulator could not fetch -- stays retryable.
+            if wraps_transient_failure(exc):
+                raise
             raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
 
     def simulate(

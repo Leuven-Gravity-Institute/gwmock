@@ -8,6 +8,7 @@ after a backoff, and with the same warning each time.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -232,3 +233,61 @@ def test_an_unsupported_noise_output_argument_is_attempted_once(tmp_path):
     orchestrator._active_noise_output_arguments = {"channel_prefix": "MOCK"}
 
     assert _attempts_any(orchestrator._run_noise_batch) == 1
+
+
+def test_a_download_failure_while_opening_the_noise_stream_is_retried(tmp_path, monkeypatch):
+    """A connection error is not the configuration's: the batch is retried, and a later attempt works.
+
+    The stream opening resolves remote glitch population files through ``download_file``; a
+    failure there used to come back as a ``ValueError``, which the stream-opening guard then
+    marked final.
+    """
+    import requests
+
+    from gwmock.utils.download import download_file
+
+    calls = {"get": 0}
+
+    class _Response:
+        headers: ClassVar[dict] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            del chunk_size
+            yield b"population"
+
+    def flaky_get(*_args, **_kwargs):
+        calls["get"] += 1
+        if calls["get"] == 1:
+            raise requests.ConnectionError("connection reset")
+        return _Response()
+
+    monkeypatch.setattr("gwmock.utils.download.requests.get", flaky_get)
+    orchestrator = _noise_orchestrator(tmp_path)
+
+    def open_stream(**_kwargs):
+        download_file("https://example.com/population.csv", outdir=tmp_path / "cache")
+        return iter(())
+
+    monkeypatch.setattr(orchestrator.noise_adapter, "open_stream", open_stream)
+
+    attempts = 0
+
+    def counted():
+        nonlocal attempts
+        attempts += 1
+        orchestrator._noise_stream = None
+        orchestrator._ensure_noise_stream()
+
+    retry_with_backoff(counted, max_retries=3, initial_delay=0.0)
+
+    assert attempts == 2
+    assert (tmp_path / "cache" / "population.csv").read_bytes() == b"population"
