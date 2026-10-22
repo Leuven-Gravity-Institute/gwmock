@@ -291,3 +291,22 @@ def test_a_download_failure_while_opening_the_noise_stream_is_retried(tmp_path, 
 
     assert attempts == 2
     assert (tmp_path / "cache" / "population.csv").read_bytes() == b"population"
+
+
+def test_an_unknown_template_variable_is_attempted_once(tmp_path):
+    """``set_batch_context`` expands the output templates; a variable the run lacks never appears."""
+    orchestrator = _noise_orchestrator(tmp_path)
+    orchestrator.orchestration_config.noise.output.arguments = {"channel": "{{ not_a_variable }}:STRAIN"}
+    batch = SimpleNamespace(simulator_config=orchestrator.orchestration_config)
+
+    assert (
+        _attempts_any(lambda: orchestrator.set_batch_context(batch=batch, output_directory=tmp_path, overwrite=True))
+        == 1
+    )
+
+
+def test_an_unknown_template_variable_is_still_an_attribute_error(tmp_path):
+    from gwmock.cli.utils.template import expand_template_variables
+
+    with pytest.raises(AttributeError, match="Template variable 'not_a_variable' not found"):
+        expand_template_variables("{{ not_a_variable }}", _noise_orchestrator(tmp_path))

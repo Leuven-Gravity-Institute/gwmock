@@ -53,3 +53,11 @@ def wraps_transient_failure(error: BaseException) -> bool:
         seen.add(id(current))
         current = current.__cause__ or current.__context__
     return False
+
+
+class UnknownTemplateVariableError(DeterministicRefusalError, AttributeError):
+    """A ``{{ variable }}`` in a file-name or channel template that the simulator does not have.
+
+    Decided by the configuration alone, so it is not retried. Also an :class:`AttributeError`, which
+    is what template expansion raised for it before, so a caller catching that still catches it.
+    """

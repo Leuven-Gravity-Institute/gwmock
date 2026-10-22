@@ -16,6 +16,8 @@ import numpy as np
 from astropy.units import Quantity
 from numpy.typing import NDArray
 
+from gwmock.utils.errors import UnknownTemplateVariableError
+
 logger = logging.getLogger("gwmock")
 
 
@@ -111,7 +113,9 @@ def get_file_name_from_template(  # pylint: disable=too-many-locals,duplicate-co
         try:
             value = getattr(instance, label)
         except AttributeError as e:
-            raise ValueError(f"Attribute '{label}' not found in instance of type {type(instance).__name__}") from e
+            raise UnknownTemplateVariableError(
+                f"Attribute '{label}' not found in instance of type {type(instance).__name__}"
+            ) from e
 
         if isinstance(value, Quantity):
             x = value.value
