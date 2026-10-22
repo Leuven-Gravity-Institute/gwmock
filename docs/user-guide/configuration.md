@@ -483,6 +483,19 @@ waveform call depends on the column:
   `spin1_z` for `spin_1z` — would otherwise vanish and the run would generate a
   different signal than the catalogue describes.
 
+<!-- prettier-ignore -->
+!!! warning "Populations drawn from gwmock-pop presets need gwmock-pop 0.18.0 or later"
+    Before 0.18.0, gwmock-pop's packaged presets (`bbh_flat`, `bbh_gwtc4`,
+    `bns_flat`, `nsbh_flat`) draw `theta_jn` independently of `inclination`,
+    although they draw no in-plane spin, and write `f_ref = 20` for every event.
+    A run on such a draw is refused before anything is generated, with an error
+    naming `theta_jn` (and, unless `f_ref: 20` is set under
+    `waveform-backend-arguments`, `f_ref`). From 0.18.0 the presets write
+    `theta_jn` equal to `inclination` and no longer write `f_ref`, and their
+    draws run unchanged. With an older gwmock-pop, upgrade it rather than
+    declaring the columns ignored: the inclination the waveform reads and the
+    `theta_jn` the catalogue records would otherwise disagree.
+
 If a column is not meant as a waveform input, declare it:
 
 ```yaml

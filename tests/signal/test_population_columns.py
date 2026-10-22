@@ -85,8 +85,9 @@ def _events(draw) -> list[dict]:
     strict=True,
     raises=ValueError,
     reason=(
-        "gwmock-pop defect: its presets draw theta_jn independently of inclination although they "
-        "draw no in-plane spin, so the two must be the same angle"
+        "gwmock-pop before 0.18.0: its presets draw theta_jn independently of inclination although "
+        "they draw no in-plane spin, so the two must be the same angle. Fixed in gwmock-pop 0.18.0; "
+        "remove this mark when the dependency floor is raised to it"
     ),
 )
 @pytest.mark.parametrize("preset", _PRESETS)
