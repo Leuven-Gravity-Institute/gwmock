@@ -84,6 +84,10 @@ def main(
     """
     setup_logging(verbose)
 
+    from gwmock.utils.log import ignore_future_epoch_warnings  # pylint: disable=import-outside-toplevel
+
+    ignore_future_epoch_warnings()
+
 
 # Import and register commands after app is created
 def register_commands() -> None:

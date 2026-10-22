@@ -232,6 +232,16 @@ Requirements and limits:
     Earth-orientation data as old as the pinned release. Measured scale: one
     weekly table release moved a strain peak by 1.6e-06 relative.
 
+- **Dates past the tables are extrapolated, and the `gwmock` command does not
+  warn about it.** For a date beyond the leap-second table, or beyond the
+  measured Earth-orientation data — the examples' 2030 epoch is both — Astropy
+  and ERFA extrapolate and warn on every conversion: ERFA's `dubious year` and
+  Astropy's `Tried to get polar motions for times after IERS data is valid`. A
+  run would print them a dozen times or more, and for simulated data at a future
+  date there is no measured value to use instead, so the command line filters
+  exactly these two messages. Every other Astropy or ERFA warning is still
+  shown, and code calling gwmock from Python sees them all.
+
 ## Finding which frame contains a signal
 
 Alongside the per-file `index.yaml`, a run writes `signal_index.yaml` mapping
