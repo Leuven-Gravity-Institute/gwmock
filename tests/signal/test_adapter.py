@@ -335,6 +335,56 @@ class TestSimulateStackUnsupportedParams:
         assert "redshift" not in backend.received_params[2]
         assert "lambda_1" not in backend.received_params[2]
 
+    def test_a_rejected_configured_waveform_argument_fails_the_run(self):
+        """A key the user set under ``waveform-arguments`` is refused, not dropped.
+
+        Dropping it would generate a waveform other than the one configured -- an ``f_ref`` that
+        never reaches the backend runs at the backend's default -- while the run reports success.
+        """
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match=r"lambda_1.*waveform-arguments") as excinfo:
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"lambda_1": 300.0},
+            )
+        assert "Unsupported LAL waveform parameters" in str(excinfo.value)
+        assert backend.call_count == 1, "the call was retried without the configured key"
+
+    def test_a_rejected_configured_waveform_argument_fails_every_entry_point(self):
+        """The placement queries refuse it too, so placement cannot run on a silently changed setting."""
+        backend = TailQueryingBackend()
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match="waveform-arguments"):
+            adapter.post_coalescence_duration(
+                {"mass_1": 30.0, "coa_time": 0.0},
+                sampling_frequency=1024.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"redshift": 0.1},
+            )
+
+    def test_a_configured_key_already_rejected_as_a_column_is_not_dropped_silently(self):
+        """The cache of rejected population columns must not swallow a configured key of the same name."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+        adapter.simulate_stack(
+            {"mass_1": 1.4, "redshift": 0.05, "coa_time": 0.0},
+            sampling_frequency=4.0,
+            minimum_frequency=20.0,
+        )
+
+        with pytest.raises(ValueError, match="redshift"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"redshift": 0.05},
+            )
+
     def test_genuine_value_error_is_reraised(self):
         """A ValueError not matching the prefix must propagate unchanged."""
         backend = MagicMock()

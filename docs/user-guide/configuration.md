@@ -438,6 +438,16 @@ signal:
         taper_fraction: 0.05 # ripple-specific
 ```
 
+Keep them apart from `signal.waveform-arguments`, which are merged into every
+event's parameters and passed to each waveform call. A key there that the
+backend does not accept stops the run with the backend's message rather than
+being dropped, because dropping it would generate a waveform other than the one
+configured. A constructor setting such as `f_ref` belongs under
+`waveform-backend-arguments`. Population columns the backend does not accept,
+such as `redshift`, are different: they are not waveform inputs, so they are
+left out of the waveform call with a warning and are still recorded in the
+injection parameters.
+
 Two things to be aware of:
 
 - This selects a **library, not a compute device.** `ripple` is JAX-based, but

@@ -793,6 +793,23 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 break
         return chunks
 
+    def _placement_waveform_arguments(self) -> dict[str, Any]:
+        """Return the fixed waveform arguments the placement queries should be given.
+
+        The batched path hands the keys in ``BATCHED_BACKEND_ARGUMENTS`` (``f_ref``) to the backend
+        constructor rather than to each waveform call, so they are left out of the mapping the
+        per-event queries see; passing them would make the backend refuse a setting the batched
+        path does apply.
+
+        Returns:
+            ``waveform_arguments``, less the backend-constructor keys in batched execution.
+        """
+        if self._execution_mode() != "batched":
+            return self.waveform_arguments
+        from gwmock.signal.device_chunks import BATCHED_BACKEND_ARGUMENTS  # noqa: PLC0415
+
+        return {key: value for key, value in self.waveform_arguments.items() if key not in BATCHED_BACKEND_ARGUMENTS}
+
     def _execution_mode(self) -> str:
         """Return how this segment's events should be generated."""
         signal_config = self.orchestration_config.signal
@@ -1039,7 +1056,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
-                waveform_arguments=self.waveform_arguments,
+                waveform_arguments=self._placement_waveform_arguments(),
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
@@ -1073,7 +1090,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
-                waveform_arguments=self.waveform_arguments,
+                waveform_arguments=self._placement_waveform_arguments(),
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
@@ -1337,12 +1354,12 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         arguments = _normalize_keys(dict(getattr(signal_config, "waveform_backend_arguments", {}) or {}))
 
-        # `f_ref` is written under `waveform-arguments` because that is where the per-event path
-        # takes it, but gwmock-signal treats it as a backend option -- its own reserved-argument
-        # table says "f_ref is configured on the backend, not through waveform_arguments". Left in
-        # the parameter mapping it would reach `simulate_cbc_batch` and do nothing, so the same
-        # config key would set the reference frequency in one execution mode and be inert in the
-        # other. Routed here instead, so the two modes agree.
+        # `f_ref` may be written under `waveform-arguments`, but gwmock-signal treats it as a
+        # backend option -- its own reserved-argument table says "f_ref is configured on the
+        # backend, not through waveform_arguments". Left in the parameter mapping it would reach
+        # `simulate_cbc_batch` and do nothing. Routed to the constructor instead; the per-event
+        # path refuses the same key there and points at `waveform-backend-arguments`, so neither
+        # mode leaves it inert.
         for name in sorted(BATCHED_BACKEND_ARGUMENTS & set(self.waveform_arguments)):
             from_arguments = self.waveform_arguments[name]
             if name in arguments and arguments[name] != from_arguments:

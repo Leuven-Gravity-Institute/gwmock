@@ -209,7 +209,11 @@ class SignalConfig(BaseModel):
     waveform_arguments: dict[str, Any] = Field(
         default_factory=dict,
         alias="waveform-arguments",
-        description="Fixed waveform arguments passed to gwmock-signal",
+        description=(
+            "Fixed waveform arguments merged into every event's parameters and passed to gwmock-signal. "
+            "A key the waveform backend does not accept stops the run; backend constructor settings "
+            "such as 'f_ref' belong under 'waveform-backend-arguments'."
+        ),
     )
     waveform_options: dict[str, Any] = Field(
         default_factory=dict,

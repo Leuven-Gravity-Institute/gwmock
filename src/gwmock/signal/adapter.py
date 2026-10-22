@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -165,6 +165,36 @@ def _resolve_detector_spec(detector_spec: str) -> tuple[tuple[DetectorSpec, ...]
         "resolver": "detector",
         "detector_names": [detector_alias],
     }
+
+
+def _refuse_configured_rejections(
+    rejected: Collection[str],
+    waveform_arguments: Mapping[str, Any] | None,
+    *,
+    cause: BaseException | None = None,
+) -> None:
+    """Raise if the waveform backend rejects a key the configuration set under ``waveform-arguments``.
+
+    Args:
+        rejected: Parameter names the backend refused.
+        waveform_arguments: The configured fixed waveform arguments.
+        cause: The backend's own error, chained so its message stays visible.
+
+    Raises:
+        ValueError: If any rejected name is a configured waveform argument.
+    """
+    configured = sorted(set(rejected) & set(waveform_arguments or {}))
+    if not configured:
+        return
+    message = (
+        f"The waveform backend does not accept {', '.join(configured)}, given under "
+        "signal.waveform-arguments. The setting would not be applied, so the run would generate a "
+        "different waveform than the one configured. Remove it, or -- if it configures the backend "
+        "itself, as f_ref does for LAL -- move it to signal.waveform-backend-arguments."
+    )
+    if cause is not None:
+        raise ValueError(f"{message} Backend error: {cause}") from cause
+    raise ValueError(message)
 
 
 class SignalAdapter:
@@ -606,19 +636,32 @@ class SignalAdapter:
                 )
             backend_parameters["waveform_arguments"] = dict(waveform_options)
         if self._unsupported_params:
+            _refuse_configured_rejections(self._unsupported_params, waveform_arguments)
             backend_parameters = {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
         return backend_parameters
 
-    def _without_unsupported(self, exc: ValueError, backend_parameters: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _without_unsupported(
+        self,
+        exc: ValueError,
+        backend_parameters: Mapping[str, Any],
+        waveform_arguments: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
         """Return *backend_parameters* less what *exc* says the backend rejects, or ``None``.
 
         ``None`` means *exc* is not an unsupported-parameter complaint and the caller should
         re-raise it. Records the rejected names on the adapter, so the next call drops them up front
         rather than paying a failed backend call per event.
 
+        Only population columns are dropped. A catalogue routinely carries columns that are not
+        waveform inputs -- ``redshift``, source-frame masses -- and they are still recorded in the
+        injection parameters. A key the user wrote under ``waveform-arguments`` is different: it is
+        a setting the run was asked to apply, and dropping it generates a different waveform than
+        the one configured while the run reports success.
+
         Args:
             exc: The ``ValueError`` a backend call raised.
             backend_parameters: The mapping that call was given.
+            waveform_arguments: The configured fixed waveform arguments merged into that mapping.
 
         Returns:
             The filtered mapping, or ``None`` when *exc* is some other failure.
@@ -626,7 +669,8 @@ class SignalAdapter:
         Raises:
             ValueError: If the rejected parameter is ``waveform_arguments`` itself, which no amount
                 of filtering fixes -- the installed gwmock-signal cannot carry the requested
-                waveform options at all, and dropping them would run the wrong waveform silently.
+                waveform options at all, and dropping them would run the wrong waveform silently;
+                or if the backend rejects a key given in *waveform_arguments*.
         """
         match = _UNSUPPORTED_PARAMS_RE.match(str(exc))
         if match is None:
@@ -637,6 +681,7 @@ class SignalAdapter:
                 "The installed gwmock-signal does not support the waveform_arguments "
                 "parameter required by waveform_options; upgrade gwmock-signal"
             ) from exc
+        _refuse_configured_rejections(extras, waveform_arguments, cause=exc)
         new = extras - self._unsupported_params
         if new:
             logger.warning(
@@ -691,7 +736,7 @@ class SignalAdapter:
             # The same unsupported-parameter dance generation does, for the same reason: a
             # population column the backend does not know must not be the thing that decides
             # whether an inspiral is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
             if filtered is None:
                 raise
             return query(
@@ -746,7 +791,7 @@ class SignalAdapter:
         except ValueError as exc:
             # As on the pre side: a population column the backend does not know must not be what
             # decides whether an event is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
             if filtered is None:
                 raise
             return query(
@@ -794,7 +839,7 @@ class SignalAdapter:
                 earth_rotation=earth_rotation,
             )
         except ValueError as exc:
-            filtered = self._without_unsupported(exc, backend_parameters)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments)
             if filtered is None:
                 raise
             return self._backend.simulate(
