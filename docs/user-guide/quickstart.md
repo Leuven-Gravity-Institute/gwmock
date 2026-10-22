@@ -25,6 +25,12 @@ next to the configuration as `bbh_population.csv` and points the configuration
 at it, so the run needs no internet connection. Run `gwmock simulate` from the
 directory you copied the configuration into, because the path is relative to it.
 
+If copying fails, the command puts back whatever was in the directory before.
+That holds against errors, not against the process being killed: an interrupted
+copy can leave a `.bbh_population.csv.*.backup` file holding the catalogue that
+was there before, or a `.part` file. `gwmock config --get` then refuses to run,
+naming them; rename the backup back if needed and delete the rest.
+
 <!-- typos:on -->
 
 <!-- prettier-ignore -->

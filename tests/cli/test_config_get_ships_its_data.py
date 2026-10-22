@@ -234,3 +234,69 @@ class TestTheCatalogueAndConfigurationAreInstalledTogether:
 
         assert result.exit_code == 0, result.output
         assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]
+
+
+class TestRestoringComesBeforeCleaningUp:
+    """A failure deleting a temporary file must not stop the old catalogue being put back."""
+
+    def test_a_failing_unlink_of_the_staged_file_still_restores_the_catalogue(self, tmp_path: Path, monkeypatch):
+        import os
+
+        from gwmock.cli.config import _DataFileInstall
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+        real_replace, real_unlink = os.replace, Path.unlink
+
+        def replace(source, target):
+            if str(source).endswith(".part"):
+                raise OSError("rename refused")
+            return real_replace(source, target)
+
+        def unlink(self, *args, **kwargs):
+            if self.name.endswith(".part"):
+                raise OSError("unlink refused")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr("os.replace", replace)
+        monkeypatch.setattr(Path, "unlink", unlink)
+
+        with pytest.raises(OSError, match="rename refused"):
+            _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+
+        assert destination.read_bytes() == b"old catalogue\n"
+
+    def test_a_restore_that_fails_names_the_backup(self, tmp_path: Path, monkeypatch):
+        import os
+
+        from gwmock.cli.config import _DataFileInstall
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+        backup = install._backup
+        real_replace = os.replace
+
+        def replace(source, target):
+            if str(source).endswith(".backup"):
+                raise OSError("rename refused")
+            return real_replace(source, target)
+
+        monkeypatch.setattr("os.replace", replace)
+        with pytest.raises(RuntimeError, match=re.escape(str(backup))):
+            install.roll_back()
+        assert backup.read_bytes() == b"old catalogue\n"
+
+
+class TestLeftoversOfAnInterruptedCopy:
+    @pytest.mark.parametrize("leftover", [".bbh_population.csv.abc123.backup", ".bbh_population.csv.abc123.part"])
+    def test_they_are_named_and_nothing_is_changed(self, tmp_path: Path, monkeypatch, leftover):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / leftover).write_bytes(b"old catalogue\n")
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code != 0
+        assert leftover in str(result.exception)
+        assert sorted(p.name for p in tmp_path.iterdir()) == [leftover]
+        assert (tmp_path / leftover).read_bytes() == b"old catalogue\n"

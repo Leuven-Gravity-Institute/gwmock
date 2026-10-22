@@ -69,13 +69,38 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
     return source, destination
 
 
-class _DataFileInstall:
-    """Put an example's data file in place so that it can be undone, leaving nothing behind either way.
+def _leftovers_of_an_interrupted_copy(destination: Path) -> list[Path]:
+    """Return the staging and backup files an interrupted ``config --get`` left beside *destination*."""
+    return sorted(
+        path
+        for pattern in (f".{destination.name}.*.part", f".{destination.name}.*.backup")
+        for path in destination.parent.glob(pattern)
+    )
 
-    The file is staged in a temporary file beside the destination and moved into place with
-    ``os.replace``, so a copy that fails partway never touches the destination. A file already
-    there is first moved to a temporary backup beside it: :meth:`roll_back` restores it -- or, when
-    there was none, removes the new file -- and :meth:`commit` discards the backup.
+
+def _remove_quietly(path: Path) -> None:
+    """Delete *path* if it exists; a failure is logged and never raised, so it cannot stop a restore."""
+    import logging
+
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        logging.getLogger("gwmock").warning("Could not remove the temporary file %s: %s", path, error)
+
+
+class _DataFileInstall:
+    """Put an example's data file in place so that it can be undone if the configuration fails.
+
+    The file is staged in a temporary ``.<name>.*.part`` beside the destination and moved into place
+    with ``os.replace``, so a copy that fails partway never touches the destination. A file already
+    there is first moved to a temporary ``.<name>.*.backup`` beside it: :meth:`roll_back` restores it
+    -- or, when there was none, removes the new file -- and :meth:`commit` discards the backup. On
+    every failure path the restore comes first and deleting temporary files after, best effort.
+
+    **The guarantee is against exceptions, not against the process being killed.** A kill between
+    the steps can leave the catalogue's name missing with its old bytes in ``.<name>.*.backup``, a
+    stray ``.<name>.*.part``, or the new catalogue beside the old configuration. ``config --get``
+    refuses to run while such files are present, naming them, rather than guessing how to recover.
     """
 
     def __init__(self, source: Path, destination: Path) -> None:
@@ -106,32 +131,44 @@ class _DataFileInstall:
                 try:
                     os.replace(destination, backup_name)
                 except BaseException:
-                    Path(backup_name).unlink(missing_ok=True)
+                    _remove_quietly(Path(backup_name))
                     raise
                 self._backup = Path(backup_name)
             os.replace(staging, destination)
-        except BaseException:
-            staging.unlink(missing_ok=True)
+        except BaseException as error:
             if self._backup is not None and not destination.exists():
-                os.replace(self._backup, destination)
-                self._backup = None
+                self._restore(error)
+            _remove_quietly(staging)
             raise
 
+    def _restore(self, cause: BaseException | None) -> None:
+        """Move the backup back onto the destination, or say exactly where the old file is."""
+        import os
+
+        backup = self._backup
+        if backup is None:
+            return
+        try:
+            os.replace(backup, self._destination)
+        except OSError as error:
+            raise RuntimeError(
+                f"Could not restore {self._destination} from its backup {backup}: {error}. The previous "
+                f"file is intact there; restore it by renaming {backup} to {self._destination}."
+            ) from (cause if cause is not None else error)
+        self._backup = None
+
     def commit(self) -> None:
-        """Keep the new file and discard the backup of the old one."""
+        """Keep the new file and discard the backup of the old one, best effort."""
         if self._backup is not None:
-            self._backup.unlink(missing_ok=True)
+            _remove_quietly(self._backup)
             self._backup = None
 
     def roll_back(self) -> None:
         """Restore the file that was there before, or remove the new one when there was none."""
-        import os
-
         if self._backup is not None:
-            os.replace(self._backup, self._destination)
-            self._backup = None
+            self._restore(None)
         else:
-            self._destination.unlink(missing_ok=True)
+            _remove_quietly(self._destination)
 
 
 def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -177,6 +214,15 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
 
         if dst_path.exists() and not overwrite:
             raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.")
+        if data_file is not None:
+            leftovers = _leftovers_of_an_interrupted_copy(data_file[1])
+            if leftovers:
+                raise FileExistsError(
+                    f"An earlier gwmock config --get was interrupted and left {', '.join(map(str, leftovers))} "
+                    f"beside {data_file[1]}. A '.backup' file holds the catalogue that was there before: "
+                    f"rename it back to {data_file[1]} if that name is missing or holds the wrong file, "
+                    "and delete the '.part' and remaining files. Nothing was changed."
+                )
         # The catalogue and the configuration are installed as a pair: the catalogue first, so a
         # configuration is never written pointing at one that failed to arrive, and undone if the
         # configuration then cannot be written, so a failure leaves the destination as it was.
@@ -280,7 +326,10 @@ def config_command(
 
     - `--get <LABEL>`
           Copy one example configuration. The label must be one ``--list`` prints,
-            such as ``noise/uncorrelated_gaussian/quick_start``.
+            such as ``noise/uncorrelated_gaussian/quick_start``. An example's
+            catalogue is copied beside it; a failure puts back whatever was
+            there, but a killed process can leave ``.<name>.*.backup`` or
+            ``.part`` files, and the command then refuses until they are dealt with.
 
     - `--output <PATH>`
           Where ``--get`` writes the copy: a file name, or an existing directory to
