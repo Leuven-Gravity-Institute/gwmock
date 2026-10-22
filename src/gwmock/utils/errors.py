@@ -40,8 +40,8 @@ def is_permanent_http_failure(error: BaseException) -> bool:
 
     That is a client error -- the URL is wrong, unauthorised or forbidden (401, 403, 404, ...) --
     other than a request timeout, "too early" or a rate limit (408, 425, 429). Read from the
-    ``response.status_code`` that ``requests.HTTPError`` carries, so ``requests`` need not be
-    imported here.
+    ``response.status_code`` that ``requests.HTTPError`` carries, or the ``code`` that
+    ``urllib.error.HTTPError`` carries, so neither library need be imported here.
 
     Args:
         error: The exception to inspect.
@@ -50,6 +50,8 @@ def is_permanent_http_failure(error: BaseException) -> bool:
         Whether it is a permanent HTTP failure.
     """
     status = getattr(getattr(error, "response", None), "status_code", None)
+    if not isinstance(status, int) and isinstance(error, OSError):
+        status = getattr(error, "code", None)
     return isinstance(status, int) and status in _CLIENT_ERROR_RANGE and status not in _RETRYABLE_CLIENT_STATUSES
 
 
@@ -61,10 +63,12 @@ def wraps_transient_failure(error: BaseException) -> bool:
     subclasses, so one check covers them. Used where a ``ValueError`` or ``TypeError`` from a whole
     subsystem is marked final, so such a wrapping stays retryable.
 
-    The chain is walked from *error* outwards, and the walk stops -- answering *not transient* --
-    at the first :class:`DeterministicRefusalError`, whatever it was raised from: something along
-    the chain already decided the failure is final. An :class:`OSError` that is a permanent HTTP
-    failure (see :func:`is_permanent_http_failure`) is not transient either.
+    The whole chain is walked from *error* outwards before deciding. A
+    :class:`DeterministicRefusalError` or a permanent HTTP failure (see
+    :func:`is_permanent_http_failure`) anywhere in it wins -- *not transient* -- because something
+    along the chain already shows the failure is final, however many ``OSError`` wrappers sit
+    above it. Otherwise the answer is whether any :class:`OSError` was seen. A cycle in the chain
+    ends the walk.
 
     **Which links are followed.** ``__cause__`` always: ``raise X from Y`` says ``Y`` is why. The
     implicit ``__context__`` only when nothing suppresses it -- ``raise X from None`` sets
@@ -82,15 +86,15 @@ def wraps_transient_failure(error: BaseException) -> bool:
         error: The exception to inspect.
 
     Returns:
-        Whether a transient :class:`OSError` appears in the followed chain before any refusal.
+        Whether the followed chain holds an :class:`OSError` and no refusal or permanent HTTP failure.
     """
     seen: set[int] = set()
+    saw_io_failure = False
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
-        if isinstance(current, DeterministicRefusalError):
+        if isinstance(current, DeterministicRefusalError) or is_permanent_http_failure(current):
             return False
-        if isinstance(current, OSError):
-            return not is_permanent_http_failure(current)
+        saw_io_failure = saw_io_failure or isinstance(current, OSError)
         seen.add(id(current))
         if current.__cause__ is not None:
             current = current.__cause__
@@ -98,7 +102,7 @@ def wraps_transient_failure(error: BaseException) -> bool:
             current = current.__context__
         else:
             current = None
-    return False
+    return saw_io_failure
 
 
 class UnknownTemplateVariableError(DeterministicRefusalError, AttributeError):

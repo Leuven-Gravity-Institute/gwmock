@@ -401,3 +401,68 @@ def test_an_implicit_wrap_of_a_network_failure_stays_retryable(tmp_path, monkeyp
             raise ValueError("Failed to fetch data")  # noqa: B904 -- the implicit wrap under test
 
     assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 4
+
+
+class TestTheWholeChainIsRead:
+    """A final failure anywhere in the chain wins over transient-looking wrappers above it."""
+
+    @staticmethod
+    def _requests_404():
+        import requests
+
+        response = requests.Response()
+        response.status_code = 404
+        return requests.HTTPError("404", response=response)
+
+    def test_an_os_error_wrapping_a_404_is_not_transient(self) -> None:
+        from gwmock.utils.errors import wraps_transient_failure
+
+        try:
+            try:
+                raise self._requests_404()
+            except OSError as http_error:
+                raise OSError("could not fetch the population") from http_error
+        except OSError as wrapper:
+            error = ValueError("glitch model")
+            error.__cause__ = wrapper
+        assert not wraps_transient_failure(error)
+
+    def test_a_urllib_404_is_permanent(self) -> None:
+        import urllib.error
+
+        from gwmock.utils.errors import is_permanent_http_failure, wraps_transient_failure
+
+        not_found = urllib.error.HTTPError("https://example.com/x", 404, "Not Found", None, None)
+        assert is_permanent_http_failure(not_found)
+        error = ValueError("fetch failed")
+        error.__cause__ = not_found
+        assert not wraps_transient_failure(error)
+        unavailable = urllib.error.HTTPError("https://example.com/x", 503, "Unavailable", None, None)
+        error.__cause__ = unavailable
+        assert wraps_transient_failure(error)
+
+    def test_a_cycle_ends_the_walk(self) -> None:
+        from gwmock.utils.errors import wraps_transient_failure
+
+        first, second = ValueError("a"), ConnectionError("b")
+        first.__cause__ = second
+        second.__cause__ = first
+        assert wraps_transient_failure(first)
+        third = ValueError("c")
+        third.__cause__ = third
+        assert not wraps_transient_failure(third)
+
+    def test_a_404_through_a_wrapper_while_opening_the_noise_stream_is_attempted_once(self, tmp_path, monkeypatch):
+        def open_stream(**_kwargs):
+            try:
+                raise self._requests_404()
+            except OSError as http_error:
+                raise OSError("could not fetch the glitch population") from http_error
+
+        def wrapped(**kwargs):
+            try:
+                open_stream(**kwargs)
+            except OSError as wrapper:
+                raise ValueError("glitch model could not be configured") from wrapper
+
+        assert _stream_open_attempts(tmp_path, monkeypatch, wrapped) == 1
