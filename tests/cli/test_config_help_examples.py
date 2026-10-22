@@ -15,12 +15,15 @@ from gwmock.cli.main import app
 
 _RUNNER = CliRunner()
 _WIDE = {"COLUMNS": "400", "TERMINAL_WIDTH": "400"}
+# Rich colours its output when it detects a CI service such as GitHub Actions, and the escape
+# sequences then split the quoted command lines the regexes look for.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _output(*arguments: str) -> str:
     result = _RUNNER.invoke(app, ["config", *arguments], env=_WIDE)
     assert result.exit_code == 0, result.output
-    return result.output
+    return _ANSI_ESCAPE.sub("", result.output)
 
 
 def test_every_label_the_help_quotes_is_listed():
