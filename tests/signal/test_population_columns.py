@@ -81,30 +81,21 @@ def _events(draw) -> list[dict]:
     return [{name: float(columns[name][i]) for name in names} for i in range(len(columns[names[0]]))]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValueError,
-    reason=(
-        "gwmock-pop before 0.18.0: its presets draw theta_jn independently of inclination although "
-        "they draw no in-plane spin, so J cannot lie along L as it must. From gwmock-pop 0.18.0 the "
-        "presets write no theta_jn and no f_ref; remove this mark when the dependency floor is "
-        "raised to it"
-    ),
-)
 @pytest.mark.parametrize("preset", _PRESETS)
 def test_a_real_gwmock_pop_draw_is_left_out_consistently(preset):
-    """Every conditional column of a real draw holds its condition, for a run referencing 20 Hz.
+    """Every conditional column of a real draw holds its condition, in a run with default settings.
 
-    Before gwmock-pop 0.18.0 the presets draw ``f_ref = 20``, so a run on their output sets
-    ``f_ref: 20`` under ``signal.waveform-backend-arguments``; 20 Hz is what is passed here. From
-    0.18.0 they write neither ``theta_jn`` nor ``f_ref``, and every column left is one the waveform
-    reads or one left out unconditionally.
+    gwmock-pop 0.18.0, the oldest version gwmock accepts, writes neither ``theta_jn`` nor ``f_ref``
+    in its presets, so a draw carries no column whose condition depends on the run's reference
+    frequency; 5 Hz, the default ``minimum-frequency``, is passed here. Older versions drew
+    ``theta_jn`` independently of ``inclination`` and wrote ``f_ref = 20``, and were refused.
     """
     from gwmock_pop.simulators.graph import GraphSimulator
 
     draw = GraphSimulator.from_preset(preset, seed=1).simulate(8)
     canonical = set(canonicalise_parameters(dict.fromkeys(draw.keys(), 0.0)))
 
+    assert not {"theta_jn", "f_ref"} & set(draw.keys())
     require_redundant_columns_agree(
-        canonical - BATCHED_PARAMETERS, ignored=(), reader="test", events=_events(draw), reference_frequency=20.0
+        canonical - BATCHED_PARAMETERS, ignored=(), reader="test", events=_events(draw), reference_frequency=5.0
     )

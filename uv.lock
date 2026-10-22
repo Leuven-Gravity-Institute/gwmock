@@ -846,8 +846,8 @@ requires-dist = [
     { name = "gwmock-noise", specifier = ">=0.18.1" },
     { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.18.1" },
     { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.1" },
-    { name = "gwmock-pop", specifier = ">=0.16.1" },
-    { name = "gwmock-pop", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.16.1" },
+    { name = "gwmock-pop", specifier = ">=0.18.0" },
+    { name = "gwmock-pop", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.0" },
     { name = "gwmock-signal", specifier = ">=0.20.0" },
     { name = "gwmock-signal", extras = ["gwpy"], marker = "extra == 'gwpy'", specifier = ">=0.19.1" },
     { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.19.1" },
@@ -933,7 +933,7 @@ hdf5 = [
 
 [[package]]
 name = "gwmock-pop"
-version = "0.17.0"
+version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gwmock-data" },
@@ -944,9 +944,9 @@ dependencies = [
     { name = "ruyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/85/8f177db2190d7008521af4303741ec3aaec8d49ade7a56ee341b8b4100b8/gwmock_pop-0.17.0.tar.gz", hash = "sha256:96fe4861a840fee3882e1fb22a18f7d4da953c5df2266c15196744681217df49", size = 444945, upload-time = "2026-10-19T12:55:08.842Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/1f/78b50f52773a15d03922edf6d4919a639b83a1263c43512f6ed50d644f7e/gwmock_pop-0.18.0.tar.gz", hash = "sha256:90fbc3f5c58696e1fa00970f79d2c84778d4e8f0aff3b0aba097563a11a73d05", size = 449906, upload-time = "2026-10-22T10:49:36.916Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/d9/5de59bd3e42c0aa53b43e545d88f0b624e9d1520c4f86d5446c3f8c729c2/gwmock_pop-0.17.0-py3-none-any.whl", hash = "sha256:fe7657fbacc071daf99db6260567453e29bbaace919a3a70b999d37f24743f21", size = 175333, upload-time = "2026-10-19T12:55:07.372Z" },
+    { url = "https://files.pythonhosted.org/packages/27/99/81289ec9e34ba04c70c62055e1de742c5ecfa47fe8dba027a1bc88ae9d4a/gwmock_pop-0.18.0-py3-none-any.whl", hash = "sha256:a94b0fcf50f7197e87d840e76685de551f1db83422910787d2de1543dadeec43", size = 176911, upload-time = "2026-10-22T10:49:35.649Z" },
 ]
 
 [package.optional-dependencies]
