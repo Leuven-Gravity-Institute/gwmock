@@ -415,6 +415,30 @@ class TestSimulateStackUnsupportedParams:
         adapter.configure_reference_frequency(20.0)
         adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=5.0)
 
+    def test_later_events_are_checked_against_the_same_merged_mapping_as_the_first(self):
+        """Spins fixed under waveform-arguments are the waveform's own copy for every event, not only the first."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"theta_jn"})
+        adapter = _make_adapter_with_backend(backend)
+        event = {
+            "detector_frame_mass_1": 30.0,
+            "detector_frame_mass_2": 25.0,
+            "inclination": 0.5,
+            "theta_jn": 0.5,
+            "coa_time": 0.0,
+        }
+        fixed_spins = {"spin_1z": 0.0, "spin_2z": 0.0}
+
+        for coa_time in (0.0, 1.0, 2.0):
+            adapter.simulate_stack(
+                {**event, "coa_time": coa_time},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments=fixed_spins,
+            )
+
+        assert backend.call_count == 4  # one rejected call, then one per event
+
     def test_a_rejected_configured_waveform_argument_fails_the_run(self):
         """A key the user set under ``waveform-arguments`` is refused, not dropped.
 

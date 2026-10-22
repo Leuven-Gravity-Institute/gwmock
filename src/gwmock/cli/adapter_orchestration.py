@@ -1509,16 +1509,24 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """
         if self._batched_population_columns_checked or not self._population_events:
             return
-        from gwmock.signal.device_chunks import BATCHED_PARAMETERS, canonicalise_parameters  # noqa: PLC0415
+        from gwmock.signal.device_chunks import (  # noqa: PLC0415
+            BATCHED_BACKEND_ARGUMENTS,
+            BATCHED_PARAMETERS,
+            canonicalise_parameters,
+        )
         from gwmock.signal.population_columns import require_population_columns_read  # noqa: PLC0415
 
+        # Checked as the device sees each event: the population merged with the fixed waveform
+        # arguments, so the waveform's own copy of a value given there counts.
+        fixed = {key: value for key, value in self.waveform_arguments.items() if key not in BATCHED_BACKEND_ARGUMENTS}
+        events = [{**fixed, **dict(event)} for event in self._population_events]
         columns = set().union(*(canonicalise_parameters(dict(event)) for event in self._population_events))
         signal_config = self.orchestration_config.signal
         require_population_columns_read(
             columns - BATCHED_PARAMETERS,
             ignored=getattr(signal_config, "ignored_population_columns", ()) or (),
             reader="the batched path (execution: batched)",
-            events=self._population_events,
+            events=events,
             reference_frequency=(
                 self._configured_reference_frequency()
                 if self._configured_reference_frequency() is not None

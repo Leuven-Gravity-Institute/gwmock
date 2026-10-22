@@ -670,12 +670,13 @@ class SignalAdapter:
             _refuse_configured_rejections(self._unsupported_params, waveform_arguments)
             # The columns were classified when the backend first rejected them; a conditional
             # column is still checked per event, because whether it may be left out depends on
-            # the event's own values.
+            # the event's own values. Against the merged mapping, as on the first rejection: the
+            # waveform's own copy of a value may come from waveform-arguments.
             require_redundant_columns_agree(
                 self._unsupported_params,
                 ignored=self._ignored_population_columns,
                 reader="the waveform backend",
-                events=(parameters,),
+                events=(backend_parameters,),
                 reference_frequency=self._reference_frequency(minimum_frequency),
             )
             backend_parameters = {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}

@@ -943,3 +943,16 @@ class TestThePopulationColumnsTheBatchedPathIgnores:
 
         with pytest.raises(ValueError, match=r"eccentricity is 0\.2"):
             orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_spins_fixed_under_waveform_arguments_count_for_theta_jn(self, tmp_path):
+        """The device reads the population merged with the fixed arguments; the check reads the same."""
+        orchestrator = _orchestrator(
+            tmp_path, "batched", waveform_backend=None, **{"waveform-arguments": {"spin_1z": 0.0, "spin_2z": 0.0}}
+        )
+        end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        orchestrator._population_events = (
+            {**_COMPLETE_EVENT, "coa_time": end_time - 1.0, "theta_jn": _COMPLETE_EVENT["inclination"]},
+        )
+
+        orchestrator._require_batched_population_columns()
