@@ -26,6 +26,16 @@ from gwmock.signal.device_chunks import canonicalise_parameters
 _POPULATION_CSV = Path(__file__).resolve().parents[2] / "examples" / "signal" / "bbh_population.csv"
 _START = 1577491296.0
 _SAMPLING_FREQUENCY = 1024.0
+#: A row the signal simulator can size, so the placement queries answer rather than refuse.
+_COMPLETE_EVENT: dict[str, Any] = {
+    "detector_frame_mass_1": 30.0,
+    "detector_frame_mass_2": 25.0,
+    "distance": 400.0,
+    "right_ascension": 1.0,
+    "declination": 0.5,
+    "polarization_angle": 0.2,
+    "inclination": 0.3,
+}
 
 
 def _config(working_directory: Path, execution: str, waveform_backend: str | None = "ripple") -> dict[str, Any]:
@@ -269,13 +279,16 @@ class TestSegmentEventSelection:
 
     @pytest.mark.requires_lalsuite
     def test_events_beyond_the_segment_are_left_for_the_next_one(self, tmp_path):
-        """The boundary rule is ``coa_time >= end_time``, and it is checkpointed state."""
+        """The boundary rule is the waveform's start against ``end_time``, and it is checkpointed state."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
         end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        lead = orchestrator._pre_coalescence_duration({**_COMPLETE_EVENT, "coa_time": end_time})
+        assert lead is not None
+        assert lead > 0
         orchestrator._population_events = (
-            {"coa_time": end_time - 1.0, "detector_frame_mass_1": 30.0},
-            {"coa_time": end_time, "detector_frame_mass_1": 30.0},
-            {"coa_time": end_time + 5.0, "detector_frame_mass_1": 30.0},
+            {**_COMPLETE_EVENT, "coa_time": end_time - 1.0},
+            {**_COMPLETE_EVENT, "coa_time": end_time + lead},
+            {**_COMPLETE_EVENT, "coa_time": end_time + lead + 5.0},
         )
 
         event_ids, events = orchestrator._events_for_this_segment()
@@ -300,7 +313,7 @@ class TestSegmentEventSelection:
         """A segment with no events must not advance the index or invent provenance."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
         end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
-        orchestrator._population_events = ({"coa_time": end_time + 100.0},)
+        orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": end_time + 100.0},)
 
         chunks = orchestrator._simulate()
 

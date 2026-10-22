@@ -374,20 +374,42 @@ class TestAgainstRealGeneration:
         assert lead + tail == pytest.approx(generated, abs=1.0 / _SAMPLING_FREQUENCY)
 
 
+class TestARefusedTailFailsTheRun:
+    """A tail query that raises is a refusal, not *unknown*, and must not be read as one."""
+
+    @pytest.mark.requires_lalsuite
+    def test_the_simulators_error_reaches_the_caller(self, tmp_path):
+        """Reading a refusal as unknown would claim and crop the event while the run exits 0."""
+
+        class _RefusingAdapter:
+            detector_names = ("E1",)
+
+            def pre_coalescence_duration(self, parameters, **_):
+                del parameters
+                return 3.6
+
+            def post_coalescence_duration(self, parameters, **_):
+                raise ValueError(f"coa_time {parameters['coa_time']} is outside the simulator's span")
+
+        orchestrator = _orchestrator(tmp_path)
+        orchestrator.signal_adapter = _RefusingAdapter()
+
+        with pytest.raises(ValueError, match="outside the simulator's span"):
+            orchestrator._post_coalescence_duration({**_COMPLETE_EVENT, "coa_time": _START})
+
+
 class TestADegradedAdapterIsReported:
     """An adapter that cannot answer must say so once, not disappear into a silent fallback."""
 
     @pytest.mark.requires_lalsuite
     def test_an_adapter_without_the_query_warns_rather_than_going_quiet(self, tmp_path, caplog):
-        """Why the query is called directly instead of behind a ``getattr`` guard.
+        """Why a missing query is reported rather than read as ``None`` in silence.
 
-        The guard was how this change shipped as a no-op: the real ``SignalAdapter`` had no tail
-        method, the guard returned ``None`` for every event, and nothing in a run said anything.
-        Calling directly puts the ``AttributeError`` into the same handler the pre side uses, which
-        warns once and falls back -- the codebase's own rule that a fallback's cost is reported
-        rather than silent. Restoring the guard is invisible to every other test in this module,
-        because with the adapter fixed the two are behaviourally identical; this is the one test
-        that can tell them apart.
+        A silent guard was how this change shipped as a no-op: the real ``SignalAdapter`` had no tail
+        method, the guard returned ``None`` for every event, and nothing in a run said anything. A
+        missing query still falls back -- it is *unknown*, not a refusal -- but warns once, the
+        codebase's own rule that a fallback's cost is reported rather than silent. This is the one
+        test that can tell a reported fallback from a silent one.
         """
 
         class _AdapterWithoutTheQuery:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -77,6 +77,23 @@ _DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
         "glitches",
     }
 )
+
+
+def _placement_query_note(edge: str, parameters: Mapping[str, Any]) -> str:
+    """Return the note added to a failed placement query, naming the event it was asked about.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+
+    Returns:
+        One sentence for :meth:`BaseException.add_note`.
+    """
+    return (
+        f"gwmock asked the signal simulator where the waveform of the event with "
+        f"coa_time={parameters.get('coa_time')!r} {edge}, to place it in a segment, and the "
+        "simulator refused. The run stops rather than guess a placement that could crop the signal."
+    )
 
 
 @dataclass(slots=True)
@@ -198,15 +215,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # Recorded into per-batch metadata so a frame's sources are self-describing.
         self._batch_injections: list[dict[str, Any]] = []
         self._pending_noise_chunk: dict[str, Any] | None = None
-        # Warned at most once per distinct reason, not once per event: a catalogue whose parameters
-        # the query cannot read fails for every row alike, and the message would otherwise arrive
-        # thousands of times. Keyed by the failure text rather than a flag, because a single
-        # malformed row fails only its own query and its cause differs from a whole-catalogue one --
-        # collapsing both into one warning would name the wrong cause for everything after it.
         #: Library the run was switched to when the config named none -- ripple for a batched
         #: config, because that is what `execution: batched` generates with. `None` when nothing
         #: was substituted. Provenance reads this so it names the library that actually ran.
         self._substituted_waveform_backend = substituted_waveform_backend
+        # Why a placement query could not be asked -- an adapter without it, or ripple missing for a
+        # batched run -- warned at most once per distinct reason rather than once per event. A query
+        # that is asked and raises is not recorded here: it fails the run.
         self._pre_coalescence_query_failures: set[str] = set()
         self._post_coalescence_query_failures: set[str] = set()
         #: How far the last batched walk traversed, set by `_events_for_this_segment` and consumed
@@ -1011,17 +1026,15 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         return float(coa_time) + float(tail) < start_time_value
 
     def _post_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
-        """Return the event's waveform tail in seconds, or ``None`` when it cannot be established.
+        """Return the event's waveform tail in seconds, or ``None`` when the simulator cannot say.
 
-        The complement of :meth:`_pre_coalescence_duration`, with the same swallow-and-report
-        handling and for the same reason: this query decides *placement*, and letting it fail a run
-        would turn an incomplete catalogue column into a crash in an unrelated part of the loop.
-
-        The fallback differs from the pre side's in what it costs. There, an unknown lead falls
-        back to the ``coa_time`` rule and the loss is reported per signal. Here, an unknown tail
-        means the event is claimed and generated -- work that may be discarded, which is exactly
-        today's behaviour and the thing being improved. Failing safe here is failing *slow*, not
-        failing wrong.
+        The complement of :meth:`_pre_coalescence_duration`, with the same split between *cannot
+        say* and *refuses*. ``None`` -- a simulator without the query, or a waveform library that
+        cannot size its buffer up front -- claims the event, which costs work that may be discarded
+        but never drops signal. A query that raises fails the run with the simulator's own message:
+        an event the simulator refuses to describe is one it will refuse, or place wrongly, when asked
+        to generate it, and continuing on a guessed placement can crop signal while the run reports
+        success.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1043,16 +1056,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     reason,
                 )
             return None
-        # Called directly, exactly as the pre side calls its own query, and deliberately *not*
-        # behind a `getattr` guard. A guard here returns `None` for an adapter without the method
-        # and says nothing, which is precisely how this change shipped as a silent no-op: the
-        # orchestrator's own `SignalAdapter` had no `post_coalescence_duration`, every tail came
-        # back unknown, and the whole lower bound was dead in production while the stub-driven
-        # tests passed. Letting the `AttributeError` fall into the handler below produces the same
-        # conservative `None` *and* warns once, which is the codebase's stated rule: the fallback
-        # is the previous behaviour, and its cost is reported rather than silent.
+        query = self._placement_query(
+            "post_coalescence_duration", "after coalescence a waveform ends", self._post_coalescence_query_failures
+        )
+        if query is None:
+            return None
         try:
-            return self.signal_adapter.post_coalescence_duration(
+            return query(
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
@@ -1060,22 +1070,19 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            # Deliberately broad, deduplicated by reason rather than by a flag -- see
-            # `_pre_coalescence_duration` for why a flag mislabels a second, different failure.
-            reason = f"{type(exc).__name__}: {exc}"
-            if reason not in self._post_coalescence_query_failures:
-                self._post_coalescence_query_failures.add(reason)
-                logger.warning(
-                    "Cannot establish how long after coalescence a waveform ends (%s). Affected "
-                    "events are claimed by every segment their coalescence precedes, so a run "
-                    "starting later than its population's first event may batch events whose "
-                    "signal it then crops.",
-                    reason,
-                )
-            return None
+            exc.add_note(_placement_query_note("ends", parameters))
+            raise
 
     def _pre_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
-        """Return the event's waveform lead in seconds, or ``None`` when it cannot be established.
+        """Return the event's waveform lead in seconds, or ``None`` when the simulator cannot say.
+
+        ``None`` -- a simulator that does not implement the query, or a waveform library that
+        cannot size its buffer up front -- falls back to placing the event by ``coa_time``, and any
+        start cropped by that is reported per signal. A query that *raises* is different: the
+        simulator has refused this event, for instance because its ``coa_time`` lies outside the
+        span the simulator can place it in. That error fails the run with the simulator's own
+        message. Falling back instead would crop the start of the waveform -- or place it wrongly --
+        and the run would still exit successfully.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1085,8 +1092,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """
         if self.signal_adapter is None:
             return None
+        query = self._placement_query(
+            "pre_coalescence_duration", "before coalescence a waveform starts", self._pre_coalescence_query_failures
+        )
+        if query is None:
+            return None
         try:
-            return self.signal_adapter.pre_coalescence_duration(
+            return query(
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
@@ -1094,29 +1106,39 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            # Deliberately broad, and it does not hide the failure it swallows. This query decides
-            # *placement*; the same parameters are handed to generation immediately afterwards, which
-            # raises whatever this raised -- with the context of the event it was generating rather
-            # than of a boundary test. Letting placement be the thing that fails a run would turn an
-            # incomplete catalogue column into a crash in an unrelated part of the loop.
-            #
-            # The fallback is the previous behaviour, and its cost is reported rather than silent:
-            # any inspiral cropped by it is named by `_report_content_before_segment`.
-            #
-            # Deduplicated by reason rather than by a single flag. A whole catalogue the query cannot
-            # read fails identically for every row, and one message is right for it; but a single
-            # malformed row fails only its own query, and a flag would let every later row with a
-            # *different* problem fall back silently under a warning naming the first one.
-            reason = f"{type(exc).__name__}: {exc}"
-            if reason not in self._pre_coalescence_query_failures:
-                self._pre_coalescence_query_failures.add(reason)
-                logger.warning(
-                    "Cannot establish how long before coalescence a waveform starts (%s). Affected "
-                    "events are claimed by coa_time alone, which crops the start of any waveform "
-                    "beginning before its segment; the amount lost is reported per signal.",
-                    reason,
-                )
-            return None
+            exc.add_note(_placement_query_note("starts", parameters))
+            raise
+
+    def _placement_query(self, name: str, question: str, reported: set[str]) -> Callable[..., float | None] | None:
+        """Return the signal adapter's placement query *name*, or ``None`` when it has none.
+
+        An adapter without the query cannot say where a waveform starts or ends, which is the same
+        *unknown* a simulator without the query reports through the adapter. Unlike a query that
+        raises, that falls back -- but it says so once, because an unguarded ``getattr`` returning
+        ``None`` in silence is how the lower bound once shipped as a no-op.
+
+        Args:
+            name: ``"pre_coalescence_duration"`` or ``"post_coalescence_duration"``.
+            question: What the query answers, for the warning.
+            reported: The reasons already warned about for this query, updated in place.
+
+        Returns:
+            The bound query, or ``None`` when the adapter does not implement it.
+        """
+        query = getattr(self.signal_adapter, name, None)
+        if query is not None:
+            return query
+        reason = f"{type(self.signal_adapter).__name__} has no {name}"
+        if reason not in reported:
+            reported.add(reason)
+            logger.warning(
+                "Cannot establish how long %s (%s). Events are placed by coa_time and claimed by "
+                "every segment their coalescence precedes; any start this crops is reported per "
+                "signal.",
+                question,
+                reason,
+            )
+        return None
 
     def _gap_excluding_event(self, parameters: Mapping[str, Any]) -> tuple[float, float] | None:
         """Return the segment gap that swallows this event whole, if one does.
