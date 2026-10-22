@@ -502,12 +502,14 @@ waveform call depends on the column:
 !!! note "Catalogues written by gwmock-pop before 0.18.0"
     gwmock requires gwmock-pop 0.18.0 or later, whose packaged presets write
     neither `theta_jn` nor `f_ref`, so their draws pass these checks. A
-    catalogue _file_ drawn from those presets with an older gwmock-pop still
-    carries both: `theta_jn` drawn independently of `inclination`, although the
-    presets draw no spin, and `f_ref = 20`. Loading such a file is refused,
-    naming `theta_jn` (and `f_ref`, unless `f_ref: 20` is set under
-    `waveform-backend-arguments`). Draw the catalogue again with the current
-    gwmock-pop rather than declaring the columns ignored, since the
+    catalogue _file_ drawn from the presets `bbh_flat`, `bbh_gwtc4`,
+    `bns_flat` or `nsbh_flat` with an older gwmock-pop still carries both:
+    `theta_jn` drawn independently of `inclination`, although the presets draw
+    no in-plane spin (`bbh_gwtc4` draws aligned spin components; the others
+    draw none), and `f_ref = 20`. A run on such a file is refused before
+    anything is generated, naming `theta_jn` (and `f_ref`, unless `f_ref: 20` is
+    set under `waveform-backend-arguments`). Draw the catalogue again with the
+    current gwmock-pop rather than declaring the columns ignored, since the
     inclination the waveform reads and the `theta_jn` the file records
     disagree.
 
