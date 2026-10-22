@@ -459,7 +459,9 @@ waveform call depends on the column:
   indices (`event_id`, `source_type`, `source_class`, `class`).
 - **Columns that restate what the waveform reads are left out only when, for
   each event, the waveform's own copy is present and agrees**; otherwise the run
-  stops, naming the event:
+  stops, naming the event. Every value a rule reads must be finite — a NaN would
+  make each comparison false and let any value through — and masses must be
+  positive:
     - `source_frame_mass_1`/`_2`: the detector-frame mass is present, and with
       `redshift` present equals `m_src (1 + z)` to a relative 1e-6.
     - `spin_1`, `spin_2`, `tilt_1`, `tilt_2`: all three Cartesian components of

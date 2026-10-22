@@ -168,7 +168,10 @@ def require_redundant_columns_agree(  # noqa: PLR0912
     - ``f_ref``: equal, to a relative 1e-6, to *reference_frequency* -- the frequency the waveform
       backend references the spins to for this run.
 
-    These run for every event but log nothing, so a long catalogue costs no log lines.
+    Every value a rule reads -- the column and the waveform's own copy -- must be finite, or the
+    event is refused: a NaN makes every comparison false and would let any value through. Masses
+    must be positive. These run for every event but log nothing, so a long catalogue costs no log
+    lines.
 
     Args:
         columns: Population columns *reader* does not read.
@@ -193,6 +196,20 @@ def require_redundant_columns_agree(  # noqa: PLR0912
                     return float(np.asarray(event[alias], dtype=float))
             return None
 
+        # Every value a rule below reads must be finite: a NaN makes each comparison false, which
+        # would let an event pass a rule it does not meet.
+        non_finite = sorted(
+            name for name in _values_read(checked) if (number := value(name)) is not None and not np.isfinite(number)
+        )
+        if non_finite:
+            raise DeterministicRefusalError(
+                f"A population column {reader} does not read cannot be left out of the event with "
+                f"coa_time={event.get('coa_time')!r}: {', '.join(non_finite)} "
+                f"{'is' if len(non_finite) == 1 else 'are'} not finite, so whether it agrees with what the "
+                f"waveform reads cannot be checked. To leave such a column out deliberately, list it under "
+                f"{IGNORED_COLUMNS_OPTION}."
+            )
+
         for name in sorted(checked & ZERO_ONLY_COLUMNS):
             if name in event and value(name) not in (None, 0.0):
                 problems.append(
@@ -205,6 +222,8 @@ def require_redundant_columns_agree(  # noqa: PLR0912
                 detector, z = value(f"detector_frame_mass_{k}"), value("redshift")
                 if detector is None:
                     problems.append(f"{source} is given without detector_frame_mass_{k}, the mass the waveform reads")
+                elif detector <= 0.0 or value(source) <= 0.0:
+                    problems.append(f"{source} and detector_frame_mass_{k} must be positive")
                 elif z is not None and not np.isclose(
                     detector, value(source) * (1.0 + z), rtol=RELATIVE_TOLERANCE, atol=0.0
                 ):
@@ -263,6 +282,22 @@ def require_redundant_columns_agree(  # noqa: PLR0912
             )
 
 
+def _values_read(checked: Collection[str]) -> set[str]:
+    """Return the names whose values the rules for the *checked* conditional columns read."""
+    read: set[str] = set(checked) & ZERO_ONLY_COLUMNS
+    for k in (1, 2):
+        if f"source_frame_mass_{k}" in checked:
+            read |= {f"source_frame_mass_{k}", f"detector_frame_mass_{k}", "redshift"}
+        if {f"spin_{k}", f"tilt_{k}"} & set(checked):
+            read |= {f"spin_{k}", f"tilt_{k}", f"spin_{k}x", f"spin_{k}y", f"spin_{k}z"}
+    if "theta_jn" in checked:
+        read |= {"theta_jn", "inclination", "detector_frame_mass_1", "detector_frame_mass_2"}
+        read |= {f"spin_{k}{c}" for k in (1, 2) for c in "xyz"}
+    if "f_ref" in checked:
+        read.add("f_ref")
+    return read
+
+
 def _theta_jn_problems(
     theta_jn: float,
     inclination: float,
@@ -291,6 +326,8 @@ def _theta_jn_problems(
     ]
     if missing:
         return [f"theta_jn is given without {', '.join(missing)}, which decide whether it must equal the inclination"]
+    if float(masses[0]) <= 0.0 or float(masses[1]) <= 0.0:  # type: ignore[arg-type]
+        return ["theta_jn cannot be checked against masses that are not positive"]
     spin_z = float(masses[0]) ** 2 * float(aligned_spins[0]) + float(masses[1]) ** 2 * float(aligned_spins[1])  # type: ignore[arg-type]
     parallel = abs(theta_jn - inclination) <= ABSOLUTE_TOLERANCE
     anti_parallel = abs(theta_jn - (np.pi - inclination)) <= ABSOLUTE_TOLERANCE
