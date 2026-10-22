@@ -170,6 +170,19 @@ _OVERLAYS: dict[str, dict[str, Any]] = {
         },
         "orchestration": {"population": {"arguments": {"path": str(POPULATION_FIXTURE)}}},
     },
+    # Shortened like the other CBC entries. Its own span is aligned to the example's 2030 event,
+    # so it is moved with the population to the fixture's epoch as well.
+    "signal/bbh/ligo_hl": {
+        "globals": {
+            "simulator-arguments": {
+                "sampling-frequency": 1024,
+                "duration": 16,
+                "total-duration": 16,
+                "start-time": _ALIGNED_START,
+            }
+        },
+        "orchestration": {"population": {"arguments": {"path": str(POPULATION_FIXTURE)}}},
+    },
     # Already 16 s at 512 Hz; the seed is pinned centrally, so there is nothing to override.
     "signal/sgwb/et_triangle_sardinia": {},
     # The example pins its population to a commit, so the URL is stable -- but it is still a
@@ -311,6 +324,7 @@ def _scale_glitch_rates(config: dict[str, Any], scale: float) -> None:
 NONZERO_OUTPUT: dict[str, str] = {
     "noise/uncorrelated_gaussian/quick_start": "signal",
     "signal/bbh/et_triangle_sardinia": "signal",
+    "signal/bbh/ligo_hl": "signal",
     "signal/waveform_backend/ripple": "signal",
     "signal/execution/batched": "signal",
     # Every pulsar is present in every segment, so any span contains signal -- unlike the

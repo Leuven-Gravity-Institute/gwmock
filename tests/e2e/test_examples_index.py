@@ -178,6 +178,10 @@ class TestBundledPresetsAgainstTheBatchedPath:
     def test_the_bbh_presets_name_an_approximant_ripple_implements(self):
         supported = self._supported()
         models = self._models_under("bbh")
+        # The one non-ET preset, a small LIGO network, is checked on its own: it uses a cheaper
+        # aligned-spin model, which the batched path can generate too.
+        ligo = models.pop("ligo_hl", None)
+        assert ligo in supported, f"bbh/ligo_hl uses {ligo}, which the batched path cannot generate"
 
         assert set(models) == self._NETWORKS, f"BBH presets are {sorted(models)}, expected {sorted(self._NETWORKS)}"
         for label, model in models.items():

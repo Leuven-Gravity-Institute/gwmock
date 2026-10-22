@@ -35,6 +35,7 @@ def _get(label: str, output: str, *extra: str):
         ("signal/waveform_backend/ripple", "signal/bbh_population.csv"),
         ("signal/execution/batched", "signal/bbh_population.csv"),
         ("signal/cw/et_triangle_sardinia", "signal/cw_population.csv"),
+        ("signal/bbh/ligo_hl", "signal/bbh_population.csv"),
     ],
 )
 def test_the_copy_reads_the_shipped_catalogue_from_beside_it(tmp_path: Path, monkeypatch, label, catalogue):

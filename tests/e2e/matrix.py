@@ -91,6 +91,14 @@ E2E_MATRIX: tuple[MatrixEntry, ...] = (
         requires=("ripplegw",),
     ),
     MatrixEntry(
+        label="signal/bbh/ligo_hl",
+        covers=(
+            "Detectors resolved from LALSuite's built-in table rather than an ET preset; a separate "
+            "PSD per detector through `psd_files`"
+        ),
+        lal_waveform=True,
+    ),
+    MatrixEntry(
         label="signal/cw/et_triangle_sardinia",
         covers=(
             "The continuous-wave branch of `_simulate` -- the one path where a population is never "

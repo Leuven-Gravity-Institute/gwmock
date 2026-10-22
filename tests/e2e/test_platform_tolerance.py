@@ -47,10 +47,17 @@ pytestmark = pytest.mark.unit
 LINUX = {"system": "Linux", "machine": "x86_64", "python": "3.12", "device": "cpu"}
 DARWIN = {"system": "Darwin", "machine": "arm64", "python": "3.13", "device": "cpu"}
 
-#: The entries measured to move across architectures. Restated here rather than read from the
-#: matrix, so that flagging a new entry has to be a deliberate edit in two places instead of
-#: silently widening the gate for it.
-LAL_ENTRIES = {"noise/uncorrelated_gaussian/quick_start", "signal/bbh/et_triangle_sardinia"}
+#: The entries whose samples come from LAL, which is measured to move across architectures.
+#: Restated here rather than read from the matrix, so that flagging a new entry has to be a
+#: deliberate edit in two places instead of silently widening the gate for it.
+#:
+#: ``signal/bbh/ligo_hl`` is flagged for its waveform source, not from a measurement of its own: it
+#: generates with LAL as the other two do, and was added after the cross-platform measurement.
+LAL_ENTRIES = {
+    "noise/uncorrelated_gaussian/quick_start",
+    "signal/bbh/et_triangle_sardinia",
+    "signal/bbh/ligo_hl",
+}
 
 #: The largest relative move measured between Linux/x86_64 and Darwin/arm64 on a LAL entry.
 MEASURED_PLATFORM_DIFFERENCE = 4.17e-6
