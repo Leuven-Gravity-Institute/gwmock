@@ -93,6 +93,18 @@ def _temporary_token() -> str:
 def _create_temporary_file(destination: Path, suffix: str) -> Path:
     """Create, exclusively, an empty temporary file beside *destination* and return its path.
 
+    See :func:`_open_temporary_file`, which this closes at once.
+    """
+    import os
+
+    path, descriptor = _open_temporary_file(destination, suffix)
+    os.close(descriptor)
+    return path
+
+
+def _open_temporary_file(destination: Path, suffix: str) -> tuple[Path, int]:
+    """Create, exclusively, an empty temporary file beside *destination*, and keep it open.
+
     Named ``.gwmock-config-get.<name>.<token><suffix>`` with the token from
     :func:`_temporary_token`, so the shape is gwmock's own rather than ``tempfile``'s, whose name
     format is not promised. A name already taken is retried with a new token, a bounded number of
@@ -103,7 +115,7 @@ def _create_temporary_file(destination: Path, suffix: str) -> Path:
         suffix: ``".part"`` or ``".backup"``.
 
     Returns:
-        The created file's path.
+        The created file's path and its open, writable descriptor.
 
     Raises:
         FileExistsError: If every attempted name was taken.
@@ -117,8 +129,7 @@ def _create_temporary_file(destination: Path, suffix: str) -> Path:
             descriptor = os.open(path, flags, 0o600)
         except FileExistsError:
             continue
-        os.close(descriptor)
-        return path
+        return path, descriptor
     raise FileExistsError(f"Could not create a temporary file beside {destination} after {_TOKEN_ATTEMPTS} attempts.")
 
 
@@ -165,6 +176,28 @@ def _refuse_leftovers_of_an_interrupted_copy(destination: Path) -> None:
     raise FileExistsError(" ".join(lines))
 
 
+def _after_staging(staging: Path) -> None:
+    """Run between writing the staged copy and checking it; a seam for tests, and a no-op."""
+    del staging
+
+
+def _still_names(path: Path, descriptor: int) -> bool:
+    """Return whether *path* is still the regular file open at *descriptor*, not a link or another file."""
+    import os
+    import stat
+
+    try:
+        entry = os.lstat(path)
+    except OSError:
+        return False
+    opened = os.fstat(descriptor)
+    return (
+        not stat.S_ISLNK(entry.st_mode)
+        and stat.S_ISREG(entry.st_mode)
+        and (entry.st_dev, entry.st_ino) == (opened.st_dev, opened.st_ino)
+    )
+
+
 def _remove_quietly(path: Path) -> None:
     """Delete *path* if it exists; a failure is logged and never raised, so it cannot stop a restore."""
     import logging
@@ -203,22 +236,50 @@ class _DataFileInstall:
 
         self._destination = destination
         self._backup: Path | None = None
-        staging = _create_temporary_file(destination, ".part")
+        staging, descriptor = _open_temporary_file(destination, ".part")
+        swapped = False
         try:
-            shutil.copyfile(source, staging)
-            if destination.exists():
-                backup_name = _create_temporary_file(destination, ".backup")
-                try:
-                    os.replace(destination, backup_name)
-                except BaseException:
-                    _remove_quietly(backup_name)
-                    raise
-                self._backup = backup_name
-            os.replace(staging, destination)
+            try:
+                # Written through the descriptor the exclusive create returned, never by reopening
+                # the path: in a directory another user can write to, the entry could be swapped
+                # for a symlink in between, and a copy by path would follow it.
+                with source.open("rb") as reader:
+                    writer = os.fdopen(descriptor, "wb", closefd=False)
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(descriptor)
+                _after_staging(staging)
+                if not _still_names(staging, descriptor):
+                    swapped = True
+                    raise RuntimeError(
+                        f"The staged copy {staging} was replaced by another file before it was moved "
+                        f"into place, so {destination} was left untouched. Check who can write to "
+                        f"{destination.parent}; the replacing entry has been left as it is."
+                    )
+                if os.name == "nt":
+                    # Windows cannot rename a file that is open; the check above is the last look.
+                    os.close(descriptor)
+                    descriptor = -1
+                if destination.exists():
+                    backup_name = _create_temporary_file(destination, ".backup")
+                    try:
+                        # os.replace renames the directory entry onto backup_name: were that entry
+                        # swapped for a symlink meanwhile, the link itself would be replaced, and
+                        # its target neither followed nor written.
+                        os.replace(destination, backup_name)
+                    except BaseException:
+                        _remove_quietly(backup_name)
+                        raise
+                    self._backup = backup_name
+                os.replace(staging, destination)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
         except BaseException as error:
             if self._backup is not None and not destination.exists():
                 self._restore(error)
-            _remove_quietly(staging)
+            if not swapped:
+                _remove_quietly(staging)
             raise
 
     def _restore(self, cause: BaseException | None) -> None:

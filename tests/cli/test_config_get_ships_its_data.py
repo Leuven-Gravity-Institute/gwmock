@@ -159,7 +159,7 @@ class TestWritingBesideTheCatalogue:
         def fail(*_args, **_kwargs):
             raise OSError("disk full")
 
-        monkeypatch.setattr("shutil.copyfile", fail)
+        monkeypatch.setattr("shutil.copyfileobj", fail)
         result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
 
         assert result.exit_code != 0
@@ -176,13 +176,14 @@ class TestTheCatalogueAndConfigurationAreInstalledTogether:
     @staticmethod
     def _partial_copy(source, destination, *args, **kwargs):
         del source, args, kwargs
-        Path(destination).write_bytes(b"partial")
+        destination.write(b"partial")
+        destination.flush()
         raise OSError("disk full partway")
 
     def test_a_partial_copy_leaves_an_existing_catalogue_byte_identical(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "bbh_population.csv").write_bytes(self._OLD_CATALOGUE)
-        monkeypatch.setattr("shutil.copyfile", self._partial_copy)
+        monkeypatch.setattr("shutil.copyfileobj", self._partial_copy)
 
         result = _get(self._LABEL, "config.yaml", "--overwrite")
 
@@ -192,7 +193,7 @@ class TestTheCatalogueAndConfigurationAreInstalledTogether:
 
     def test_a_partial_copy_creates_nothing_when_nothing_was_there(self, tmp_path: Path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("shutil.copyfile", self._partial_copy)
+        monkeypatch.setattr("shutil.copyfileobj", self._partial_copy)
 
         result = _get(self._LABEL, "config.yaml")
 
@@ -377,3 +378,46 @@ class TestLeftoversOfAnInterruptedCopy:
 
         assert created.name == ".gwmock-config-get.bbh_population.csv.1111111111111111.part"
         assert taken.read_bytes() == b"someone else's"
+
+
+class TestTheStagedCopyIsWrittenThroughItsOwnDescriptor:
+    """The staged ``.part`` is never reopened by path, and a swapped entry is refused, not followed."""
+
+    def test_the_copy_does_not_reopen_the_staged_file(self, tmp_path: Path, monkeypatch):
+        def reopen(*_args, **_kwargs):
+            raise AssertionError("the staged file was reopened by path")
+
+        monkeypatch.setattr("shutil.copyfile", reopen)
+        monkeypatch.chdir(tmp_path)
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code == 0, result.output
+        assert filecmp.cmp(tmp_path / "bbh_population.csv", _EXAMPLES / "signal" / "bbh_population.csv", shallow=False)
+
+    def test_a_staged_file_swapped_for_a_symlink_is_refused(self, tmp_path: Path, monkeypatch):
+        import os
+
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "run" / "bbh_population.csv"
+        destination.parent.mkdir()
+        destination.write_bytes(b"old catalogue\n")
+        target = tmp_path / "victim.txt"
+        target.write_bytes(b"not yours\n")
+
+        def swap(staging: Path) -> None:
+            staging.unlink()
+            try:
+                os.symlink(target, staging)
+            except (OSError, NotImplementedError) as error:
+                pytest.skip(f"symlinks are unavailable here: {error}")
+
+        monkeypatch.setattr(config_module, "_after_staging", swap)
+
+        with pytest.raises(RuntimeError, match="was replaced by another file"):
+            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+
+        assert target.read_bytes() == b"not yours\n"
+        assert destination.read_bytes() == b"old catalogue\n"
+        assert [p for p in destination.parent.iterdir() if p.is_symlink()], "the swapped entry was removed"
