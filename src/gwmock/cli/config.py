@@ -188,6 +188,10 @@ def _after_staging(staging: Path) -> None:
     del staging
 
 
+class _ForeignEntryError(Exception):
+    """Raised inside the install when the moved file is not the one that was staged."""
+
+
 def _before_move(staging: Path) -> None:
     """Run between the staged copy's check and its move into place; a seam for tests, and a no-op."""
     del staging
@@ -327,6 +331,14 @@ class _DataFileInstall:
                     writer.flush()
                     os.fsync(descriptor)
                 witness = _witness(descriptor)
+                if witness is None:
+                    raise RuntimeError(
+                        f"The file system holding {destination.parent} does not report file identity, "
+                        "so gwmock config --get cannot install the catalogue there safely: it could not "
+                        "tell its own file from one put in its place. Nothing was changed. Copy the "
+                        f"catalogue {source} there by hand, or write the configuration to another file "
+                        "system with --output."
+                    )
                 _after_staging(staging)
                 if not _still_names(staging, descriptor):
                     swapped = True
@@ -353,21 +365,11 @@ class _DataFileInstall:
                 _before_move(staging)
                 moving = True
                 os.replace(staging, destination)
-                if witness is None or not _names_witness(destination, witness):
+                if not _names_witness(destination, witness):
                     # The rename moved whatever was at the staged name; if that entry was swapped
                     # after the check above, the destination now holds a file this command did not
-                    # write. It is not ours to keep as the install, nor to delete.
-                    foreign = True
-                    raise RuntimeError(
-                        f"{destination} now holds a file this command did not write: the staged copy "
-                        f"{staging} was replaced by another entry before it was moved into place. The "
-                        "configuration was not saved. "
-                        + (
-                            f"The previous catalogue, in {self._backup}, has been put back over it."
-                            if self._backup is not None
-                            else f"{destination} has been left as it is; check who can write to {destination.parent}."
-                        )
-                    )
+                    # write. Handled below, with the same case reached through an exception.
+                    raise _ForeignEntryError
                 installed = True
                 _after_install(destination)
             finally:
@@ -376,8 +378,12 @@ class _DataFileInstall:
                     # returns. The move counts as done only when the destination is the very file
                     # that was staged -- the same (st_dev, st_ino) witness on every platform -- and
                     # never while a destination that was there at the start has not been backed up.
-                    installed = witness is not None and not (existed and self._backup is None)
-                    installed = installed and _names_witness(destination, witness)
+                    # Any other entry there now is foreign: by this point the destination was
+                    # either absent or moved to the backup, so whatever is there was put by someone
+                    # else, possibly through a swapped staged entry.
+                    assert witness is not None
+                    installed = not (existed and self._backup is None) and _names_witness(destination, witness)
+                    foreign = not installed and os.path.lexists(destination)
                 if descriptor >= 0:
                     if installed:
                         _close_after_install(descriptor, staging)
@@ -386,20 +392,23 @@ class _DataFileInstall:
         except BaseException as error:
             if foreign:
                 # The backup is ours and holds the user's previous catalogue: put it back over the
-                # foreign entry. With no backup the foreign entry is left alone.
-                if self._backup is not None:
+                # foreign entry. With no backup the foreign entry is left alone -- it is not ours.
+                backup = self._backup
+                if backup is not None:
                     self._restore(error)
-                raise
-            if moving and not installed and witness is None:
-                # Whether the move happened cannot be told without the witness; guessing could
-                # delete or overwrite a catalogue that is not this call's. Nothing is undone.
-                raise RuntimeError(
-                    f"gwmock config --get was interrupted while moving {staging} to {destination}, and "
-                    f"whether it moved cannot be established on this file system. Nothing was undone. "
-                    f"Check {destination}; the previous catalogue, if there was one, is "
-                    f"{self._backup if self._backup is not None else 'still at ' + str(destination)}; "
-                    f"delete {staging} if it remains."
-                ) from error
+                message = (
+                    f"{destination} holds a file this command did not write: the staged copy {staging} "
+                    "was replaced before it was moved, or another process put a file there meanwhile. "
+                    "The configuration was not saved. "
+                    + (
+                        f"The previous catalogue, from {backup}, has been put back over it."
+                        if backup is not None
+                        else f"{destination} has been left as it is; check who can write to {destination.parent}."
+                    )
+                )
+                if isinstance(error, _ForeignEntryError):
+                    raise RuntimeError(message) from None
+                raise RuntimeError(message) from error
             # Restore first, whatever was raised -- an interrupt included -- and whether or not the
             # new file is already in place: the configuration is never saved after this, so the
             # destination must be left as it was.

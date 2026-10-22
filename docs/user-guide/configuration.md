@@ -142,6 +142,11 @@ gwmock config --get noise/uncorrelated_gaussian/quick_start --overwrite
 gwmock config --init config.yaml --overwrite
 ```
 
+With `--get`, `--overwrite` also replaces a different catalogue file that an
+example copies beside the configuration, such as `bbh_population.csv`. It does
+not replace a symbolic link at that path: a link there, dangling or not, is
+refused, so that the link is not replaced by a copy of the catalogue.
+
 #### Flag `--output` (optional)
 
 Specifies the directory where the configuration file will be saved. This flag

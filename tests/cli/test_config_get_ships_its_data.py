@@ -543,9 +543,10 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
             return real_replace(source, target)
 
         monkeypatch.setattr("os.replace", replace)
-        with pytest.raises(OSError, match="interrupted"):
+        with pytest.raises(RuntimeError, match="did not write") as excinfo:
             config_module._DataFileInstall(self._SOURCE, destination)
 
+        assert isinstance(excinfo.value.__cause__, OSError)
         assert destination.read_bytes() == b"someone else's catalogue\n"
 
     def test_the_previous_catalogue_is_untouched_when_no_backup_was_taken(
@@ -571,32 +572,51 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
         assert destination.read_bytes() == b"old catalogue\n"
         assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
 
-    def test_without_an_identity_nothing_is_undone_and_the_paths_are_named(self, tmp_path: Path, monkeypatch):
+    def test_a_file_system_without_file_identity_is_refused_before_anything_moves(self, tmp_path: Path, monkeypatch):
         import os
 
         from gwmock.cli import config as config_module
 
         destination = tmp_path / "bbh_population.csv"
         destination.write_bytes(b"old catalogue\n")
-        monkeypatch.setattr(
-            config_module, "_witness", lambda descriptor: config_module._identity_from(_NoInode(os.fstat(descriptor)))
-        )
+        real_fstat = os.fstat
+        monkeypatch.setattr("os.fstat", lambda descriptor: _NoInode(real_fstat(descriptor)))
+
+        with pytest.raises(RuntimeError, match="does not report file identity"):
+            config_module._DataFileInstall(self._SOURCE, destination)
+
+        assert destination.read_bytes() == b"old catalogue\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_a_swap_then_an_exception_from_the_move_restores_the_previous_catalogue(self, tmp_path: Path, monkeypatch):
+        """The rename happened and then raised: the same handling as a swap the rename returned from."""
+        import os
+
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+
+        def swap(staging: Path) -> None:
+            foreign = staging.with_name("foreign.tmp")
+            foreign.write_bytes(b"not written by gwmock\n")
+            foreign.replace(staging)
+
+        monkeypatch.setattr(config_module, "_before_move", swap)
         real_replace = os.replace
 
         def replace(source, target):
             real_replace(source, target)
             if str(source).endswith(".part"):
-                raise KeyboardInterrupt
+                raise OSError("interrupted after the rename")
 
         monkeypatch.setattr("os.replace", replace)
-        with pytest.raises(RuntimeError, match="cannot be established") as excinfo:
+        with pytest.raises(RuntimeError, match="did not write") as excinfo:
             config_module._DataFileInstall(self._SOURCE, destination)
 
-        backups = sorted(tmp_path.glob("*.backup"))
-        assert len(backups) == 1
-        assert str(backups[0]) in str(excinfo.value)
-        assert backups[0].read_bytes() == b"old catalogue\n"
-        assert filecmp.cmp(destination, self._SOURCE, shallow=False)
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert destination.read_bytes() == b"old catalogue\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
 
 
 class _NoInode:
