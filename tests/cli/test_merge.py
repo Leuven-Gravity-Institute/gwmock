@@ -636,3 +636,42 @@ class TestMergingAWholeSegment:
         )
         with pytest.raises(ValueError, match="nothing to merge"):
             merge_command(None, metadata=[str(record)], output_dir=tmp_path / "merged")
+
+
+class TestAChannelWithNothingToMergeWith:
+    """A detector written to one file only must not silently drop out of a whole-segment merge."""
+
+    @staticmethod
+    def _with_a_signal_only_detector(working_directory: Path) -> Path:
+        record_path, _ = TestMergingAWholeSegment()._run(working_directory)
+        record = json.loads(record_path.read_text())
+        relative = f"output/signal/V1_STRAIN_SIGNAL-{START}-1.hdf5"
+        TestMergingAWholeSegment._write(working_directory / relative, "V1:STRAIN", np.ones(RATE))
+        record["outputs"].append(
+            {"kind": "signal", "path": relative, "channels": ["V1:STRAIN"], "t0": START, "duration": 1}
+        )
+        record["file_hashes"][Path(relative).name] = compute_file_hash(working_directory / relative)
+        record_path.write_text(json.dumps(record))
+        return record_path
+
+    @pytest.mark.requires_gwpy
+    def test_it_is_refused_before_anything_is_written(self, tmp_path: Path) -> None:
+        record = self._with_a_signal_only_detector(tmp_path / "run")
+        output_dir = tmp_path / "merged"
+
+        with pytest.raises(ValueError, match=r"V1:STRAIN \(only in output/signal/V1_STRAIN_SIGNAL"):
+            merge_command(None, metadata=[str(record)], output_dir=output_dir)
+        assert not output_dir.exists() or list(output_dir.iterdir()) == []
+
+    @pytest.mark.requires_gwpy
+    def test_skipping_it_merges_the_rest_and_names_it(self, tmp_path: Path, caplog) -> None:
+        record = self._with_a_signal_only_detector(tmp_path / "run")
+        output_dir = tmp_path / "merged"
+
+        with caplog.at_level("WARNING", logger="gwmock"):
+            merge_command(None, metadata=[str(record)], output_dir=output_dir, skip_unmatched=True)
+
+        assert (output_dir / f"H1_STRAIN-{START}-1.hdf5").is_file()
+        assert (output_dir / f"L1_STRAIN-{START}-1.hdf5").is_file()
+        assert not (output_dir / f"V1_STRAIN-{START}-1.hdf5").exists()
+        assert "V1:STRAIN" in caplog.text

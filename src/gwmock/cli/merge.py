@@ -56,6 +56,17 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             help="Where a whole-segment merge (no files given) writes one file per channel.",
         ),
     ] = Path("merged"),
+    skip_unmatched: Annotated[
+        bool,
+        typer.Option(
+            "--skip-unmatched",
+            help=(
+                "In a whole-segment merge, merge the channels written to several files and skip, with "
+                "a warning for each, those written to one file only. Without it such a record is "
+                "refused before anything is written."
+            ),
+        ),
+    ] = False,
     author: Annotated[str, typer.Option("--author", help="Author of the merged file")] | None = None,
     email: Annotated[str, typer.Option("--email", help="Email of the author")] | None = None,
     force: Annotated[bool, typer.Option("--force", help="Bypass the requirements of providing metadata files")] = False,
@@ -104,6 +115,8 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             it. If False, one combined record is written.
 
         output_dir (Path): Directory a whole-segment merge writes its files to.
+        skip_unmatched (bool): In a whole-segment merge, skip with a warning each channel written to
+            one file only, instead of refusing the record.
 
     Raises:
         ValueError: If metadata files are not provided and force is False, or if the format cannot be
@@ -117,6 +130,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             output=output,
             output_channel=output_channel,
             output_dir=output_dir,
+            skip_unmatched=skip_unmatched,
             options={
                 "author": author,
                 "email": email,
@@ -334,6 +348,7 @@ def _merge_run_segments(
     output_channel: str | None,
     output_dir: Path,
     options: dict,
+    skip_unmatched: bool = False,
 ) -> None:
     """Merge, for each run record in *metadata*, every channel the record writes to several files.
 
@@ -347,17 +362,27 @@ def _merge_run_segments(
     Paths are read as the record states them, relative to the run's working directory, which is
     resolved from the directory the merge is run in -- run it from where the simulation was run.
 
+    A channel written to one file only -- a detector with signal but no noise, say -- has nothing
+    to be merged with. Writing the other channels and saying nothing would hand back a segment
+    with a detector silently missing, so by default every record is read first and the merge is
+    refused, before anything is written, naming each such channel. With *skip_unmatched* the
+    other channels are merged and each skipped one is named in a warning.
+
     Args:
         metadata: The run records to merge, one per segment.
         output: ``--output``, which a whole-segment merge does not take.
         output_channel: ``--output-channel``, which a whole-segment merge does not take.
         output_dir: Directory the merged files are written to.
         options: The remaining options, passed to each merge unchanged.
+        skip_unmatched: Whether to skip, with a warning, the channels written to one file only.
 
     Raises:
-        ValueError: If no record is given, a per-file option is given, or a record lists no channel
-            written to more than one file.
+        ValueError: If no record is given, a per-file option is given, a record lists no channel
+            written to more than one file, or -- without *skip_unmatched* -- a record lists a
+            channel written to one file only.
     """
+    import logging
+
     import json
 
     import yaml
@@ -372,7 +397,8 @@ def _merge_run_segments(
             "--output and --output-channel name one merged file. A merge of a whole segment writes one "
             "file per channel, named after the channel; choose where with --output-dir."
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    plans: list[tuple[str, Path, dict[str, list[dict]]]] = []
+    unmatched: list[str] = []
     for record_file in metadata:
         text = Path(record_file).read_text(encoding="utf-8")
         record = json.loads(text) if record_file.endswith(".json") else yaml.safe_load(text)
@@ -381,12 +407,27 @@ def _merge_run_segments(
         for entry in record.get("outputs") or []:
             for channel in entry.get("channels") or []:
                 groups.setdefault(str(channel), []).append(entry)
+        alone = sorted(channel for channel, entries in groups.items() if len(entries) == 1)
+        unmatched.extend(f"{channel} (only in {groups[channel][0]['path']}, {record_file})" for channel in alone)
         groups = {channel: entries for channel, entries in groups.items() if len(entries) > 1}
         if not groups:
             raise ValueError(
                 f"{record_file} lists no channel written to more than one file, so there is nothing to "
                 "merge. A whole-segment merge needs a run that wrote signal and noise together."
             )
+        plans.append((record_file, working_directory, groups))
+    if unmatched and not skip_unmatched:
+        raise ValueError(
+            "These channels are written to one file only, so they have nothing to be merged with and "
+            f"the merged segment would be missing them: {'; '.join(unmatched)}. Nothing was written. "
+            "Pass --skip-unmatched to merge the other channels without them."
+        )
+    logger = logging.getLogger("gwmock")
+    for skipped in unmatched:
+        logger.warning("Not merged, written to one file only: %s", skipped)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for record_file, working_directory, groups in plans:
         for channel, entries in sorted(groups.items()):
             files = [working_directory / str(entry["path"]) for entry in entries]
             suffix = Path(files[0]).suffix

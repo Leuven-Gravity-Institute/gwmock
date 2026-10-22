@@ -204,6 +204,12 @@ Run it from the directory the simulation ran in: the record names the files
 relative to the run's working directory. A run of several segments has one
 record per segment; pass `--metadata` once for each.
 
+A channel written to one file only — a detector with signal but no noise, say —
+has nothing to be merged with. Rather than return a segment with that detector
+silently missing, the merge is then refused before anything is written, naming
+each such channel. Pass `--skip-unmatched` to merge the other channels anyway;
+each skipped channel is named in a warning.
+
 To merge files of your choosing instead, name them. A single record that holds
 all of their hashes — the run's own — is enough; otherwise give one `--metadata`
 per file, in the same order:
