@@ -29,3 +29,7 @@ aer = "aer"
 BA = "BA"
 # GWOSC's term for the time a detector was observing, not a misspelling of "lifetime"
 livetime = "livetime"
+# post-Newtonian order, as in "2PN"
+PN = "PN"
+# the journal abbreviation of Living Reviews in Relativity
+Relativ = "Relativ"

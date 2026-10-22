@@ -469,11 +469,20 @@ waveform call depends on the column:
       non-spinning binaries.
     - `theta_jn`: `inclination` is present. Where neither body has an in-plane
       spin component the binary has no precession and the total angular momentum
-      J lies along the orbital one L — parallel, or anti-parallel when
-      anti-aligned spin outweighs L at the reference frequency — so `theta_jn`
-      must equal `inclination` or π − `inclination`, to 1e-6 rad. With in-plane
-      spin the two differ in general, and only the presence of `inclination` is
-      required.
+      J lies along the orbital one L, parallel or anti-parallel. Which one is
+      decided from the event: J along L is `J_z = |L| + S_z`, with the Newtonian
+      `|L| = ν M² / v`, `v = (π M f_ref)^(1/3)` for the detector-frame total
+      mass `M` at the reference frequency the backend uses, and
+      `S_z = m1² χ1z + m2² χ2z`. When J is clearly parallel `theta_jn` must
+      equal `inclination`; when clearly anti-parallel — anti-aligned spin
+      outweighing L — `π − inclination`; within `|J_z| ≤ 0.5 |L|`, where
+      post-Newtonian corrections to `|L|` (up to 0.34 of it at the innermost
+      stable orbit) could flip the sign, either. All to 1e-6 rad. A binary
+      without spin therefore needs `theta_jn = inclination`. An event without
+      both detector-frame masses and both aligned spin components, or whose
+      reference frequency is past the innermost stable orbit, is refused. With
+      in-plane spin the two angles differ in general, and only the presence of
+      `inclination` is required.
     - A per-event `f_ref`: equals, to a relative 1e-6, the reference frequency
       the waveform backend uses: `f_ref` under `waveform-backend-arguments`, or
       the `minimum-frequency` when that is unset. A catalogue whose spins refer
