@@ -181,6 +181,26 @@ def _after_staging(staging: Path) -> None:
     del staging
 
 
+def _after_install(destination: Path) -> None:
+    """Run right after the new file is moved into place; a seam for tests, and a no-op."""
+    del destination
+
+
+def _close_after_install(descriptor: int, staging: Path) -> None:
+    """Close the staged copy's descriptor once it is in place; a failure is logged, not raised.
+
+    The data was fsynced before the move and the file is already installed, so a failing close
+    changes nothing on disk, and failing the command over it would roll back a good install.
+    """
+    import logging
+    import os
+
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        logging.getLogger("gwmock").warning("Could not close the installed copy %s: %s", staging, error)
+
+
 def _still_names(path: Path, descriptor: int) -> bool:
     """Return whether *path* is still the regular file open at *descriptor*, not a link or another file."""
     import os
@@ -238,6 +258,7 @@ class _DataFileInstall:
         self._backup: Path | None = None
         staging, descriptor = _open_temporary_file(destination, ".part")
         swapped = False
+        installed = False
         try:
             try:
                 # Written through the descriptor the exclusive create returned, never by reopening
@@ -272,13 +293,33 @@ class _DataFileInstall:
                         raise
                     self._backup = backup_name
                 os.replace(staging, destination)
+                installed = True
+                _after_install(destination)
             finally:
+                if not installed:
+                    # An interrupt can arrive after os.replace has moved the file but before it
+                    # returns. The destination then already names the staged copy: compare it with
+                    # the open descriptor, or -- on Windows, where it is closed -- note that the
+                    # staged name is gone while the destination exists.
+                    installed = (
+                        _still_names(destination, descriptor)
+                        if descriptor >= 0
+                        else not staging.exists() and destination.exists() and not swapped
+                    )
                 if descriptor >= 0:
-                    os.close(descriptor)
+                    if installed:
+                        _close_after_install(descriptor, staging)
+                    else:
+                        os.close(descriptor)
         except BaseException as error:
-            if self._backup is not None and not destination.exists():
+            # Restore first, whatever was raised -- an interrupt included -- and whether or not the
+            # new file is already in place: the configuration is never saved after this, so the
+            # destination must be left as it was.
+            if installed:
+                self.roll_back(error)
+            elif self._backup is not None and not destination.exists():
                 self._restore(error)
-            if not swapped:
+            if not swapped and not installed:
                 _remove_quietly(staging)
             raise
 
@@ -304,10 +345,14 @@ class _DataFileInstall:
             _remove_quietly(self._backup)
             self._backup = None
 
-    def roll_back(self) -> None:
-        """Restore the file that was there before, or remove the new one when there was none."""
+    def roll_back(self, cause: BaseException | None = None) -> None:
+        """Restore the file that was there before, or remove the new one when there was none.
+
+        Args:
+            cause: The error that made the rollback necessary, chained to a failed restore.
+        """
         if self._backup is not None:
-            self._restore(None)
+            self._restore(cause)
         else:
             _remove_quietly(self._destination)
 

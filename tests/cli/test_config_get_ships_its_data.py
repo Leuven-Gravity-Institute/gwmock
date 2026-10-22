@@ -421,3 +421,90 @@ class TestTheStagedCopyIsWrittenThroughItsOwnDescriptor:
         assert target.read_bytes() == b"not yours\n"
         assert destination.read_bytes() == b"old catalogue\n"
         assert [p for p in destination.parent.iterdir() if p.is_symlink()], "the swapped entry was removed"
+
+
+class TestAFailureAfterTheMoveIntoPlace:
+    """Once the new catalogue is in place, a later failure must still put the old one back.
+
+    The failures are injected by wrapping ``os.replace``: the real move of the staged copy into place
+    runs, and the failure follows it -- the moment between the move and the end of the install.
+    """
+
+    _OLD = b"old catalogue\n"
+
+    def _destination(self, tmp_path: Path) -> Path:
+        destination = tmp_path / "run" / "bbh_population.csv"
+        destination.parent.mkdir()
+        destination.write_bytes(self._OLD)
+        return destination
+
+    @staticmethod
+    def _after_the_move(monkeypatch, action) -> None:
+        import os
+
+        real_replace = os.replace
+
+        def replace(source, target):
+            real_replace(source, target)
+            if str(source).endswith(".part"):
+                action()
+
+        monkeypatch.setattr("os.replace", replace)
+
+    def test_a_failing_close_after_the_move_is_not_a_failure(self, tmp_path: Path, monkeypatch, caplog):
+        """The copy was fsynced and moved, so the install stands; the pair is completed as usual."""
+        import os
+
+        from gwmock.cli import config as config_module
+
+        destination = self._destination(tmp_path)
+        real_close = os.close
+        state = {"moved": False}
+        self._after_the_move(monkeypatch, lambda: state.update(moved=True))
+
+        def close(descriptor):
+            real_close(descriptor)
+            if state["moved"]:
+                raise OSError("close refused")
+
+        monkeypatch.setattr("os.close", close)
+        with caplog.at_level("WARNING", logger="gwmock"):
+            install = config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+        monkeypatch.setattr("os.close", real_close)
+        install.commit()
+
+        assert filecmp.cmp(destination, _EXAMPLES / "signal" / "bbh_population.csv", shallow=False)
+        assert "Could not close" in caplog.text
+        assert sorted(p.name for p in destination.parent.iterdir()) == ["bbh_population.csv"]
+
+    @pytest.mark.parametrize("interruption", [RuntimeError("late failure"), KeyboardInterrupt()])
+    def test_an_interruption_after_the_move_restores_the_old_catalogue(self, tmp_path: Path, monkeypatch, interruption):
+        from gwmock.cli import config as config_module
+
+        destination = self._destination(tmp_path)
+
+        def interrupt():
+            raise interruption
+
+        self._after_the_move(monkeypatch, interrupt)
+
+        with pytest.raises(type(interruption)):
+            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+
+        assert destination.read_bytes() == self._OLD
+        assert sorted(p.name for p in destination.parent.iterdir()) == ["bbh_population.csv"]
+
+    def test_an_interruption_after_a_first_install_leaves_nothing(self, tmp_path: Path, monkeypatch):
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+
+        def interrupt():
+            raise KeyboardInterrupt
+
+        self._after_the_move(monkeypatch, interrupt)
+
+        with pytest.raises(KeyboardInterrupt):
+            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+
+        assert list(tmp_path.iterdir()) == []
