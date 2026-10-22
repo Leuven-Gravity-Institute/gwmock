@@ -94,9 +94,16 @@ uv sync
 ### Command Line
 
 ```bash
-# Generate simulated data
+# Copy the quick-start configuration into the working directory
+gwmock config --get noise/uncorrelated_gaussian/quick_start --output config.yaml
+
+# Generate simulated data from it
 gwmock simulate config.yaml
 ```
+
+`gwmock config --list` shows the other example configurations. The
+[quick-start guide](https://leuven-gravity-institute.github.io/gwmock/user-guide/quickstart/)
+walks through the run and its output.
 
 ### Interactive Configuration Editor
 
