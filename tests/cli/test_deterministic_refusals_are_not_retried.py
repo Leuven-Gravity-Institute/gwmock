@@ -111,3 +111,124 @@ def _attempts_of(operation) -> int:
     with pytest.raises(OSError, match="disk briefly unavailable"):
         retry_with_backoff(counted, max_retries=3, initial_delay=0.0)
     return attempts
+
+
+def _attempts_any(operation) -> int:
+    """Count attempts of an operation expected to fail with a refusal (a ``ValueError``)."""
+    attempts = 0
+
+    def counted():
+        nonlocal attempts
+        attempts += 1
+        operation()
+
+    with pytest.raises(ValueError, match=r"."):
+        retry_with_backoff(counted, max_retries=3, initial_delay=0.0)
+    return attempts
+
+
+class _OptionlessBackend(_RejectingBackend):
+    """An older simulator that cannot carry waveform options at all."""
+
+    REJECTED = frozenset({"waveform_arguments"})
+
+
+def test_waveform_options_the_simulator_cannot_carry_are_attempted_once():
+    adapter = SignalAdapter(
+        source_type="bbh", backend=_OptionlessBackend(), network=SimpleNamespace(detector_names=("H1",))
+    )
+
+    assert (
+        _attempts_any(
+            lambda: adapter.simulate_stack(
+                {"mass_1": 30.0, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_options={"ModeArray": [[2, 2]]},
+            )
+        )
+        == 1
+    )
+
+
+class _AliasRejectingBackend(_RejectingBackend):
+    def simulate(self, params, detector_names, background=None, **_):
+        raise ValueError("Do not mix aliases for 'detector_frame_mass_1': detector_frame_mass_1, mass1")
+
+
+def test_a_simulator_validation_error_is_attempted_once():
+    """Generation is a pure function of its inputs: the simulator's own refusal recurs on retry."""
+    adapter = SignalAdapter(
+        source_type="bbh", backend=_AliasRejectingBackend(), network=SimpleNamespace(detector_names=("H1",))
+    )
+
+    assert (
+        _attempts_any(
+            lambda: adapter.simulate_stack(
+                {"mass1": 30.0, "detector_frame_mass_1": 31.0, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.requires_lalsuite
+def test_a_fixed_argument_the_batched_path_cannot_apply_is_attempted_once(tmp_path):
+    from tests.cli.test_device_execution import _orchestrator
+
+    orchestrator = _orchestrator(
+        tmp_path, "batched", waveform_backend=None, **{"waveform-arguments": {"not_a_parameter": 1.0}}
+    )
+
+    assert _attempts_any(orchestrator._simulate) == 1
+
+
+@pytest.mark.requires_lalsuite
+def test_an_alias_clash_in_the_catalogue_is_attempted_once(tmp_path):
+    from tests.cli.test_device_execution import _COMPLETE_EVENT, _orchestrator
+
+    orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
+    end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+    orchestrator._population_events = ({**_COMPLETE_EVENT, "mass1": 31.0, "coa_time": end_time - 1.0},)
+
+    assert _attempts_any(orchestrator._simulate) == 1
+
+
+def _noise_orchestrator(tmp_path, **noise_arguments):
+    from gwmock.cli.adapter_orchestration import AdapterOrchestrator
+    from gwmock.cli.utils.config import Config
+
+    config = Config.model_validate(
+        {
+            "globals": {
+                "simulator-arguments": {"sampling-frequency": 64, "duration": 4, "total-duration": 4, "seed": 1},
+                "working-directory": str(tmp_path),
+            },
+            "orchestration": {
+                "noise": {
+                    "arguments": {"detectors": ["H1"], **noise_arguments},
+                    "output": {"output_directory": "noise", "file_name": "n-{{ detectors }}.hdf5"},
+                }
+            },
+        }
+    )
+    return AdapterOrchestrator.from_config(
+        config.orchestration, global_simulator_arguments=dict(config.globals.simulator_arguments)
+    )
+
+
+def test_a_noise_configuration_the_stream_refuses_is_attempted_once(tmp_path):
+    orchestrator = _noise_orchestrator(tmp_path, spectral_lines=[])
+
+    assert _attempts_any(orchestrator._ensure_noise_stream) == 1
+
+
+def test_an_unsupported_noise_output_argument_is_attempted_once(tmp_path):
+    orchestrator = _noise_orchestrator(tmp_path)
+    orchestrator._active_noise_output_directory = tmp_path / "noise"
+    orchestrator._active_overwrite = True
+    orchestrator._active_noise_output_arguments = {"channel_prefix": "MOCK"}
+
+    assert _attempts_any(orchestrator._run_noise_batch) == 1

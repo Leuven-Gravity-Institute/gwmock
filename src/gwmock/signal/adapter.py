@@ -446,13 +446,13 @@ class SignalAdapter:
             ValueError: If *events* is empty, or if the events do not all carry the same keys.
         """
         if not events:
-            raise ValueError("events must be non-empty to build a batch.")
+            raise DeterministicRefusalError("events must be non-empty to build a batch.")
         expected = set(events[0])
         for index, event in enumerate(events[1:], start=1):
             if set(event) != expected:
                 absent = sorted(expected - set(event))
                 extra = sorted(set(event) - expected)
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"every event must carry the same parameters, but event {index} differs from the "
                     f"first: missing {absent or 'nothing'}, unexpected {extra or 'nothing'}."
                 )
@@ -529,7 +529,7 @@ class SignalAdapter:
         merged = {**(waveform_arguments or {}), **dict(parameters)}
         missing = [name for name in _DEVICE_REQUIRED_PARAMETERS if name not in merged]
         if missing:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"The device path needs these canonical parameters, which are absent: "
                 f"{', '.join(missing)}. Unlike the per-event path it does not accept aliases, so "
                 f"e.g. 'mass1' must be given as 'detector_frame_mass_1'."
@@ -543,7 +543,7 @@ class SignalAdapter:
         # the catalogue -- `f_ref=20.0` via waveform_arguments -- so scalars stay legal in general.
         scalars = [name for name in _DEVICE_REQUIRED_PARAMETERS if np.ndim(merged[name]) == 0]
         if scalars:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"These parameters vary per event and must be given as arrays, but were scalars: "
                 f"{', '.join(scalars)}. To hold one fixed across the catalogue, repeat it per event."
             )
@@ -553,7 +553,7 @@ class SignalAdapter:
         # where the message no longer names the parameter.
         lengths = {name: len(values) for name, values in merged.items() if np.ndim(values) > 0}
         if len(set(lengths.values())) > 1:
-            raise ValueError(f"catalogue parameters disagree in length: {lengths}")
+            raise DeterministicRefusalError(f"catalogue parameters disagree in length: {lengths}")
 
         return simulate_cbc_catalogue(
             self._device_approximant(),
@@ -610,7 +610,7 @@ class SignalAdapter:
                 f"string, which the device path needs to select an approximant."
             )
         if name.startswith(_CALLABLE_WAVEFORM_PREFIX):
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "This adapter was built with a callable waveform model, which the device path "
                 "cannot run: Ripple generates from its own compiled approximants, not from Python "
                 "callbacks. Use a string approximant, or the per-event path."
@@ -622,7 +622,7 @@ class SignalAdapter:
 
         available = RippleBackend().available_approximants()
         if name not in available:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"Ripple does not implement the approximant '{name}', and the device path always "
                 f"generates with Ripple. It is rejected rather than substituted, because silently "
                 f"generating a different waveform than the one configured would corrupt the "
@@ -661,7 +661,7 @@ class SignalAdapter:
         backend_parameters = {**(waveform_arguments or {}), **dict(parameters)}
         if waveform_options:
             if "waveform_arguments" in backend_parameters:
-                raise ValueError(
+                raise DeterministicRefusalError(
                     "Specify extra waveform options either via waveform_options or as a "
                     "waveform_arguments parameter, not both"
                 )
@@ -723,7 +723,7 @@ class SignalAdapter:
             return None
         extras = {token.strip() for token in match.group(2).split(",") if token.strip()}
         if "waveform_arguments" in extras:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "The installed gwmock-signal does not support the waveform_arguments "
                 "parameter required by waveform_options; upgrade gwmock-signal"
             ) from exc
@@ -886,26 +886,35 @@ class SignalAdapter:
             parameters, waveform_arguments, waveform_options, minimum_frequency
         )
         try:
-            return self._backend.simulate(
-                backend_parameters,
-                self._network.detector_names,
-                background=background,
-                sampling_frequency=sampling_frequency,
-                minimum_frequency=minimum_frequency,
-                earth_rotation=earth_rotation,
-            )
-        except ValueError as exc:
-            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
-            if filtered is None:
-                raise
-            return self._backend.simulate(
-                filtered,
-                self._network.detector_names,
-                background=background,
-                sampling_frequency=sampling_frequency,
-                minimum_frequency=minimum_frequency,
-                earth_rotation=earth_rotation,
-            )
+            try:
+                return self._backend.simulate(
+                    backend_parameters,
+                    self._network.detector_names,
+                    background=background,
+                    sampling_frequency=sampling_frequency,
+                    minimum_frequency=minimum_frequency,
+                    earth_rotation=earth_rotation,
+                )
+            except ValueError as exc:
+                filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
+                if filtered is None:
+                    raise
+                return self._backend.simulate(
+                    filtered,
+                    self._network.detector_names,
+                    background=background,
+                    sampling_frequency=sampling_frequency,
+                    minimum_frequency=minimum_frequency,
+                    earth_rotation=earth_rotation,
+                )
+        except DeterministicRefusalError:
+            raise
+        except (ValueError, TypeError) as exc:
+            # Generation is a pure function of the event's parameters and the configuration, so a
+            # ValueError or TypeError from the simulator -- a missing parameter, aliases mixed for
+            # one quantity, a value out of range -- recurs on every retry of the batch. Marked final
+            # here, in one place, rather than by matching each message.
+            raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
 
     def simulate(
         self,

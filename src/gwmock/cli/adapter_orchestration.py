@@ -736,7 +736,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # the reason: the batched entry point generates coalescences from a catalogue of events,
         # and a continuous wave is not one. The specific message is the useful one.
         if self._source_type == "cw" and self._execution_mode() == "batched":
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "execution: batched is not available for continuous waves. The batched entry point "
                 "generates compact-binary events from a catalogue of coalescences; a continuous "
                 "wave has no coalescence and is present in every segment. Use execution: per-event, "
@@ -1419,7 +1419,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         requested = getattr(signal_config, "waveform_backend", None)
         if requested is not None and resolve_backend_class("waveform", requested).__name__ != "RippleBackend":
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"execution: batched always generates with ripple, but waveform-backend is "
                 f"{requested!r}. Substituting ripple would produce a different waveform than the "
                 f"configuration asks for. Use execution: per-event, or waveform-backend: ripple."
@@ -1438,7 +1438,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         for name in sorted(BATCHED_BACKEND_ARGUMENTS & set(self.waveform_arguments)):
             from_arguments = self.waveform_arguments[name]
             if name in arguments and arguments[name] != from_arguments:
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"{name} is set to {from_arguments!r} in waveform-arguments and "
                     f"{arguments[name]!r} in waveform-backend-arguments. One value has to win and "
                     f"picking silently would make the waveform depend on which of two keys a reader "
@@ -1696,7 +1696,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
     ) -> None:
         """Persist orchestration signal output through ``DetectorStrainStack.write``."""
         if not isinstance(data, TimeSeries):
-            raise TypeError(f"AdapterOrchestrator can only save TimeSeries signal data, got {type(data)}.")
+            raise DeterministicRefusalError(
+                f"AdapterOrchestrator can only save TimeSeries signal data, got {type(data)}."
+            )
 
         if isinstance(file_name, list):
             file_name = np.asarray(file_name, dtype=object)
@@ -1704,7 +1706,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         channel_names = self._resolve_signal_channels(data=data, channel_spec=kwargs.pop("channel", None))
         if kwargs:
             unsupported = ", ".join(sorted(kwargs))
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"Signal orchestration output arguments only support channel. Unsupported keys: {unsupported}."
             )
 
@@ -1719,7 +1721,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return
 
         if len(file_name.shape) != 1 or file_name.shape[0] != data.num_of_channels:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Resolved signal output paths must be a single path or a one-dimensional array "
                 "matching the number of detector channels."
             )
@@ -1753,7 +1755,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         output_paths = self._expand_noise_output_paths(file_name)
         output_arguments = dict(self._active_noise_output_arguments)
         if "channel_prefix" in output_arguments:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise output argument 'channel_prefix' is no longer supported. "
                 "Rename it to 'channel' (e.g. channel: MOCK_NOISE)."
             )
@@ -1761,7 +1763,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         gps_start = float(output_arguments.pop("gps_start", float(self.start_time.value)))
         if output_arguments:
             unsupported = ", ".join(sorted(output_arguments))
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise orchestration output arguments only support channel and gps_start. "
                 f"Unsupported keys: {unsupported}."
             )
@@ -1769,7 +1771,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         noise_detectors = list(self.noise_arguments["detectors"])
         if isinstance(channel_raw, list):
             if len(channel_raw) != len(noise_detectors):
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"Noise channel list expanded to {len(channel_raw)} entries "
                     f"but there are {len(noise_detectors)} noise detectors."
                 )
@@ -1879,7 +1881,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         if suffix == "h5":
             suffix = "hdf5"
         if suffix not in {"gwf", "hdf5", "npy", "txt"}:
-            raise ValueError("Signal output files must end with .gwf, .hdf5, .h5, .npy, or .txt.")
+            raise DeterministicRefusalError("Signal output files must end with .gwf, .hdf5, .h5, .npy, or .txt.")
         return cast(Literal["gwf", "hdf5", "npy", "txt"], suffix)
 
     def _infer_noise_output_format(self, file_name_template: str | list[str]) -> Literal["npy", "gwf", "hdf5"]:
@@ -1901,12 +1903,14 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """
         names = list(file_name_template) if isinstance(file_name_template, list) else [file_name_template]
         if not names:
-            raise ValueError("Noise file_name list must contain at least one entry.")
+            raise DeterministicRefusalError("Noise file_name list must contain at least one entry.")
         suffixes = {"hdf5" if (s := Path(name).suffix.lower().lstrip(".")) == "h5" else s for name in names}
         if not suffixes <= {"npy", "gwf", "hdf5"}:
-            raise ValueError("Noise output templates must end with .npy, .gwf, .hdf5, or .h5.")
+            raise DeterministicRefusalError("Noise output templates must end with .npy, .gwf, .hdf5, or .h5.")
         if len(suffixes) != 1:
-            raise ValueError("All noise file_name entries must use the same format (.npy, .gwf, or .hdf5/.h5).")
+            raise DeterministicRefusalError(
+                "All noise file_name entries must use the same format (.npy, .gwf, or .hdf5/.h5)."
+            )
         return cast(Literal["npy", "gwf", "hdf5"], suffixes.pop())
 
     def _expand_noise_output_paths(self, file_name_template: str | list[str]) -> list[Path]:
@@ -1914,7 +1918,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         noise_detectors = list(self.noise_arguments["detectors"])
         if isinstance(file_name_template, list):
             if len(file_name_template) != len(noise_detectors):
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"Noise file_name list has {len(file_name_template)} entries "
                     f"but there are {len(noise_detectors)} noise detectors."
                 )
@@ -1924,7 +1928,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             expanded = expand_template_variables(file_name_template, proxy)
             if isinstance(expanded, list):
                 if len(expanded) != len(noise_detectors):
-                    raise ValueError(
+                    raise DeterministicRefusalError(
                         f"Noise file_name template expanded to {len(expanded)} paths "
                         f"but there are {len(noise_detectors)} noise detectors."
                     )
@@ -1932,7 +1936,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             else:
                 paths = [self._active_noise_output_directory / str(expanded)] * len(noise_detectors)
         if len(set(paths)) < len(paths):
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise file_name template produces identical paths for multiple detectors. "
                 "Include {{ detectors }} in the template to generate per-detector paths."
             )
@@ -1973,7 +1977,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         try:
             self._pending_noise_chunk = next(self._noise_stream)
         except StopIteration as error:
-            raise ValueError("Noise stream ended before all orchestration batches were generated.") from error
+            raise DeterministicRefusalError(
+                "Noise stream ended before all orchestration batches were generated."
+            ) from error
         self._noise_stream_position += 1
         self._batch_glitches = [] if self.noise_adapter is None else self.noise_adapter.segment_glitch_events()
         return self._pending_noise_chunk
@@ -1985,13 +1991,34 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return
 
         if int(self.counter) > 0 and self._root_seed() is None:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Cannot resume an unseeded noise stream from a non-zero batch index; "
                 "the upstream stream is non-deterministic without a seed."
             )
         self._pending_noise_chunk = None
 
-        self._noise_stream = self.noise_adapter.open_stream(
+        try:
+            self._noise_stream = self._open_noise_stream()
+        except DeterministicRefusalError:
+            raise
+        except (ValueError, TypeError) as exc:
+            # Opening the stream validates the noise configuration -- the PSDs, the CSD pairs, the
+            # spectral lines and glitch models -- and resolves it into a generator. A ValueError or
+            # TypeError there is the configuration's, and a retry of the batch would meet it again.
+            raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
+        self._noise_stream_position = 0
+        for _ in range(target_position):
+            try:
+                next(self._noise_stream)
+            except StopIteration as error:
+                raise DeterministicRefusalError(
+                    "Noise stream ended before the saved orchestration state could be restored."
+                ) from error
+            self._noise_stream_position += 1
+
+    def _open_noise_stream(self) -> Any:
+        """Open the noise adapter's stream for this run's noise arguments."""
+        return self.noise_adapter.open_stream(
             chunk_duration=float(self.duration.value),
             # The stream advances through the gaps as well, drawing their samples and discarding
             # them, so the PSD schedule's time axis stays locked to GPS and the noise after a gap
@@ -2010,15 +2037,6 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             spectral_lines=self.noise_arguments.get("spectral_lines"),
             glitches=self.noise_arguments.get("glitches"),
         )
-        self._noise_stream_position = 0
-        for _ in range(target_position):
-            try:
-                next(self._noise_stream)
-            except StopIteration as error:
-                raise ValueError(
-                    "Noise stream ended before the saved orchestration state could be restored."
-                ) from error
-            self._noise_stream_position += 1
 
     @classmethod
     def _resolve_detector_network(cls, detector_specs: Sequence[str]) -> tuple[Network, dict[str, Any]]:
@@ -2050,7 +2068,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         channel_names = [str(channel) for channel in list(channel_value)]
         if len(channel_names) != data.num_of_channels:
-            raise ValueError("Length of channel list must match number of channels in data.")
+            raise DeterministicRefusalError("Length of channel list must match number of channels in data.")
         return channel_names
 
     def _build_signal_stack(
@@ -2064,7 +2082,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         active_detector_names = self.detectors if detector_names is None else detector_names
         active_indices = list(range(data.num_of_channels)) if indices is None else indices
         if len(active_detector_names) != len(active_indices) or len(channel_names) != len(active_indices):
-            raise ValueError("Signal detector, channel, and data selections must have matching lengths.")
+            raise DeterministicRefusalError("Signal detector, channel, and data selections must have matching lengths.")
 
         mapping = {}
         effective_names = []

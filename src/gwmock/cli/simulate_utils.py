@@ -2508,7 +2508,7 @@ def process_batch(
     output_directory.mkdir(parents=True, exist_ok=True)
     if isinstance(batch_data, AdapterOrchestrationResult):
         if not isinstance(batch.simulator_config, OrchestrationConfig):
-            raise TypeError("Adapter orchestration results require an OrchestrationConfig batch.")
+            raise DeterministicRefusalError("Adapter orchestration results require an OrchestrationConfig batch.")
 
         signal_output_files: list[Path] = []
         if batch.simulator_config.signal is not None and batch_data.signal_segment is not None:
