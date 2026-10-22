@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import filecmp
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from gwmock.cli.utils.config import get_examples_dir, load_config
 
 _EXAMPLES = get_examples_dir()
 _RUNNER = CliRunner()
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _get(label: str, output: str, *extra: str):
@@ -105,7 +107,10 @@ class TestRunningAnExampleInPlace:
         result = _RUNNER.invoke(app, ["simulate", str(self._QUICK_START), "--dry-run"])
 
         assert result.exit_code != 0
-        assert "Run gwmock from" in str(result.exception) + result.output
+        # The message reaches the output through the log handler, which wraps it to the console
+        # width and colours it under a CI service; compare it with the layout taken out.
+        shown = _ANSI_ESCAPE.sub("", str(result.exception) + result.output)
+        assert "Run gwmock from" in " ".join(shown.split())
         assert not (tmp_path / "output").exists()
 
 
