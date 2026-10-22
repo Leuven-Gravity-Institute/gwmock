@@ -120,7 +120,7 @@ cuda = ["gwmock-signal[jax]>=0.19.1", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.18.0"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.18.1"]
 # The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
@@ -130,8 +130,8 @@ pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
 # publishes no wheel for Python 3.15 yet.
 hdf5 = [
   "h5py>=3.13.0",
-  "gwmock-noise[hdf5]>=0.18.0",
-  "gwmock-pop[hdf5]>=0.16.0",
+  "gwmock-noise[hdf5]>=0.18.1",
+  "gwmock-pop[hdf5]>=0.16.1",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
 gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.19.1"]
