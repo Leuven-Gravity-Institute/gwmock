@@ -11,7 +11,16 @@ import typer
 
 
 def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    file_names: Annotated[list[Path], typer.Argument(..., help="List of frame files to merge")],
+    file_names: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            help=(
+                "Files to merge. Omit them to merge a whole run segment: every channel the "
+                "--metadata record lists in more than one file -- signal and noise of one detector, "
+                "say -- is merged into one file per channel, written to --output-dir."
+            ),
+        ),
+    ] = None,
     channel: Annotated[str, typer.Option("--channel", help="Channel name to merge")] = "STRAIN",
     output: (
         Annotated[
@@ -29,7 +38,24 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     output_channel: (
         Annotated[str, typer.Option("--output-channel", help="Channel name for the output file")] | None
     ) = None,
-    metadata: Annotated[list[str], typer.Option("--metadata", help="Metadata file to use for merging")] | None = None,
+    metadata: Annotated[
+        list[str],
+        typer.Option(
+            "--metadata",
+            help=(
+                "Metadata record of the files being merged: one per file, or one record covering "
+                "them all, such as the record of a run that wrote signal and noise together."
+            ),
+        ),
+    ]
+    | None = None,
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Where a whole-segment merge (no files given) writes one file per channel.",
+        ),
+    ] = Path("merged"),
     author: Annotated[str, typer.Option("--author", help="Author of the merged file")] | None = None,
     email: Annotated[str, typer.Option("--email", help="Email of the author")] | None = None,
     force: Annotated[bool, typer.Option("--force", help="Bypass the requirements of providing metadata files")] = False,
@@ -77,11 +103,33 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             file names -- with the author and the original paths in a private details file beside
             it. If False, one combined record is written.
 
+        output_dir (Path): Directory a whole-segment merge writes its files to.
+
     Raises:
         ValueError: If metadata files are not provided and force is False, or if the format cannot be
             inferred because the inputs do not agree on one.
     """
     import datetime
+
+    if not file_names:
+        _merge_run_segments(
+            metadata=metadata,
+            output=output,
+            output_channel=output_channel,
+            output_dir=output_dir,
+            options={
+                "author": author,
+                "email": email,
+                "include_injection_parameters": include_injection_parameters,
+                "split_metadata": split_metadata,
+            },
+        )
+        return
+
+    # One record may cover every file -- a run writes one record for its signal and noise together --
+    # so a single --metadata applies to all of them rather than having to be repeated per file.
+    if isinstance(metadata, list) and len(metadata) == 1 and len(file_names) > 1:
+        metadata = metadata * len(file_names)
 
     output = _resolve_output(output, file_names)
 
@@ -171,6 +219,10 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         # holding the *input* channel name, so `--output-channel` renamed nothing.
         frame_data.channel = output_channel
         frame_data.name = output_channel
+    elif not frame_data.name:
+        # GWpy's HDF5 reader does not always name the series it returns, and its HDF5 writer then
+        # has no dataset path to write under. The channel the series was read from is that name.
+        frame_data.name = channel
     frame_data.write(temp_output)
     # Declared before the rename, so the merged file carries the contract from the moment it appears
     # under its final name -- a reader that opens it the instant it exists sees a complete artifact.
@@ -269,6 +321,79 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     else:
         typer.echo("No metadata provided for the source files.")
         typer.echo("No metadata file will be created for the merged file.")
+
+
+def _merge_run_segments(
+    *,
+    metadata: list[str] | None,
+    output: str | None,
+    output_channel: str | None,
+    output_dir: Path,
+    options: dict,
+) -> None:
+    """Merge, for each run record in *metadata*, every channel the record writes to several files.
+
+    A run that generates signal and noise together writes them to separate files, one per detector
+    each, and records all of them -- with their channels and hashes -- in one metadata record. That
+    record is enough to merge the whole segment: the files sharing a channel are summed into one file
+    named after the channel, ``<channel>-<t0>-<duration>.<ext>`` with the ``:`` replaced by ``_``, in
+    the format the run wrote. Each source file is checked against the record's hash, as in a merge of
+    named files.
+
+    Paths are read as the record states them, relative to the run's working directory, which is
+    resolved from the directory the merge is run in -- run it from where the simulation was run.
+
+    Args:
+        metadata: The run records to merge, one per segment.
+        output: ``--output``, which a whole-segment merge does not take.
+        output_channel: ``--output-channel``, which a whole-segment merge does not take.
+        output_dir: Directory the merged files are written to.
+        options: The remaining options, passed to each merge unchanged.
+
+    Raises:
+        ValueError: If no record is given, a per-file option is given, or a record lists no channel
+            written to more than one file.
+    """
+    import json
+
+    import yaml
+
+    if not metadata:
+        raise ValueError(
+            "Give the files to merge, or omit them and give the run's metadata record with --metadata to "
+            "merge every channel of that segment."
+        )
+    if output is not None or output_channel is not None:
+        raise ValueError(
+            "--output and --output-channel name one merged file. A merge of a whole segment writes one "
+            "file per channel, named after the channel; choose where with --output-dir."
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for record_file in metadata:
+        text = Path(record_file).read_text(encoding="utf-8")
+        record = json.loads(text) if record_file.endswith(".json") else yaml.safe_load(text)
+        working_directory = Path(((record.get("config") or {}).get("globals") or {}).get("working-directory") or ".")
+        groups: dict[str, list[dict]] = {}
+        for entry in record.get("outputs") or []:
+            for channel in entry.get("channels") or []:
+                groups.setdefault(str(channel), []).append(entry)
+        groups = {channel: entries for channel, entries in groups.items() if len(entries) > 1}
+        if not groups:
+            raise ValueError(
+                f"{record_file} lists no channel written to more than one file, so there is nothing to "
+                "merge. A whole-segment merge needs a run that wrote signal and noise together."
+            )
+        for channel, entries in sorted(groups.items()):
+            files = [working_directory / str(entry["path"]) for entry in entries]
+            suffix = Path(files[0]).suffix
+            name = f"{channel.replace(':', '_')}-{entries[0]['t0']}-{entries[0]['duration']}{suffix}"
+            merge_command(
+                file_names=files,
+                channel=channel,
+                output=str(output_dir / name),
+                metadata=[record_file] * len(files),
+                **options,
+            )
 
 
 def _resolve_output(output: str | None, file_names: list[Path]) -> str:

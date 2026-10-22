@@ -482,5 +482,8 @@ gwmock simulate signal_config.yaml
 gwmock simulate glitch_config.yaml
 ```
 
-Then merge the files using GWpy (see [Reading Data](reading-data.md) for
-details).
+Then merge the files with `gwmock merge`, or with GWpy (see
+[Merging Frame Files](reading-data.md#merging-frame-files)). A single run with
+both a `signal` and a `noise` section writes one metadata record covering both,
+and `gwmock merge --metadata <record>` merges every detector's signal and noise
+from it in one call.

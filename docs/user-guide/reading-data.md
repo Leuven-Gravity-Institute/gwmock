@@ -189,17 +189,34 @@ signal_data = TimeSeries.read("filename_signal.gwf", channel="ET1_EMR:STRAIN")
 combined_data = noise_data.inject(signal_data)
 ```
 
-You can also merge files directly using the CLI:
+You can also merge files directly using the CLI. A run that generates signal and
+noise together writes them to separate files, one per detector each, and records
+all of them in one metadata record per segment. Given only that record,
+`gwmock merge` merges every detector at once — signal plus noise, one file per
+channel, named after it (`ET1_EMR_STRAIN-<t0>-<duration>.hdf5`) — and checks
+each source file against the hash the record holds:
 
 ```bash
-gwmock merge filename_noise.gwf filename_signal.gwf \
-    --metadata noise/metadata/orchestration-0.metadata.json \
-    --metadata signal/metadata/orchestration-0.metadata.json \
-    --channel ET1_EMR:STRAIN \
-    --output-channel ET1_EMR:STRAIN
+gwmock merge --metadata metadata/orchestration-0.metadata.json --output-dir merged
 ```
 
-This produces a merged frame file and a merged metadata file documenting all
+Run it from the directory the simulation ran in: the record names the files
+relative to the run's working directory. A run of several segments has one
+record per segment; pass `--metadata` once for each.
+
+To merge files of your choosing instead, name them. A single record that holds
+all of their hashes — the run's own — is enough; otherwise give one `--metadata`
+per file, in the same order:
+
+```bash
+gwmock merge output/noise/E-ET1_EMR_STRAIN_NOISE-1577491218-1024.hdf5 \
+    output/signal/E-ET1_EMR_STRAIN_BBH-1577491218-1024.hdf5 \
+    --metadata metadata/orchestration-0.metadata.json \
+    --channel ET1_EMR:STRAIN \
+    --output E-ET1_EMR_STRAIN-1577491218-1024.hdf5
+```
+
+Each merge produces the merged file and a merged metadata file documenting all
 input files and merge details.
 
 ### Merging Multiple Files
