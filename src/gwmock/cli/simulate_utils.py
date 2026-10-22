@@ -63,6 +63,7 @@ from gwmock.cli.utils.template import expand_template_variables
 from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, TRUTH_INDEXES, IndexSpec
 from gwmock.cli.utils.utils import handle_signal
 from gwmock.simulator.base import Simulator
+from gwmock.utils.errors import DeterministicRefusalError
 
 logger = logging.getLogger("gwmock")
 
@@ -631,7 +632,8 @@ class IndexDigestNotRecordedError(RuntimeError):
 
 
 #: Failures a backoff cannot help. Raised past the retry loop rather than attempted again.
-_NOT_WORTH_RETRYING = (StaleIndexReadError, IndexDigestNotRecordedError)
+#: ``DeterministicRefusalError`` is every refusal decided by the configuration and inputs alone.
+_NOT_WORTH_RETRYING = (StaleIndexReadError, IndexDigestNotRecordedError, DeterministicRefusalError)
 
 
 def _is_not_worth_retrying(error: BaseException) -> bool:
@@ -692,9 +694,12 @@ def retry_with_backoff(
         except Exception as e:  # pylint: disable=broad-exception-caught
             if _is_not_worth_retrying(e):
                 # Waiting changes nothing for these: a stale index read is a cache state, not a
-                # transient fault, and an unrecorded digest needs an operator. Retrying also
-                # re-simulates the whole batch each time -- they are raised after the frames and
-                # metadata are already written -- so the attempts cost full simulations and fail
+                # transient fault, an unrecorded digest needs an operator, and a deterministic
+                # refusal -- a column or setting the waveform does not read, a placement the
+                # simulator refuses -- recurs on the same configuration and inputs. For the index
+                # failures, retrying also re-simulates the whole batch each time -- they are raised
+                # after the frames and metadata are already written -- so the attempts cost full
+                # simulations and fail
                 # anyway, with the second onwards tripping over the first's own outputs. Fail
                 # now; a resumed run re-runs the batch because its checkpoint was never saved.
                 raise

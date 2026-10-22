@@ -29,6 +29,7 @@ from gwmock.simulator.base import Simulator
 from gwmock.simulator.seeds import derive_seed
 from gwmock.simulator.state import StateAttribute
 from gwmock.strain_schema import declare_strain_schema
+from gwmock.utils.errors import DeterministicRefusalError
 
 
 def _default_waveform_backend_name() -> str:
@@ -56,6 +57,25 @@ def _default_waveform_backend_name() -> str:
 _RIPPLE_UNAVAILABLE = "__ripple_unavailable__"
 
 logger = logging.getLogger("gwmock")
+
+
+def _placement_refusal(edge: str, parameters: Mapping[str, Any], cause: Exception) -> DeterministicRefusalError:
+    """Return the error a failed placement query is raised as: the simulator's message, marked final.
+
+    A placement query is arithmetic over the event's parameters and the configuration, so a retry of
+    the batch would ask the same question and get the same refusal.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+        cause: What the simulator raised.
+
+    Returns:
+        The refusal, carrying the simulator's message and a note naming the event.
+    """
+    refusal = DeterministicRefusalError(f"{type(cause).__name__}: {cause}")
+    refusal.add_note(_placement_query_note(edge, parameters))
+    return refusal
 
 
 def _placement_query_note(edge: str, parameters: Mapping[str, Any]) -> str:
@@ -1103,8 +1123,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            exc.add_note(_placement_query_note("ends", parameters))
-            raise
+            raise _placement_refusal("ends", parameters, exc) from exc
 
     def _pre_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
         """Return the event's waveform lead in seconds, or ``None`` when the simulator cannot say.
@@ -1139,8 +1158,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            exc.add_note(_placement_query_note("starts", parameters))
-            raise
+            raise _placement_refusal("starts", parameters, exc) from exc
 
     def _placement_query(self, name: str, question: str, reported: set[str]) -> Callable[..., float | None] | None:
         """Return the signal adapter's placement query *name*, or ``None`` when it has none.

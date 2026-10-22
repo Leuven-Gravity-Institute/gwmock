@@ -14,6 +14,7 @@ from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_
 
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.signal.population_columns import require_population_columns_read, require_zero_only_columns_zero
+from gwmock.utils.errors import DeterministicRefusalError
 
 logger = logging.getLogger("gwmock")
 
@@ -194,8 +195,8 @@ def _refuse_configured_rejections(
         "itself, as f_ref does for LAL -- move it to signal.waveform-backend-arguments."
     )
     if cause is not None:
-        raise ValueError(f"{message} Backend error: {cause}") from cause
-    raise ValueError(message)
+        raise DeterministicRefusalError(f"{message} Backend error: {cause}") from cause
+    raise DeterministicRefusalError(message)
 
 
 class SignalAdapter:

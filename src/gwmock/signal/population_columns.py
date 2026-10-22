@@ -24,6 +24,8 @@ import logging
 from collections.abc import Collection, Mapping
 from typing import Any
 
+from gwmock.utils.errors import DeterministicRefusalError
+
 logger = logging.getLogger("gwmock")
 
 #: The configuration key a user declares extra columns under, named in every refusal.
@@ -99,7 +101,7 @@ def require_population_columns_read(
     """
     refused = unread_columns_to_refuse(columns, ignored)
     if refused:
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"Population column(s) {', '.join(refused)} are not read by {reader}, so they would be "
             "dropped and the run would generate a waveform other than the catalogue describes. Check "
             "the spelling against the waveform's parameter names (for example spin_1z, not spin1_z). "
@@ -132,7 +134,7 @@ def require_zero_only_columns_zero(
     checked = (set(columns) & ZERO_ONLY_COLUMNS) - set(ignored)
     nonzero = sorted(name for name in checked if any(_is_nonzero(event.get(name)) for event in events if name in event))
     if nonzero:
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"Population column(s) {', '.join(nonzero)} are nonzero, and {reader} does not read them: it "
             "generates a quasi-circular waveform, so the eccentric orbit the catalogue describes would "
             "be dropped. Use a waveform that reads them, or set them to zero. To leave them out "
