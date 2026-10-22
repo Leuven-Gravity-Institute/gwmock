@@ -12,6 +12,55 @@ from typing import Annotated
 import typer
 
 
+def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overwrite: bool) -> tuple[Path, Path] | None:
+    """Point a copied example at its own copy of the data file it references.
+
+    An example's population catalogue ships beside it in the package and is referenced by a path
+    relative to the example's own directory. That path means nothing once the configuration is
+    copied elsewhere, so the path is rewritten to a copy next to the new configuration -- relative
+    to the working directory, like every path in a configuration -- and the caller copies the
+    catalogue there once the configuration is written. A run from that directory then needs no
+    network access and reads exactly the catalogue that shipped.
+
+    Only a relative path that resolves to a file inside the packaged examples is copied. A URL, an
+    absolute path, or a path to anything else is left exactly as written.
+
+    Args:
+        config: The loaded example configuration, updated in place.
+        src_path: The example's configuration file.
+        dst_path: Where the copy is being written.
+        overwrite: Whether an existing, different file of the same name may be replaced.
+
+    Returns:
+        ``(source, destination)`` of the data file to copy, or ``None`` when there is none.
+
+    Raises:
+        FileExistsError: If a different file already exists where the data file would be copied
+            and *overwrite* is not set.
+    """
+    import filecmp
+
+    from gwmock.cli.utils.config import get_examples_dir
+
+    orchestration = getattr(config, "orchestration", None)
+    population = getattr(orchestration, "population", None)
+    arguments = getattr(population, "arguments", None)
+    if not isinstance(arguments, dict):
+        return None
+    path_value = arguments.get("path")
+    if not isinstance(path_value, str) or "://" in path_value or Path(path_value).is_absolute():
+        return None
+    source = (src_path.parent / path_value).resolve()
+    if not source.is_file() or get_examples_dir().resolve() not in source.parents:
+        return None
+
+    destination = dst_path.parent / source.name
+    if destination.exists() and not filecmp.cmp(source, destination, shallow=False) and not overwrite:
+        raise FileExistsError(f"File already exists: {destination}. Use --overwrite to overwrite.")
+    arguments["path"] = destination.as_posix()
+    return source, destination
+
+
 def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     output: Path,
     get: Path | None,
@@ -51,11 +100,18 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
         # Create parent directories if they don't exist
         dst_path.resolve().parent.mkdir(parents=True, exist_ok=True)
 
+        data_file = _redirect_example_data_file(config, src_path=src_path, dst_path=dst_path, overwrite=overwrite)
+
         # Save the configuration file to the destination
         try:
             save_config(file_name=dst_path, config=config, overwrite=overwrite, backup=False)
         except FileExistsError as e:
             raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.") from e
+        if data_file is not None:
+            import shutil
+
+            shutil.copyfile(*data_file)
+            logger.info("Copied the example's data file %s to %s", data_file[0].name, data_file[1])
 
     logger = logging.getLogger("gwmock")
 

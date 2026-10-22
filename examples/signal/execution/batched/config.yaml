@@ -46,9 +46,11 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            # Pinned to a commit rather than `main`, so the input to this example cannot change
-            # under it -- the same reasoning as the ripple example it is derived from.
-            path: https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            # The population that ships with gwmock, as in the ripple example this is derived from;
+            # `gwmock config --get` copies it next to the configuration it writes. The same file
+            # pinned to a commit, to fetch instead:
+            #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            path: ../../bbh_population.csv
     signal:
         # The one key that separates this from signal/waveform_backend/ripple.
         execution: batched

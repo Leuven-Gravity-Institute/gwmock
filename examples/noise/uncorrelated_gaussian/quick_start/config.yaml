@@ -13,7 +13,12 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            path: https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/main/examples/signal/bbh_population.csv
+            # The one-event population that ships with gwmock. The path is relative to this
+            # file's directory; `gwmock config --get` copies the catalogue next to the
+            # configuration it writes and points the path at the copy, so the quick-start needs
+            # no network access. The same file pinned to a commit, to fetch instead:
+            #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            path: ../../../signal/bbh_population.csv
     signal:
         waveform-model: IMRPhenomXPHM
         minimum-frequency: 20

@@ -32,14 +32,14 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            # The small in-repo population, not the sandbox Zenodo deposit the other signal
-            # examples use: sandbox records are purged, so that URL has a built-in expiry.
-            #
-            # Pinned to a commit rather than `main`, so the input to this example cannot change
-            # under it. Fetching from a branch means two runs of "the same example" can differ,
-            # which matters more here than tracking edits to the file. Update the SHA
-            # deliberately if the population is ever meant to change.
-            path: https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            # The small population that ships with gwmock, not the sandbox Zenodo deposit the
+            # other signal examples use: sandbox records are purged, so that URL has a built-in
+            # expiry. The path is relative to this file's directory; `gwmock config --get` copies
+            # the catalogue next to the configuration it writes and points the path at the copy,
+            # so a run needs no network access. To fetch it instead, use the same file pinned to a
+            # commit:
+            #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            path: ../../bbh_population.csv
     signal:
         waveform-model: IMRPhenomD
         waveform-backend: ripple

@@ -11,9 +11,10 @@ gwmock simulate config.yaml
 ```
 
 New to gwmock? Start with **`noise/uncorrelated_gaussian/quick_start`** — one
-segment, signal and noise together, a few minutes to run. To write a
-configuration from scratch instead, start from **`default_config`**, a commented
-noise-only template.
+segment, signal and noise together, a few minutes to run. Its population ships
+with gwmock, and `--get` copies it next to the configuration, so it runs offline
+from the directory you copied it into. To write a configuration from scratch
+instead, start from **`default_config`**, a commented noise-only template.
 
 These examples are sized to be _realistic_, not fast: most generate one day of
 data in 4096-second segments. Shorten `total-duration` before running one end to
