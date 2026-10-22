@@ -13,6 +13,7 @@ import numpy as np
 from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
 
 from gwmock.data.time_series.time_series import TimeSeries
+from gwmock.signal.population_columns import require_population_columns_read, require_zero_only_columns_zero
 
 logger = logging.getLogger("gwmock")
 
@@ -20,7 +21,7 @@ logger = logging.getLogger("gwmock")
 #: when a backend rejects parameters it does not recognise. The backend token varies
 #: (``LAL``, ``ripple``, ``PyCBC``), so match any of them and capture the comma-separated
 #: parameter list that follows.
-_UNSUPPORTED_PARAMS_RE = re.compile(r"^Unsupported .+? waveform parameters:\s*(.*)$")
+_UNSUPPORTED_PARAMS_RE = re.compile(r"^Unsupported (.+?) waveform parameters:\s*(.*)$")
 
 #: Canonical parameter names the on-device batched path requires, with no aliases accepted.
 #:
@@ -221,6 +222,16 @@ class SignalAdapter:
             detector if isinstance(detector, str) else detector.name for detector in self._network.detector_names
         )
         self._unsupported_params: set[str] = set()
+        #: Population columns the configuration declares are not waveform inputs, left out quietly.
+        self._ignored_population_columns: frozenset[str] = frozenset()
+
+    def ignore_population_columns(self, names: Collection[str]) -> None:
+        """Declare population columns that are not waveform inputs, to be left out without refusal.
+
+        Args:
+            names: Column names, as ``signal.ignored-population-columns`` lists them.
+        """
+        self._ignored_population_columns = frozenset(names)
 
     @classmethod
     def from_source_type(
@@ -637,6 +648,14 @@ class SignalAdapter:
             backend_parameters["waveform_arguments"] = dict(waveform_options)
         if self._unsupported_params:
             _refuse_configured_rejections(self._unsupported_params, waveform_arguments)
+            # The columns were classified when the backend first rejected them; a zero-only column
+            # is still checked per event, because only a zero value may be left out.
+            require_zero_only_columns_zero(
+                self._unsupported_params,
+                ignored=self._ignored_population_columns,
+                reader="the waveform backend",
+                events=(parameters,),
+            )
             backend_parameters = {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
         return backend_parameters
 
@@ -652,11 +671,12 @@ class SignalAdapter:
         re-raise it. Records the rejected names on the adapter, so the next call drops them up front
         rather than paying a failed backend call per event.
 
-        Only population columns are dropped. A catalogue routinely carries columns that are not
-        waveform inputs -- ``redshift``, source-frame masses -- and they are still recorded in the
-        injection parameters. A key the user wrote under ``waveform-arguments`` is different: it is
-        a setting the run was asked to apply, and dropping it generates a different waveform than
-        the one configured while the run reports success.
+        Only population columns that are known not to be waveform inputs -- ``redshift``,
+        source-frame masses, labels; see :mod:`gwmock.signal.population_columns` -- or that the
+        configuration declares ignored are dropped, quietly; they are still recorded in the
+        injection parameters. Any other rejected column stops the run: a misspelt spin column would
+        otherwise vanish. A key the user wrote under ``waveform-arguments`` stops it too: it is a
+        setting the run was asked to apply.
 
         Args:
             exc: The ``ValueError`` a backend call raised.
@@ -670,12 +690,13 @@ class SignalAdapter:
             ValueError: If the rejected parameter is ``waveform_arguments`` itself, which no amount
                 of filtering fixes -- the installed gwmock-signal cannot carry the requested
                 waveform options at all, and dropping them would run the wrong waveform silently;
-                or if the backend rejects a key given in *waveform_arguments*.
+                or if the backend rejects a key given in *waveform_arguments*, or a population column
+                that is neither known to be population-only nor declared ignored.
         """
         match = _UNSUPPORTED_PARAMS_RE.match(str(exc))
         if match is None:
             return None
-        extras = {token.strip() for token in match.group(1).split(",") if token.strip()}
+        extras = {token.strip() for token in match.group(2).split(",") if token.strip()}
         if "waveform_arguments" in extras:
             raise ValueError(
                 "The installed gwmock-signal does not support the waveform_arguments "
@@ -684,12 +705,15 @@ class SignalAdapter:
         _refuse_configured_rejections(extras, waveform_arguments, cause=exc)
         new = extras - self._unsupported_params
         if new:
-            logger.warning(
-                "Waveform backend does not accept the following population parameters "
-                "and they will be ignored: %s. "
-                "They are still recorded in injection_parameters metadata.",
-                ", ".join(sorted(new)),
-            )
+            try:
+                require_population_columns_read(
+                    new,
+                    ignored=self._ignored_population_columns,
+                    reader=f"the {match.group(1)} waveform backend",
+                    events=(backend_parameters,),
+                )
+            except ValueError as refusal:
+                raise refusal from exc
             self._unsupported_params |= new
         return {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
 

@@ -987,3 +987,26 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
             encoding="utf-8",
         )
         assert load_config(path).orchestration.noise.arguments == {"minimum_frequency": 5}
+
+
+class TestIgnoredPopulationColumns:
+    """``signal.ignored-population-columns`` is checked when the configuration is loaded."""
+
+    @staticmethod
+    def _signal(columns) -> dict:
+        return {"detectors": ["H1"], "ignored-population-columns": columns}
+
+    def test_a_declared_column_loads(self) -> None:
+        assert SignalConfig.model_validate(self._signal(["snr"])).ignored_population_columns == ["snr"]
+
+    def test_the_default_is_empty(self) -> None:
+        assert SignalConfig(detectors=["H1"]).ignored_population_columns == []
+
+    @pytest.mark.parametrize("column", ["spin_1z", "spin1z", "distance"])
+    def test_a_column_the_waveform_reads_is_refused(self, column) -> None:
+        with pytest.raises(ValidationError, match="which the waveform reads"):
+            SignalConfig.model_validate(self._signal([column]))
+
+    def test_a_duplicate_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="more than once"):
+            SignalConfig.model_validate(self._signal(["snr", "snr"]))

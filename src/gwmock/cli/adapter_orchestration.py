@@ -212,6 +212,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         self._placement_order_cache: tuple[int, ...] | None = None
         #: Whether the run has been checked for a span that no event reaches. Once per orchestrator.
         self._empty_span_checked = False
+        #: Whether the batched path has checked the catalogue's columns. Once per orchestrator.
+        self._batched_population_columns_checked = False
 
         #: Events the catalogue holds that lie wholly inside a segment gap, recorded as the walk
         #: steps over them. Per batch, like `_batch_injections`: the record belongs to the batch
@@ -987,6 +989,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         can set it explicitly.
         """
         self._signal_adapter = adapter
+        signal_config = getattr(getattr(self, "orchestration_config", None), "signal", None)
+        if signal_config is not None and hasattr(adapter, "ignore_population_columns"):
+            adapter.ignore_population_columns(getattr(signal_config, "ignored_population_columns", ()) or ())
         if getattr(self, "_substituted_waveform_backend", None) is not None:
             self._substituted_waveform_backend = None
 
@@ -1425,6 +1430,30 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return None
         return instantiate_backend("waveform", "ripple", init_kwargs=arguments)
 
+    def _require_batched_population_columns(self) -> None:
+        """Refuse, once and before anything is generated, a population column the batched path ignores.
+
+        The batched entry point reads a fixed set of parameters and ignores every other column
+        without complaint, so a misspelt spin column would vanish there as it once did on the
+        per-event path. The same rule applies as there -- see
+        :mod:`gwmock.signal.population_columns` -- and checks the whole catalogue at once, which is
+        possible here because the columns are known before the first segment.
+        """
+        if self._batched_population_columns_checked or not self._population_events:
+            return
+        from gwmock.signal.device_chunks import BATCHED_PARAMETERS, canonicalise_parameters  # noqa: PLC0415
+        from gwmock.signal.population_columns import require_population_columns_read  # noqa: PLC0415
+
+        columns = set().union(*(canonicalise_parameters(dict(event)) for event in self._population_events))
+        signal_config = self.orchestration_config.signal
+        require_population_columns_read(
+            columns - BATCHED_PARAMETERS,
+            ignored=getattr(signal_config, "ignored_population_columns", ()) or (),
+            reader="the batched path (execution: batched)",
+            events=self._population_events,
+        )
+        self._batched_population_columns_checked = True
+
     def _simulate_batched_segment(self) -> TimeSeriesList:
         """Generate this segment's events together, through gwmock-signal's batched path.
 
@@ -1450,6 +1479,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # parameters the batched entry point reads.
         waveform_backend = self._batched_waveform_backend()
         require_batched_parameters_supported(canonicalise_parameters(dict(self.waveform_arguments)))
+        self._require_batched_population_columns()
 
         event_ids, events = self._events_for_this_segment()
         self._batch_injections = []

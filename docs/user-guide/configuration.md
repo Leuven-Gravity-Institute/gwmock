@@ -447,10 +447,43 @@ event's parameters and passed to each waveform call. A key there that the
 backend does not accept stops the run with the backend's message rather than
 being dropped, because dropping it would generate a waveform other than the one
 configured. A constructor setting such as `f_ref` belongs under
-`waveform-backend-arguments`. Population columns the backend does not accept,
-such as `redshift`, are different: they are not waveform inputs, so they are
-left out of the waveform call with a warning and are still recorded in the
-injection parameters.
+`waveform-backend-arguments`.
+
+### Population columns the waveform does not read
+
+A population catalogue usually carries more columns than the waveform reads.
+Each is recorded in the injection parameters either way; what happens in the
+waveform call depends on the column:
+
+- **Known population-only columns are left out quietly**: `redshift`,
+  `source_frame_mass_1`/`_2`, the spin magnitudes and tilts `spin_1`, `spin_2`,
+  `tilt_1`, `tilt_2`, `theta_jn` (recorded beside the `inclination` the waveform
+  reads), a per-event `f_ref` (backends take it from
+  `waveform-backend-arguments`), and labels and indices (`event_id`,
+  `source_type`, `source_class`, `class`). These are what gwmock-pop writes
+  besides the waveform's parameters.
+- **`eccentricity`, `long_asc_node` and `mean_per_ano` are left out only while
+  they are zero.** gwmock generates quasi-circular waveforms, which are exact at
+  zero eccentricity; a nonzero value stops the run.
+- **Any other column stops the run before anything is generated**, naming every
+  such column and what does not read it: the waveform backend on the per-event
+  path, or the batched path with `execution: batched`. A misspelt column —
+  `spin1_z` for `spin_1z` — would otherwise vanish and the run would generate a
+  different signal than the catalogue describes.
+
+If a column is not meant as a waveform input, declare it:
+
+```yaml
+orchestration:
+    signal:
+        ignored-population-columns:
+            - snr
+            - catalogue_weight
+```
+
+A declared column is left out of the waveform call without a refusal. Naming a
+column the waveform reads, such as `spin_1z`, is an error when the configuration
+is loaded, since such a column is never left out.
 
 Two things to be aware of:
 

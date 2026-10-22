@@ -215,6 +215,15 @@ class SignalConfig(BaseModel):
             "such as 'f_ref' belong under 'waveform-backend-arguments'."
         ),
     )
+    ignored_population_columns: list[str] = Field(
+        default_factory=list,
+        alias="ignored-population-columns",
+        description=(
+            "Population columns that are not waveform inputs and may be left out of the waveform "
+            "call. A column the waveform does not read stops the run unless it is a known "
+            "population-only column (redshift, source-frame masses, labels) or listed here."
+        ),
+    )
     waveform_options: dict[str, Any] = Field(
         default_factory=dict,
         alias="waveform-options",
@@ -303,6 +312,30 @@ class SignalConfig(BaseModel):
 
         require_projection_backend_runnable(self.projection_backend)
         return self
+
+    @field_validator("ignored_population_columns")
+    @classmethod
+    def validate_ignored_population_columns(cls, v: list[str]) -> list[str]:
+        """Refuse an entry that cannot mean what it says.
+
+        A column the waveform reads is never left out, so listing one would read as an instruction
+        the run silently does not follow.
+        """
+        from gwmock.signal.device_chunks import BATCHED_PARAMETERS, canonicalise_parameters  # noqa: PLC0415
+
+        blank = [name for name in v if not isinstance(name, str) or not name.strip()]
+        if blank:
+            raise ValueError("'ignored-population-columns' entries must be non-empty column names")
+        duplicated = sorted({name for name in v if v.count(name) > 1})
+        if duplicated:
+            raise ValueError(f"'ignored-population-columns' lists {', '.join(duplicated)} more than once")
+        read = sorted(name for name in v if next(iter(canonicalise_parameters({name: 0}))) in BATCHED_PARAMETERS)
+        if read:
+            raise ValueError(
+                f"'ignored-population-columns' lists {', '.join(read)}, which the waveform reads; a "
+                "column the waveform reads is never left out. Remove it from the list."
+            )
+        return v
 
     @field_validator("execution")
     @classmethod

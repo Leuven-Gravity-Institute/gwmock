@@ -894,3 +894,52 @@ class TestTheRippleSubstitutionIsHonest:
         assert not orchestrator._event_ended_before_segment_start(event), (
             "the event was skipped on a tail the run could not stand behind"
         )
+
+
+class TestThePopulationColumnsTheBatchedPathIgnores:
+    """The batched entry point reads a fixed set and ignores every other column without complaint.
+
+    So it is checked against the same rule as the per-event path, once, before anything is
+    generated or consumed.
+    """
+
+    @staticmethod
+    def _with_columns(orchestrator, **extra):
+        end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": end_time - 1.0, **extra},)
+        return orchestrator
+
+    @pytest.mark.requires_lalsuite
+    def test_a_misspelt_spin_column_stops_the_run_before_anything_is_consumed(self, tmp_path):
+        orchestrator = self._with_columns(_orchestrator(tmp_path, "batched", waveform_backend=None), spin1_z=0.3)
+
+        with pytest.raises(ValueError, match=r"spin1_z.*batched path.*signal\.ignored-population-columns"):
+            orchestrator._simulate()
+        assert int(orchestrator.population_index) == 0
+
+    @pytest.mark.requires_lalsuite
+    def test_known_population_only_columns_pass(self, tmp_path):
+        orchestrator = self._with_columns(
+            _orchestrator(tmp_path, "batched", waveform_backend=None),
+            redshift=0.1,
+            source_frame_mass_1=27.0,
+            eccentricity=0.0,
+        )
+
+        orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_a_declared_column_passes(self, tmp_path):
+        orchestrator = self._with_columns(
+            _orchestrator(tmp_path, "batched", waveform_backend=None, **{"ignored-population-columns": ["spin1_z"]}),
+            spin1_z=0.3,
+        )
+
+        orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_a_nonzero_eccentricity_stops_the_run(self, tmp_path):
+        orchestrator = self._with_columns(_orchestrator(tmp_path, "batched", waveform_backend=None), eccentricity=0.2)
+
+        with pytest.raises(ValueError, match="eccentricity are nonzero"):
+            orchestrator._require_batched_population_columns()
