@@ -310,3 +310,94 @@ def test_an_unknown_template_variable_is_still_an_attribute_error(tmp_path):
 
     with pytest.raises(AttributeError, match="Template variable 'not_a_variable' not found"):
         expand_template_variables("{{ not_a_variable }}", _noise_orchestrator(tmp_path))
+
+
+def _stream_open_attempts(tmp_path, monkeypatch, open_stream) -> int:
+    """Count the attempts a batch makes when opening the noise stream runs *open_stream*."""
+    orchestrator = _noise_orchestrator(tmp_path)
+    monkeypatch.setattr(orchestrator.noise_adapter, "open_stream", open_stream)
+    attempts = 0
+
+    def counted():
+        nonlocal attempts
+        attempts += 1
+        orchestrator._noise_stream = None
+        orchestrator._ensure_noise_stream()
+
+    with pytest.raises(Exception, match=r"."):
+        retry_with_backoff(counted, max_retries=3, initial_delay=0.0)
+    return attempts
+
+
+def _http_status(monkeypatch, status: int) -> None:
+    import requests
+
+    response = requests.Response()
+    response.status_code = status
+    monkeypatch.setattr(
+        "gwmock.utils.download.requests.get",
+        lambda *_a, **_k: (_ for _ in ()).throw(requests.HTTPError(str(status), response=response)),
+    )
+
+
+@pytest.mark.parametrize("status", [401, 404])
+def test_a_permanent_http_failure_while_opening_the_noise_stream_is_attempted_once(tmp_path, monkeypatch, status):
+    from gwmock.utils.download import download_file
+
+    _http_status(monkeypatch, status)
+
+    def open_stream(**_kwargs):
+        download_file("https://example.com/population.csv", outdir=tmp_path / "cache")
+
+    assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 1
+
+
+def test_a_server_error_while_opening_the_noise_stream_is_retried(tmp_path, monkeypatch):
+    from gwmock.utils.download import download_file
+
+    _http_status(monkeypatch, 503)
+
+    def open_stream(**_kwargs):
+        download_file("https://example.com/population.csv", outdir=tmp_path / "cache")
+
+    assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 4
+
+
+def test_a_value_error_raised_from_none_while_handling_an_os_error_is_final(tmp_path, monkeypatch):
+    """``from None`` says the earlier failure is not the reason; the context is not followed."""
+
+    def open_stream(**_kwargs):
+        try:
+            raise FileNotFoundError("no cached copy")
+        except OSError:
+            raise ValueError("psd_file names no known PSD") from None
+
+    assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 1
+
+
+def test_a_refusal_wrapping_an_os_error_is_final_however_deep(tmp_path, monkeypatch):
+    """Something along the chain already decided the failure is final; an I/O error beneath it does not undo that."""
+    from gwmock.utils.errors import DeterministicRefusalError
+
+    def open_stream(**_kwargs):
+        try:
+            try:
+                raise ConnectionError("reset")
+            except OSError as io_error:
+                raise DeterministicRefusalError("the glitch model refuses this file") from io_error
+        except DeterministicRefusalError as refusal:
+            raise ValueError("could not configure the glitch models") from refusal
+
+    assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 1
+
+
+def test_an_implicit_wrap_of_a_network_failure_stays_retryable(tmp_path, monkeypatch):
+    """A library raising ValueError while handling a connection error, without chaining it."""
+
+    def open_stream(**_kwargs):
+        try:
+            raise ConnectionError("reset")
+        except OSError:
+            raise ValueError("Failed to fetch data")  # noqa: B904 -- the implicit wrap under test
+
+    assert _stream_open_attempts(tmp_path, monkeypatch, open_stream) == 4

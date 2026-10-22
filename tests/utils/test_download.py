@@ -13,7 +13,7 @@ import pytest
 import requests
 
 from gwmock.utils.download import determine_dest_path, download_file, download_file_with_lock, handle_existing_file
-from gwmock.utils.errors import TransientDownloadError
+from gwmock.utils.errors import DeterministicRefusalError, TransientDownloadError
 
 
 @pytest.fixture
@@ -431,3 +431,4 @@ class TestWhichFailuresAreTransient:
         with pytest.raises(ValueError, match="Failed to download file") as excinfo:
             download_file("https://example.com/file.txt", outdir=temp_dir)
         assert not isinstance(excinfo.value, OSError)
+        assert isinstance(excinfo.value, DeterministicRefusalError)

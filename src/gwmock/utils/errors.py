@@ -30,28 +30,74 @@ class TransientDownloadError(OSError):
     """
 
 
-def wraps_transient_failure(error: BaseException) -> bool:
-    """Return whether *error* was raised from an I/O or network failure, at any depth.
+#: HTTP client errors a later attempt may not meet: a request timeout, too early, rate limited.
+_RETRYABLE_CLIENT_STATUSES = frozenset({408, 425, 429})
+_CLIENT_ERROR_RANGE = range(400, 500)
 
-    A library that turns a connection error into a ``ValueError`` -- explicitly chained or raised
-    while handling it -- has hidden a failure a retry may get past. ``requests``, ``urllib`` and
-    ``filelock`` failures are all :class:`OSError` subclasses, so one check covers them. Used where a
-    ``ValueError`` or ``TypeError`` from a whole subsystem is marked final, so such a wrapping stays
-    retryable.
+
+def is_permanent_http_failure(error: BaseException) -> bool:
+    """Return whether *error* carries an HTTP response no repeat of the request would change.
+
+    That is a client error -- the URL is wrong, unauthorised or forbidden (401, 403, 404, ...) --
+    other than a request timeout, "too early" or a rate limit (408, 425, 429). Read from the
+    ``response.status_code`` that ``requests.HTTPError`` carries, so ``requests`` need not be
+    imported here.
 
     Args:
         error: The exception to inspect.
 
     Returns:
-        Whether an :class:`OSError` appears in its cause or context chain.
+        Whether it is a permanent HTTP failure.
+    """
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    return isinstance(status, int) and status in _CLIENT_ERROR_RANGE and status not in _RETRYABLE_CLIENT_STATUSES
+
+
+def wraps_transient_failure(error: BaseException) -> bool:
+    """Return whether *error* was raised from an I/O or network failure a retry may get past.
+
+    A library that turns a connection error into a ``ValueError`` has hidden a failure a retry may
+    get past. ``requests``, ``urllib`` and ``filelock`` failures are all :class:`OSError`
+    subclasses, so one check covers them. Used where a ``ValueError`` or ``TypeError`` from a whole
+    subsystem is marked final, so such a wrapping stays retryable.
+
+    The chain is walked from *error* outwards, and the walk stops -- answering *not transient* --
+    at the first :class:`DeterministicRefusalError`, whatever it was raised from: something along
+    the chain already decided the failure is final. An :class:`OSError` that is a permanent HTTP
+    failure (see :func:`is_permanent_http_failure`) is not transient either.
+
+    **Which links are followed.** ``__cause__`` always: ``raise X from Y`` says ``Y`` is why. The
+    implicit ``__context__`` only when nothing suppresses it -- ``raise X from None`` sets
+    ``__suppress_context__`` and is the author saying the earlier failure is not the reason. The
+    context is followed at all because a library may wrap a network failure without chaining it
+    explicitly, and that must stay retryable.
+
+    **Residual risk.** Following ``__context__`` can still misread a deterministic error raised
+    while an :class:`OSError` was being handled -- a configuration check failing inside an
+    ``except FileNotFoundError`` fallback, say -- as transient. The cost of that misreading is a
+    bounded number of wasted retries before the same error is reported, while the opposite mistake
+    would make a real network failure final; the rule is chosen for the cheaper error.
+
+    Args:
+        error: The exception to inspect.
+
+    Returns:
+        Whether a transient :class:`OSError` appears in the followed chain before any refusal.
     """
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
+        if isinstance(current, DeterministicRefusalError):
+            return False
         if isinstance(current, OSError):
-            return True
+            return not is_permanent_http_failure(current)
         seen.add(id(current))
-        current = current.__cause__ or current.__context__
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
     return False
 
 
