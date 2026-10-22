@@ -11,7 +11,7 @@ globals:
         duration: 128
         total-duration: 128
         # Places the population's event (GPS 1577491300) 64 s into the segment. A span that
-        # misses every event still runs and writes only zeros, with a warning.
+        # misses every event still runs, with a warning, and its signal files hold only zeros.
         start-time: 1577491236
         seed: 42
     working-directory: .
