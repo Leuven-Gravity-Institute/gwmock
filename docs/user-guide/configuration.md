@@ -467,9 +467,13 @@ waveform call depends on the column:
       `arccos(z / |chi|)`, to 1e-6 (the tilt is not checked at zero spin). A
       catalogue giving spins only as magnitude and tilt would otherwise generate
       non-spinning binaries.
-    - `theta_jn`: `inclination` is present, and where neither body has an
-      in-plane spin component — the binary has no precession, so the two are the
-      same angle — equals it to 1e-6 rad.
+    - `theta_jn`: `inclination` is present. Where neither body has an in-plane
+      spin component the binary has no precession and the total angular momentum
+      J lies along the orbital one L — parallel, or anti-parallel when
+      anti-aligned spin outweighs L at the reference frequency — so `theta_jn`
+      must equal `inclination` or π − `inclination`, to 1e-6 rad. With in-plane
+      spin the two differ in general, and only the presence of `inclination` is
+      required.
     - A per-event `f_ref`: equals, to a relative 1e-6, the reference frequency
       the waveform backend uses: `f_ref` under `waveform-backend-arguments`, or
       the `minimum-frequency` when that is unset. A catalogue whose spins refer
@@ -491,10 +495,10 @@ waveform call depends on the column:
     A run on such a draw is refused before anything is generated, with an error
     naming `theta_jn` (and, unless `f_ref: 20` is set under
     `waveform-backend-arguments`, `f_ref`). From 0.18.0 the presets write
-    `theta_jn` equal to `inclination` and no longer write `f_ref`, and their
-    draws run unchanged. With an older gwmock-pop, upgrade it rather than
-    declaring the columns ignored: the inclination the waveform reads and the
-    `theta_jn` the catalogue records would otherwise disagree.
+    neither `theta_jn` nor `f_ref`, and their draws run unchanged. With an older
+    gwmock-pop, upgrade it rather than declaring the columns ignored: the
+    inclination the waveform reads and the `theta_jn` the catalogue records
+    would otherwise disagree.
 
 If a column is not meant as a waveform input, declare it:
 

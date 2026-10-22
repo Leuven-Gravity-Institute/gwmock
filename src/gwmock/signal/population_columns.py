@@ -57,7 +57,7 @@ REDUNDANT_COLUMNS: Mapping[str, str] = {
     "spin_2": "spin magnitude; needs the Cartesian components it is the norm of",
     "tilt_1": "spin tilt; needs the Cartesian components it is the polar angle of",
     "tilt_2": "spin tilt; needs the Cartesian components it is the polar angle of",
-    "theta_jn": "orientation of J; needs the inclination, and equals it without in-plane spin",
+    "theta_jn": "orientation of J; needs the inclination, and is it or pi minus it without in-plane spin",
     "f_ref": "reference frequency of the spins; must equal the one the waveform backend uses",
 }
 
@@ -156,10 +156,11 @@ def require_redundant_columns_agree(  # noqa: PLR0912
     - ``spin_k``, ``tilt_k``: all three Cartesian components are present, the magnitude is their
       norm and the tilt is ``arccos(z / |chi|)``, each to an absolute 1e-6 (the tilt only where
       ``|chi| > 1e-6``, since it is undefined at zero spin).
-    - ``theta_jn``: the inclination is present; where both bodies' in-plane spin components are
-      zero (or absent) the binary has no precession, J is parallel to L, and ``theta_jn`` must equal
-      the inclination to 1e-6 rad. With in-plane spin the two differ in general, so nothing more
-      is required.
+    - ``theta_jn``: the inclination is present. Where both bodies' in-plane spin components are
+      zero (or absent) the binary has no precession and J lies along L -- parallel, or
+      anti-parallel when anti-aligned spin outweighs the orbital angular momentum at the reference
+      frequency -- so ``theta_jn`` must equal the inclination or pi minus it, to 1e-6 rad. With
+      in-plane spin the two differ in general, so nothing more is required.
     - ``f_ref``: equal, to a relative 1e-6, to *reference_frequency* -- the frequency the waveform
       backend references the spins to for this run.
 
@@ -235,11 +236,12 @@ def require_redundant_columns_agree(  # noqa: PLR0912
             if inclination is None:
                 problems.append("theta_jn is given without inclination, so the inclination would default")
             elif all(component in (None, 0.0) for component in in_plane) and (
-                abs(value("theta_jn") - inclination) > ABSOLUTE_TOLERANCE
+                min(abs(value("theta_jn") - inclination), abs(value("theta_jn") - (np.pi - inclination)))
+                > ABSOLUTE_TOLERANCE
             ):
                 problems.append(
-                    f"theta_jn = {value('theta_jn')!r} differs from inclination = {inclination!r}, although "
-                    "without in-plane spin the binary has no precession and the two are the same angle"
+                    f"theta_jn = {value('theta_jn')!r} is neither inclination = {inclination!r} nor pi minus "
+                    "it, although without in-plane spin the binary has no precession and J lies along L"
                 )
         if "f_ref" in checked and "f_ref" in event:
             if reference_frequency is None:

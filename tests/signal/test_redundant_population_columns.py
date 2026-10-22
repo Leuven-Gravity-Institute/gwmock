@@ -69,12 +69,20 @@ class TestThetaJN:
         with pytest.raises(ValueError, match="theta_jn is given without inclination"):
             _check({"theta_jn": 0.4})
 
-    def test_without_in_plane_spin_it_must_equal_the_inclination(self) -> None:
-        with pytest.raises(ValueError, match="differs from inclination"):
+    def test_without_in_plane_spin_it_must_lie_along_the_orbit(self) -> None:
+        with pytest.raises(ValueError, match="is neither inclination"):
             _check({"theta_jn": 0.4, "inclination": 0.5, "spin_1z": 0.3})
 
     def test_equal_to_the_inclination_it_is_left_out(self) -> None:
         _check({"theta_jn": 0.5, "inclination": 0.5})
+
+    def test_pi_minus_the_inclination_is_left_out(self) -> None:
+        """J anti-parallel to L: anti-aligned spin outweighing the orbital angular momentum."""
+        _check({"theta_jn": math.pi - 0.5, "inclination": 0.5, "spin_1z": -0.9})
+
+    def test_neither_value_within_the_tolerance_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="is neither inclination"):
+            _check({"theta_jn": math.pi - 0.5 + 1e-5, "inclination": 0.5})
 
     def test_with_in_plane_spin_it_may_differ(self) -> None:
         _check({"theta_jn": 0.4, "inclination": 0.5, **_SPIN})

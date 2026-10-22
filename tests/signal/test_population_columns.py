@@ -86,16 +86,19 @@ def _events(draw) -> list[dict]:
     raises=ValueError,
     reason=(
         "gwmock-pop before 0.18.0: its presets draw theta_jn independently of inclination although "
-        "they draw no in-plane spin, so the two must be the same angle. Fixed in gwmock-pop 0.18.0; "
-        "remove this mark when the dependency floor is raised to it"
+        "they draw no in-plane spin, so J cannot lie along L as it must. From gwmock-pop 0.18.0 the "
+        "presets write no theta_jn and no f_ref; remove this mark when the dependency floor is "
+        "raised to it"
     ),
 )
 @pytest.mark.parametrize("preset", _PRESETS)
 def test_a_real_gwmock_pop_draw_is_left_out_consistently(preset):
     """Every conditional column of a real draw holds its condition, for a run referencing 20 Hz.
 
-    gwmock-pop draws ``f_ref = 20``, so a run on its output sets ``f_ref: 20`` under
-    ``signal.waveform-backend-arguments``; 20 Hz is what is passed here.
+    Before gwmock-pop 0.18.0 the presets draw ``f_ref = 20``, so a run on their output sets
+    ``f_ref: 20`` under ``signal.waveform-backend-arguments``; 20 Hz is what is passed here. From
+    0.18.0 they write neither ``theta_jn`` nor ``f_ref``, and every column left is one the waveform
+    reads or one left out unconditionally.
     """
     from gwmock_pop.simulators.graph import GraphSimulator
 
