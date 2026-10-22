@@ -58,6 +58,9 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
         return None
 
     destination = dst_path.parent / source.name
+    # Before anything else, including the skip below: a destination already holding the shipped
+    # bytes is exactly what a kill after the install, before the backup was removed, leaves.
+    _refuse_leftovers_of_an_interrupted_copy(destination)
     arguments["path"] = destination.as_posix()
     if destination.exists():
         # The same file -- the copy written into the example's own directory -- or one already
@@ -69,13 +72,52 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
     return source, destination
 
 
+#: The prefix of every temporary file ``config --get`` writes beside a catalogue. Reserved for it, so
+#: a user's own ``.bbh_population.csv.notes.backup`` is never taken for one.
+_TEMPORARY_PREFIX = ".gwmock-config-get."
+
+
+def _temporary_prefix(destination: Path) -> str:
+    """Return the ``mkstemp`` prefix of the temporary files written beside *destination*."""
+    return f"{_TEMPORARY_PREFIX}{destination.name}."
+
+
 def _leftovers_of_an_interrupted_copy(destination: Path) -> list[Path]:
-    """Return the staging and backup files an interrupted ``config --get`` left beside *destination*."""
-    return sorted(
-        path
-        for pattern in (f".{destination.name}.*.part", f".{destination.name}.*.backup")
-        for path in destination.parent.glob(pattern)
-    )
+    """Return the staging and backup files an interrupted ``config --get`` left beside *destination*.
+
+    Matched exactly: the reserved prefix, the catalogue's name, the eight characters ``mkstemp``
+    draws, then ``.part`` or ``.backup``.
+    """
+    import re
+
+    pattern = re.compile(rf"{re.escape(_temporary_prefix(destination))}[a-z0-9_]{{8}}\.(part|backup)")
+    if not destination.parent.is_dir():
+        return []
+    return sorted(path for path in destination.parent.iterdir() if pattern.fullmatch(path.name))
+
+
+def _refuse_leftovers_of_an_interrupted_copy(destination: Path) -> None:
+    """Refuse to touch *destination* while an interrupted copy's temporary files sit beside it.
+
+    Raises:
+        FileExistsError: Naming each file and how to recover; nothing is changed.
+    """
+    leftovers = _leftovers_of_an_interrupted_copy(destination)
+    if not leftovers:
+        return
+    backups = [path for path in leftovers if path.suffix == ".backup"]
+    parts = [path for path in leftovers if path.suffix == ".part"]
+    lines = [f"An earlier gwmock config --get was interrupted beside {destination}. Nothing was changed."]
+    if backups:
+        lines.append(
+            f"{', '.join(map(str, backups))} holds the catalogue that was at {destination} before. To restore "
+            f"it, rename it to {destination}, replacing what is there; or, if the catalogue now at "
+            f"{destination} is the one you want, delete it."
+        )
+    if parts:
+        moved = "" if backups else f" The catalogue at {destination}, if any, was not moved."
+        lines.append(f"{', '.join(map(str, parts))} is an unfinished staged copy and safe to delete.{moved}")
+    raise FileExistsError(" ".join(lines))
 
 
 def _remove_quietly(path: Path) -> None:
@@ -91,16 +133,17 @@ def _remove_quietly(path: Path) -> None:
 class _DataFileInstall:
     """Put an example's data file in place so that it can be undone if the configuration fails.
 
-    The file is staged in a temporary ``.<name>.*.part`` beside the destination and moved into place
-    with ``os.replace``, so a copy that fails partway never touches the destination. A file already
-    there is first moved to a temporary ``.<name>.*.backup`` beside it: :meth:`roll_back` restores it
-    -- or, when there was none, removes the new file -- and :meth:`commit` discards the backup. On
-    every failure path the restore comes first and deleting temporary files after, best effort.
+    The file is staged in a temporary ``.gwmock-config-get.<name>.*.part`` beside the destination
+    and moved into place with ``os.replace``, so a copy that fails partway never touches the
+    destination. A file already there is first moved to a temporary
+    ``.gwmock-config-get.<name>.*.backup`` beside it: :meth:`roll_back` restores it -- or, when there
+    was none, removes the new file -- and :meth:`commit` discards the backup. On every failure path
+    the restore comes first and deleting temporary files after, best effort.
 
     **The guarantee is against exceptions, not against the process being killed.** A kill between
-    the steps can leave the catalogue's name missing with its old bytes in ``.<name>.*.backup``, a
-    stray ``.<name>.*.part``, or the new catalogue beside the old configuration. ``config --get``
-    refuses to run while such files are present, naming them, rather than guessing how to recover.
+    the steps can leave the catalogue's name missing with its old bytes in the backup, a stray
+    ``.part``, or the new catalogue beside the old configuration. ``config --get`` refuses to run
+    while such files are present, naming them, rather than guessing how to recover.
     """
 
     def __init__(self, source: Path, destination: Path) -> None:
@@ -117,7 +160,7 @@ class _DataFileInstall:
         self._destination = destination
         self._backup: Path | None = None
         descriptor, staging_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.", suffix=".part", dir=destination.parent
+            prefix=_temporary_prefix(destination), suffix=".part", dir=destination.parent
         )
         os.close(descriptor)
         staging = Path(staging_name)
@@ -125,7 +168,7 @@ class _DataFileInstall:
             shutil.copyfile(source, staging)
             if destination.exists():
                 descriptor, backup_name = tempfile.mkstemp(
-                    prefix=f".{destination.name}.", suffix=".backup", dir=destination.parent
+                    prefix=_temporary_prefix(destination), suffix=".backup", dir=destination.parent
                 )
                 os.close(descriptor)
                 try:
@@ -214,15 +257,6 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
 
         if dst_path.exists() and not overwrite:
             raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.")
-        if data_file is not None:
-            leftovers = _leftovers_of_an_interrupted_copy(data_file[1])
-            if leftovers:
-                raise FileExistsError(
-                    f"An earlier gwmock config --get was interrupted and left {', '.join(map(str, leftovers))} "
-                    f"beside {data_file[1]}. A '.backup' file holds the catalogue that was there before: "
-                    f"rename it back to {data_file[1]} if that name is missing or holds the wrong file, "
-                    "and delete the '.part' and remaining files. Nothing was changed."
-                )
         # The catalogue and the configuration are installed as a pair: the catalogue first, so a
         # configuration is never written pointing at one that failed to arrive, and undone if the
         # configuration then cannot be written, so a failure leaves the destination as it was.
@@ -328,8 +362,8 @@ def config_command(
           Copy one example configuration. The label must be one ``--list`` prints,
             such as ``noise/uncorrelated_gaussian/quick_start``. An example's
             catalogue is copied beside it; a failure puts back whatever was
-            there, but a killed process can leave ``.<name>.*.backup`` or
-            ``.part`` files, and the command then refuses until they are dealt with.
+            there, but a killed process can leave ``.gwmock-config-get.*.backup``
+            or ``.part`` files, and the command then refuses until they are dealt with.
 
     - `--output <PATH>`
           Where ``--get`` writes the copy: a file name, or an existing directory to

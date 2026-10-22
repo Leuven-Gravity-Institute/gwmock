@@ -289,7 +289,10 @@ class TestRestoringComesBeforeCleaningUp:
 
 
 class TestLeftoversOfAnInterruptedCopy:
-    @pytest.mark.parametrize("leftover", [".bbh_population.csv.abc123.backup", ".bbh_population.csv.abc123.part"])
+    _BACKUP = ".gwmock-config-get.bbh_population.csv.abc_1234.backup"
+    _PART = ".gwmock-config-get.bbh_population.csv.xyz_5678.part"
+
+    @pytest.mark.parametrize("leftover", [_BACKUP, _PART])
     def test_they_are_named_and_nothing_is_changed(self, tmp_path: Path, monkeypatch, leftover):
         monkeypatch.chdir(tmp_path)
         (tmp_path / leftover).write_bytes(b"old catalogue\n")
@@ -300,3 +303,56 @@ class TestLeftoversOfAnInterruptedCopy:
         assert leftover in str(result.exception)
         assert sorted(p.name for p in tmp_path.iterdir()) == [leftover]
         assert (tmp_path / leftover).read_bytes() == b"old catalogue\n"
+
+    def test_a_backup_is_said_to_hold_the_previous_catalogue(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / self._BACKUP).write_bytes(b"old catalogue\n")
+
+        message = str(_get("noise/uncorrelated_gaussian/quick_start", "config.yaml").exception)
+
+        assert "holds the catalogue that was at" in message
+        assert "To restore it, rename it to" in message
+
+    def test_a_part_alone_is_said_to_be_safe_to_delete(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / self._PART).write_bytes(b"partial")
+
+        message = str(_get("noise/uncorrelated_gaussian/quick_start", "config.yaml").exception)
+
+        assert "unfinished staged copy and safe to delete" in message
+        assert "was not moved" in message
+        assert "rename" not in message
+
+    def test_a_users_own_backup_is_ignored(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".bbh_population.csv.notes.backup").write_text("my notes\n")
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / ".bbh_population.csv.notes.backup").read_text() == "my notes\n"
+
+    @pytest.mark.parametrize("overwrite", [(), ("--overwrite",)])
+    def test_they_are_found_when_the_catalogue_already_holds_the_shipped_bytes(
+        self, tmp_path: Path, monkeypatch, overwrite
+    ):
+        """What a kill after the install, before the backup was removed, leaves: no copy is needed, yet the backup is named."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes((_EXAMPLES / "signal" / "bbh_population.csv").read_bytes())
+        (tmp_path / self._BACKUP).write_bytes(b"old catalogue\n")
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml", *overwrite)
+
+        assert result.exit_code != 0
+        assert self._BACKUP in str(result.exception)
+        assert not (tmp_path / "config.yaml").exists()
+
+    def test_the_temporary_files_carry_the_reserved_prefix(self, tmp_path: Path) -> None:
+        from gwmock.cli.config import _DataFileInstall, _leftovers_of_an_interrupted_copy
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+        assert _leftovers_of_an_interrupted_copy(destination) == [install._backup]
+        install.commit()
+        assert _leftovers_of_an_interrupted_copy(destination) == []
