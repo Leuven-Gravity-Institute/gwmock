@@ -77,20 +77,65 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
 _TEMPORARY_PREFIX = ".gwmock-config-get."
 
 
+#: Bytes of randomness in a temporary file's token, written as ``2 *`` that many lowercase hex digits.
+_TOKEN_BYTES = 8
+#: How many tokens to try before giving up on creating a temporary file.
+_TOKEN_ATTEMPTS = 100
+
+
+def _temporary_token() -> str:
+    """Return the random part of a temporary file's name: 16 lowercase hexadecimal digits."""
+    import secrets
+
+    return secrets.token_hex(_TOKEN_BYTES)
+
+
+def _create_temporary_file(destination: Path, suffix: str) -> Path:
+    """Create, exclusively, an empty temporary file beside *destination* and return its path.
+
+    Named ``.gwmock-config-get.<name>.<token><suffix>`` with the token from
+    :func:`_temporary_token`, so the shape is gwmock's own rather than ``tempfile``'s, whose name
+    format is not promised. A name already taken is retried with a new token, a bounded number of
+    times.
+
+    Args:
+        destination: The file the temporary one sits beside.
+        suffix: ``".part"`` or ``".backup"``.
+
+    Returns:
+        The created file's path.
+
+    Raises:
+        FileExistsError: If every attempted name was taken.
+    """
+    import os
+
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    for _ in range(_TOKEN_ATTEMPTS):
+        path = destination.parent / f"{_temporary_prefix(destination)}{_temporary_token()}{suffix}"
+        try:
+            descriptor = os.open(path, flags, 0o600)
+        except FileExistsError:
+            continue
+        os.close(descriptor)
+        return path
+    raise FileExistsError(f"Could not create a temporary file beside {destination} after {_TOKEN_ATTEMPTS} attempts.")
+
+
 def _temporary_prefix(destination: Path) -> str:
-    """Return the ``mkstemp`` prefix of the temporary files written beside *destination*."""
+    """Return the prefix of the temporary files written beside *destination*."""
     return f"{_TEMPORARY_PREFIX}{destination.name}."
 
 
 def _leftovers_of_an_interrupted_copy(destination: Path) -> list[Path]:
     """Return the staging and backup files an interrupted ``config --get`` left beside *destination*.
 
-    Matched exactly: the reserved prefix, the catalogue's name, the eight characters ``mkstemp``
-    draws, then ``.part`` or ``.backup``.
+    Matched exactly: the reserved prefix, the catalogue's name, the 16 hexadecimal digits of
+    :func:`_temporary_token`, then ``.part`` or ``.backup``.
     """
     import re
 
-    pattern = re.compile(rf"{re.escape(_temporary_prefix(destination))}[a-z0-9_]{{8}}\.(part|backup)")
+    pattern = re.compile(rf"{re.escape(_temporary_prefix(destination))}[0-9a-f]{{{2 * _TOKEN_BYTES}}}\.(part|backup)")
     if not destination.parent.is_dir():
         return []
     return sorted(path for path in destination.parent.iterdir() if pattern.fullmatch(path.name))
@@ -155,28 +200,20 @@ class _DataFileInstall:
         """
         import os
         import shutil
-        import tempfile
 
         self._destination = destination
         self._backup: Path | None = None
-        descriptor, staging_name = tempfile.mkstemp(
-            prefix=_temporary_prefix(destination), suffix=".part", dir=destination.parent
-        )
-        os.close(descriptor)
-        staging = Path(staging_name)
+        staging = _create_temporary_file(destination, ".part")
         try:
             shutil.copyfile(source, staging)
             if destination.exists():
-                descriptor, backup_name = tempfile.mkstemp(
-                    prefix=_temporary_prefix(destination), suffix=".backup", dir=destination.parent
-                )
-                os.close(descriptor)
+                backup_name = _create_temporary_file(destination, ".backup")
                 try:
                     os.replace(destination, backup_name)
                 except BaseException:
-                    _remove_quietly(Path(backup_name))
+                    _remove_quietly(backup_name)
                     raise
-                self._backup = Path(backup_name)
+                self._backup = backup_name
             os.replace(staging, destination)
         except BaseException as error:
             if self._backup is not None and not destination.exists():

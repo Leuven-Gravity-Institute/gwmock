@@ -289,8 +289,8 @@ class TestRestoringComesBeforeCleaningUp:
 
 
 class TestLeftoversOfAnInterruptedCopy:
-    _BACKUP = ".gwmock-config-get.bbh_population.csv.abc_1234.backup"
-    _PART = ".gwmock-config-get.bbh_population.csv.xyz_5678.part"
+    _BACKUP = ".gwmock-config-get.bbh_population.csv.0123456789abcdef.backup"
+    _PART = ".gwmock-config-get.bbh_population.csv.fedcba9876543210.part"
 
     @pytest.mark.parametrize("leftover", [_BACKUP, _PART])
     def test_they_are_named_and_nothing_is_changed(self, tmp_path: Path, monkeypatch, leftover):
@@ -356,3 +356,24 @@ class TestLeftoversOfAnInterruptedCopy:
         assert _leftovers_of_an_interrupted_copy(destination) == [install._backup]
         install.commit()
         assert _leftovers_of_an_interrupted_copy(destination) == []
+
+    def test_an_mkstemp_shaped_name_with_the_prefix_is_not_taken_for_one(self, tmp_path: Path) -> None:
+        from gwmock.cli.config import _leftovers_of_an_interrupted_copy
+
+        destination = tmp_path / "bbh_population.csv"
+        (tmp_path / ".gwmock-config-get.bbh_population.csv.abc_1234.backup").write_text("x")
+        assert _leftovers_of_an_interrupted_copy(destination) == []
+
+    def test_a_taken_name_is_retried_with_a_new_token(self, tmp_path: Path, monkeypatch) -> None:
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+        taken = tmp_path / ".gwmock-config-get.bbh_population.csv.0000000000000000.part"
+        taken.write_bytes(b"someone else's")
+        tokens = iter(["0000000000000000", "1111111111111111"])
+        monkeypatch.setattr(config_module, "_temporary_token", lambda: next(tokens))
+
+        created = config_module._create_temporary_file(destination, ".part")
+
+        assert created.name == ".gwmock-config-get.bbh_population.csv.1111111111111111.part"
+        assert taken.read_bytes() == b"someone else's"
