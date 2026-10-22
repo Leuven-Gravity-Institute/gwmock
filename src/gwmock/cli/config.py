@@ -22,11 +22,9 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
     """Internal implementation of the config command
 
     Args:
-        output: Path to the output directory for --init or --get operations.
-            Defaults to the current directory ('.'). Created if it doesn't exist.
-        get: List of example config file names to copy.
-            If omitted, copies all available examples to the output directory.
-        init: If True, generates a default config file in the output directory.
+        output: File, or existing directory, that --get writes to.
+        get: Label of the example configuration to copy.
+        init: If provided, the path of the default configuration file to generate.
         list_: If True, prints the names of available example config files.
         overwrite: If True, overwrites existing files without raising an error.
 
@@ -112,7 +110,7 @@ def config_command(
         typer.Option(
             "--output",
             "-o",
-            help="Output file or directory for generated/copied config files (default: current directory)",
+            help="File, or existing directory, that --get writes the copied configuration to.",
         ),
     ] = Path("config.yaml"),
     get: Annotated[Path | None, typer.Option("--get", help="Label of the configuration file to copy")] = None,
@@ -131,32 +129,30 @@ def config_command(
     """
     Manage default and example configuration files.
 
-    This command provides utilities to list available example configuration files,
-    generate a default configuration, or copy one or more example configurations
-    into a target directory.
+    This command provides utilities to list the available example configurations,
+    generate a default configuration, or copy one example configuration.
 
-    Exactly **one** of ``--init``, ``--list``, or ``--get`` must be provided.
+    Exactly **one** of ``--init``, ``--list``, ``--get`` or ``--interactive`` must be provided.
 
     **Options:**
 
-    - `--init`
-          Generate a default configuration file in the output directory.
+    - `--init <PATH>`
+          Generate a default configuration file at PATH.
 
     - `--list`
-          Print the names of all available example configuration files and exit.
+          Print the labels of all available example configurations and exit.
 
-    - `--get <NAME> [<NAME> ...]`
-          Copy one or more example configuration files into the output directory.
-            The names must match the values shown by ``--list``.
+    - `--get <LABEL>`
+          Copy one example configuration. The label must be one ``--list`` prints,
+            such as ``noise/uncorrelated_gaussian/quick_start``.
 
     - `--output <PATH>`
-          Output directory where configuration files will be written.
-            Defaults to the current directory. The directory is created if it
-            does not already exist.
+          Where ``--get`` writes the copy: a file name, or an existing directory to
+            write ``config.yaml`` into. Parent directories are created.
 
     - `--overwrite`
-          Overwrite existing files in the output directory. If not set,
-            the command fails when a target file already exists.
+          Overwrite an existing file. If not set, the command fails when the target
+            file already exists.
 
     - `--interactive` / `-i`
           Open an interactive TUI editor to build a configuration file
@@ -167,25 +163,21 @@ def config_command(
             Only used with ``--interactive``.
 
     Examples:
-        List available example configuration files:
+        List available example configurations:
 
             gwmock config --list
 
-        Generate a default configuration file in the current directory:
-
-            gwmock config --init
-
-        Generate a default configuration file with a specific name:
+        Generate a default configuration file:
 
             gwmock config --init config.yaml
 
-        Copy specific example configuration files:
+        Copy the quick-start example to config.yaml:
 
-            gwmock config --get basic.yaml
+            gwmock config --get noise/uncorrelated_gaussian/quick_start --output config.yaml
 
-        Copy example configuration files and overwrite existing ones:
+        Copy an example and overwrite an existing file:
 
-            gwmock config --get basic.yaml --overwrite
+            gwmock config --get noise/uncorrelated_gaussian/quick_start --output config.yaml --overwrite
 
         Open the interactive configuration editor:
 
@@ -196,17 +188,17 @@ def config_command(
             gwmock config --interactive --load config.yaml
 
     Args:
-        output: Path to the output directory for --init or --get operations.
-            Defaults to the current directory ('.'). Created if it doesn't exist.
-        get: List of example config file names to copy.
-        init: If provided, generates a default config file in the current directory or specified path.
-        list_: If True, prints the names of available example config files.
+        output: File, or existing directory, that --get writes to.
+        get: Label of the example configuration to copy.
+        init: If provided, the path of the default configuration file to generate.
+        list_: If True, prints the labels of the available example configurations.
         overwrite: If True, overwrites existing files without raising an error.
+        interactive: If True, opens the interactive configuration editor.
+        load: Configuration file to load into the interactive editor.
 
     Raises:
-        typer.Exit: If no flags are provided or multiple flags are used together.
-        FileExistsError: If a target file already exists during copy/init (use --force if added later).
-        ValueError: If invalid example names are specified in --get or output path is invalid.
+        typer.Exit: If no action is given, or the label given to --get does not exist.
+        FileExistsError: If the target file already exists and --overwrite is not given.
     """
     if interactive:
         from gwmock.cli.utils.config_editor import ConfigEditorApp
