@@ -164,3 +164,73 @@ class TestWritingBesideTheCatalogue:
 
         assert result.exit_code != 0
         assert not (tmp_path / "config.yaml").exists()
+
+
+class TestTheCatalogueAndConfigurationAreInstalledTogether:
+    """A failed ``config --get`` leaves the destination as it was, and leaves no temporary file."""
+
+    _LABEL = "noise/uncorrelated_gaussian/quick_start"
+    _OLD_CATALOGUE = b"my own catalogue\n"
+    _OLD_CONFIG = "globals: {}\n# the user's own configuration\n"
+
+    @staticmethod
+    def _partial_copy(source, destination, *args, **kwargs):
+        del source, args, kwargs
+        Path(destination).write_bytes(b"partial")
+        raise OSError("disk full partway")
+
+    def test_a_partial_copy_leaves_an_existing_catalogue_byte_identical(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(self._OLD_CATALOGUE)
+        monkeypatch.setattr("shutil.copyfile", self._partial_copy)
+
+        result = _get(self._LABEL, "config.yaml", "--overwrite")
+
+        assert result.exit_code != 0
+        assert (tmp_path / "bbh_population.csv").read_bytes() == self._OLD_CATALOGUE
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_a_partial_copy_creates_nothing_when_nothing_was_there(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("shutil.copyfile", self._partial_copy)
+
+        result = _get(self._LABEL, "config.yaml")
+
+        assert result.exit_code != 0
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_failed_save_restores_the_catalogue_it_overwrote(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(self._OLD_CATALOGUE)
+        (tmp_path / "config.yaml").write_text(self._OLD_CONFIG)
+
+        def fail(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("gwmock.cli.utils.config.save_config", fail)
+        result = _get(self._LABEL, "config.yaml", "--overwrite")
+
+        assert result.exit_code != 0
+        assert (tmp_path / "bbh_population.csv").read_bytes() == self._OLD_CATALOGUE
+        assert (tmp_path / "config.yaml").read_text() == self._OLD_CONFIG
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]
+
+    def test_an_overwrite_that_succeeds_replaces_both_and_leaves_nothing_else(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(self._OLD_CATALOGUE)
+        (tmp_path / "config.yaml").write_text(self._OLD_CONFIG)
+
+        result = _get(self._LABEL, "config.yaml", "--overwrite")
+
+        assert result.exit_code == 0, result.output
+        assert filecmp.cmp(tmp_path / "bbh_population.csv", _EXAMPLES / "signal" / "bbh_population.csv", shallow=False)
+        assert load_config(tmp_path / "config.yaml").orchestration.population.arguments["path"] == "bbh_population.csv"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]
+
+    def test_a_first_copy_that_succeeds_leaves_nothing_else(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        result = _get(self._LABEL, "config.yaml")
+
+        assert result.exit_code == 0, result.output
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]

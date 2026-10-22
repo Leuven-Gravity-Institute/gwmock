@@ -69,6 +69,71 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
     return source, destination
 
 
+class _DataFileInstall:
+    """Put an example's data file in place so that it can be undone, leaving nothing behind either way.
+
+    The file is staged in a temporary file beside the destination and moved into place with
+    ``os.replace``, so a copy that fails partway never touches the destination. A file already
+    there is first moved to a temporary backup beside it: :meth:`roll_back` restores it -- or, when
+    there was none, removes the new file -- and :meth:`commit` discards the backup.
+    """
+
+    def __init__(self, source: Path, destination: Path) -> None:
+        """Install *source* at *destination*.
+
+        Args:
+            source: The data file to copy.
+            destination: Where it goes.
+        """
+        import os
+        import shutil
+        import tempfile
+
+        self._destination = destination
+        self._backup: Path | None = None
+        descriptor, staging_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.", suffix=".part", dir=destination.parent
+        )
+        os.close(descriptor)
+        staging = Path(staging_name)
+        try:
+            shutil.copyfile(source, staging)
+            if destination.exists():
+                descriptor, backup_name = tempfile.mkstemp(
+                    prefix=f".{destination.name}.", suffix=".backup", dir=destination.parent
+                )
+                os.close(descriptor)
+                try:
+                    os.replace(destination, backup_name)
+                except BaseException:
+                    Path(backup_name).unlink(missing_ok=True)
+                    raise
+                self._backup = Path(backup_name)
+            os.replace(staging, destination)
+        except BaseException:
+            staging.unlink(missing_ok=True)
+            if self._backup is not None and not destination.exists():
+                os.replace(self._backup, destination)
+                self._backup = None
+            raise
+
+    def commit(self) -> None:
+        """Keep the new file and discard the backup of the old one."""
+        if self._backup is not None:
+            self._backup.unlink(missing_ok=True)
+            self._backup = None
+
+    def roll_back(self) -> None:
+        """Restore the file that was there before, or remove the new one when there was none."""
+        import os
+
+        if self._backup is not None:
+            os.replace(self._backup, self._destination)
+            self._backup = None
+        else:
+            self._destination.unlink(missing_ok=True)
+
+
 def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     output: Path,
     get: Path | None,
@@ -110,29 +175,23 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
 
         data_file = _redirect_example_data_file(config, src_path=src_path, dst_path=dst_path, overwrite=overwrite)
 
-        # The data file first, so a configuration is never written pointing at a catalogue that
-        # failed to arrive; and removed again if the configuration then cannot be written, so a
-        # failed copy leaves neither behind.
         if dst_path.exists() and not overwrite:
             raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.")
-        copied = None
-        if data_file is not None:
-            import shutil
-
-            existed = data_file[1].exists()
-            shutil.copyfile(*data_file)
-            copied = None if existed else data_file[1]
-            logger.info("Copied the example's data file %s to %s", data_file[0].name, data_file[1])
-
-        # Save the configuration file to the destination
+        # The catalogue and the configuration are installed as a pair: the catalogue first, so a
+        # configuration is never written pointing at one that failed to arrive, and undone if the
+        # configuration then cannot be written, so a failure leaves the destination as it was.
+        installed = _DataFileInstall(*data_file) if data_file is not None else None
         try:
             save_config(file_name=dst_path, config=config, overwrite=overwrite, backup=False)
         except BaseException as e:
-            if copied is not None:
-                copied.unlink(missing_ok=True)
+            if installed is not None:
+                installed.roll_back()
             if isinstance(e, FileExistsError):
                 raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.") from e
             raise
+        if installed is not None:
+            installed.commit()
+            logger.info("Copied the example's data file %s to %s", data_file[0].name, data_file[1])
 
     logger = logging.getLogger("gwmock")
 
