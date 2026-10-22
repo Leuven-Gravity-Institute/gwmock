@@ -604,3 +604,70 @@ class _NoInode:
 
     def __init__(self, status) -> None:
         self.st_dev, self.st_mode, self.st_ino = status.st_dev, status.st_mode, 0
+
+
+class TestAnEntrySwappedJustBeforeTheMove:
+    """A foreign entry moved into place by the rename is neither kept as the install nor deleted."""
+
+    @staticmethod
+    def _swap_before_the_move(monkeypatch) -> None:
+        from gwmock.cli import config as config_module
+
+        def swap(staging: Path) -> None:
+            foreign = staging.with_name("foreign.tmp")
+            foreign.write_bytes(b"not written by gwmock\n")
+            foreign.replace(staging)
+
+        monkeypatch.setattr(config_module, "_before_move", swap)
+
+    def test_with_a_previous_catalogue_it_is_put_back_and_the_configuration_not_saved(
+        self, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(b"old catalogue\n")
+        (tmp_path / "config.yaml").write_text("globals: {}\n")
+        self._swap_before_the_move(monkeypatch)
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml", "--overwrite")
+
+        assert result.exit_code != 0
+        assert "did not write" in str(result.exception)
+        assert (tmp_path / "bbh_population.csv").read_bytes() == b"old catalogue\n"
+        assert (tmp_path / "config.yaml").read_text() == "globals: {}\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]
+
+    def test_with_no_previous_catalogue_the_foreign_entry_is_left_and_named(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        self._swap_before_the_move(monkeypatch)
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code != 0
+        assert "bbh_population.csv" in str(result.exception)
+        assert (tmp_path / "bbh_population.csv").read_bytes() == b"not written by gwmock\n"
+        assert not (tmp_path / "config.yaml").exists()
+
+
+class TestALinkAtTheDestination:
+    """A symbolic link where the catalogue would go is the user's; it is refused, not replaced."""
+
+    @pytest.mark.parametrize("dangling", [True, False])
+    def test_it_is_refused_and_left_alone(self, tmp_path: Path, monkeypatch, dangling):
+        import os
+
+        monkeypatch.chdir(tmp_path)
+        target = tmp_path / "elsewhere.csv"
+        if not dangling:
+            target.write_bytes(b"linked catalogue\n")
+        try:
+            os.symlink(target, tmp_path / "bbh_population.csv")
+        except (OSError, NotImplementedError) as error:
+            pytest.skip(f"symlinks are unavailable here: {error}")
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code != 0
+        assert "symbolic link" in str(result.exception)
+        assert (tmp_path / "bbh_population.csv").is_symlink()
+        assert os.readlink(tmp_path / "bbh_population.csv") == str(target)
+        assert not (tmp_path / "config.yaml").exists()

@@ -61,6 +61,13 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
     # Before anything else, including the skip below: a destination already holding the shipped
     # bytes is exactly what a kill after the install, before the backup was removed, leaves.
     _refuse_leftovers_of_an_interrupted_copy(destination)
+    if destination.is_symlink():
+        # A link -- dangling or not -- is the user's arrangement: backing it up and putting the
+        # catalogue in its place would replace the link rather than what it points to.
+        raise FileExistsError(
+            f"{destination} is a symbolic link. gwmock config --get does not replace a link with the "
+            "example's catalogue; remove it, or write the configuration elsewhere with --output."
+        )
     arguments["path"] = destination.as_posix()
     if destination.exists():
         # The same file -- the copy written into the example's own directory -- or one already
@@ -178,6 +185,11 @@ def _refuse_leftovers_of_an_interrupted_copy(destination: Path) -> None:
 
 def _after_staging(staging: Path) -> None:
     """Run between writing the staged copy and checking it; a seam for tests, and a no-op."""
+    del staging
+
+
+def _before_move(staging: Path) -> None:
+    """Run between the staged copy's check and its move into place; a seam for tests, and a no-op."""
     del staging
 
 
@@ -299,6 +311,7 @@ class _DataFileInstall:
         self._backup: Path | None = None
         staging, descriptor = _open_temporary_file(destination, ".part")
         swapped = False
+        foreign = False
         installed = False
         moving = False
         witness: tuple[int, int] | None = None
@@ -337,8 +350,24 @@ class _DataFileInstall:
                         _remove_quietly(backup_name)
                         raise
                     self._backup = backup_name
+                _before_move(staging)
                 moving = True
                 os.replace(staging, destination)
+                if witness is None or not _names_witness(destination, witness):
+                    # The rename moved whatever was at the staged name; if that entry was swapped
+                    # after the check above, the destination now holds a file this command did not
+                    # write. It is not ours to keep as the install, nor to delete.
+                    foreign = True
+                    raise RuntimeError(
+                        f"{destination} now holds a file this command did not write: the staged copy "
+                        f"{staging} was replaced by another entry before it was moved into place. The "
+                        "configuration was not saved. "
+                        + (
+                            f"The previous catalogue, in {self._backup}, has been put back over it."
+                            if self._backup is not None
+                            else f"{destination} has been left as it is; check who can write to {destination.parent}."
+                        )
+                    )
                 installed = True
                 _after_install(destination)
             finally:
@@ -355,6 +384,12 @@ class _DataFileInstall:
                     else:
                         os.close(descriptor)
         except BaseException as error:
+            if foreign:
+                # The backup is ours and holds the user's previous catalogue: put it back over the
+                # foreign entry. With no backup the foreign entry is left alone.
+                if self._backup is not None:
+                    self._restore(error)
+                raise
             if moving and not installed and witness is None:
                 # Whether the move happened cannot be told without the witness; guessing could
                 # delete or overwrite a catalogue that is not this call's. Nothing is undone.
