@@ -78,6 +78,31 @@ def _placement_refusal(edge: str, parameters: Mapping[str, Any], cause: Exceptio
     return refusal
 
 
+def _raise_placement_failure(edge: str, parameters: Mapping[str, Any], error: Exception) -> None:
+    """Classify a failed placement query, as generation and the noise stream opening classify theirs.
+
+    Every path notes the event the query was asked about. A refusal is raised as it is, and an error
+    raised from an I/O failure stays retryable; the remaining ``ValueError`` or ``TypeError`` is the
+    simulator refusing the event, and is raised as a :class:`DeterministicRefusalError`. Any other
+    type -- a ``RuntimeError``, an ``ImportError``, an ``OSError`` -- is returned to the caller to
+    re-raise unchanged.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+        error: What the query raised.
+
+    Raises:
+        DeterministicRefusalError: For a ``ValueError`` or ``TypeError`` not raised from an I/O
+            failure.
+    """
+    error.add_note(_placement_query_note(edge, parameters))
+    if isinstance(error, DeterministicRefusalError) or wraps_transient_failure(error):
+        return
+    if isinstance(error, (ValueError, TypeError)):
+        raise _placement_refusal(edge, parameters, error) from error
+
+
 def _placement_query_note(edge: str, parameters: Mapping[str, Any]) -> str:
     """Return the note added to a failed placement query, naming the event it was asked about.
 
@@ -1089,7 +1114,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         but never drops signal. A query that raises fails the run with the simulator's own message:
         an event the simulator refuses to describe is one it will refuse, or place wrongly, when asked
         to generate it, and continuing on a guessed placement can crop signal while the run reports
-        success.
+        success. How the error is classified for the batch retry is :func:`_raise_placement_failure`'s.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1125,7 +1150,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            raise _placement_refusal("ends", parameters, exc) from exc
+            _raise_placement_failure("ends", parameters, exc)
+            raise
 
     def _pre_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
         """Return the event's waveform lead in seconds, or ``None`` when the simulator cannot say.
@@ -1136,7 +1162,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         simulator has refused this event, for instance because its ``coa_time`` lies outside the
         span the simulator can place it in. That error fails the run with the simulator's own
         message. Falling back instead would crop the start of the waveform -- or place it wrongly --
-        and the run would still exit successfully.
+        and the run would still exit successfully. How the error is classified for the batch retry
+        is :func:`_raise_placement_failure`'s.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1160,7 +1187,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            raise _placement_refusal("starts", parameters, exc) from exc
+            _raise_placement_failure("starts", parameters, exc)
+            raise
 
     def _placement_query(self, name: str, question: str, reported: set[str]) -> Callable[..., float | None] | None:
         """Return the signal adapter's placement query *name*, or ``None`` when it has none.

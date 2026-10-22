@@ -527,3 +527,85 @@ class TestAContextLinkMeansRaisedWhileHandling:
             caught = error
         assert caught is not None
         assert not wraps_transient_failure(caught)
+
+
+class TestAFailedPlacementQueryIsClassified:
+    """A placement query's error is classified as generation's is, and always names the event."""
+
+    class _Raising:
+        detector_names = ("E1",)
+
+        def __init__(self, error: BaseException) -> None:
+            self._error = error
+
+        def pre_coalescence_duration(self, parameters, **_):
+            del parameters
+            raise self._error
+
+        post_coalescence_duration = pre_coalescence_duration
+
+    def _run(self, tmp_path, error: BaseException, side: str = "pre"):
+        from tests.cli.test_inspiral_segment_placement import _COMPLETE_EVENT, _end_time, _orchestrator
+
+        orchestrator = _orchestrator(tmp_path)
+        orchestrator.signal_adapter = self._Raising(error)
+        event = {**_COMPLETE_EVENT, "coa_time": _end_time(orchestrator) - 0.5}
+        query = orchestrator._pre_coalescence_duration if side == "pre" else orchestrator._post_coalescence_duration
+        attempts = 0
+        caught: BaseException | None = None
+
+        def counted():
+            nonlocal attempts
+            attempts += 1
+            query(event)
+
+        try:
+            retry_with_backoff(counted, max_retries=3, initial_delay=0.0)
+        except BaseException as exc:
+            caught = exc
+        assert caught is not None
+        assert any("coa_time=" in note for note in getattr(caught, "__notes__", [])) or any(
+            "coa_time=" in note for note in getattr(caught.__cause__, "__notes__", []) or []
+        ), "the error does not name the event"
+        return attempts, caught
+
+    @pytest.mark.requires_lalsuite
+    @pytest.mark.parametrize("side", ["pre", "post"])
+    def test_a_value_error_is_final(self, tmp_path, side) -> None:
+        from gwmock.utils.errors import DeterministicRefusalError
+
+        attempts, caught = self._run(tmp_path, ValueError("coa_time outside the span"), side)
+        assert attempts == 1
+        assert isinstance(caught, DeterministicRefusalError)
+
+    @pytest.mark.requires_lalsuite
+    @pytest.mark.parametrize("side", ["pre", "post"])
+    def test_an_existing_refusal_is_raised_as_it_is(self, tmp_path, side) -> None:
+        from gwmock.utils.errors import DeterministicRefusalError
+
+        refusal = DeterministicRefusalError("already final")
+        attempts, caught = self._run(tmp_path, refusal, side)
+        assert attempts == 1
+        assert caught is refusal, "the refusal was wrapped again"
+
+    @pytest.mark.requires_lalsuite
+    @pytest.mark.parametrize("side", ["pre", "post"])
+    def test_an_os_error_is_retried(self, tmp_path, side) -> None:
+        attempts, caught = self._run(tmp_path, ConnectionError("ephemeris download reset"), side)
+        assert attempts == 4
+        assert isinstance(caught, ConnectionError)
+
+    @pytest.mark.requires_lalsuite
+    def test_a_value_error_raised_from_an_io_failure_is_retried(self, tmp_path) -> None:
+        error = ValueError("could not read the waveform table")
+        error.__cause__ = ConnectionError("reset")
+        attempts, caught = self._run(tmp_path, error)
+        assert attempts == 4
+        assert caught is error
+
+    @pytest.mark.requires_lalsuite
+    @pytest.mark.parametrize("error", [RuntimeError("backend crashed"), ImportError("no ripple")])
+    def test_other_types_keep_their_type(self, tmp_path, error) -> None:
+        attempts, caught = self._run(tmp_path, error)
+        assert caught is error
+        assert attempts == 4
