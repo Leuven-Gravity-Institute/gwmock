@@ -142,6 +142,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
 
     TimeSeries = require("gwpy.timeseries", "gwpy", "Merging frame or HDF5 files").TimeSeries  # noqa: N806
 
+    from gwmock.cli.simulate_utils import _get_host_metadata
     from gwmock.cli.utils.hash import compute_file_hash
     from gwmock.cli.utils.metadata import (
         PRIVATE_REFERENCE_KEY,
@@ -255,6 +256,9 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         merged_metadata["email"] = email
         merged_metadata["timestamp"] = timestamp.isoformat()
         merged_metadata["versions"] = get_dependency_versions()
+        # The machine that merged, as a run records the machine that generated: the processor model
+        # for reproduction, and the host name, which a split record keeps in the private file.
+        merged_metadata["host"] = _get_host_metadata()
 
     merged_metadata_file = Path(output).with_suffix(".metadata.yaml")
     # The document embedded in the merged file and the one written beside it are the same: the

@@ -353,6 +353,60 @@ class TestTheMergedMetadata:
         assert not (tmp_path / "merged.private.yaml").exists()
 
     @pytest.mark.requires_gwpy
+    def test_it_records_the_merging_hosts_processor_and_keeps_its_name_private(
+        self, tmp_path: Path, two_frames, monkeypatch
+    ) -> None:
+        """The processor model is needed to reproduce a merge bit for bit; the host name names a machine."""
+        from gwmock.cli.utils.environment import cpu_model
+
+        monkeypatch.setattr("socket.gethostname", lambda: "merge-host-canary")
+        self._merge_with_metadata(tmp_path, two_frames)
+        record_text = (tmp_path / "merged.metadata.yaml").read_text()
+        record = yaml.safe_load(record_text)
+        private = yaml.safe_load((tmp_path / "merged.private.yaml").read_text())
+
+        assert "cpu_model" in record["host"]
+        assert record["host"]["cpu_model"] == cpu_model()
+        assert "merge-host-canary" not in record_text
+        assert private["hostname"] == "merge-host-canary"
+        assert private["values"]["/host"]["hostname"] == "merge-host-canary"
+
+    @pytest.mark.requires_gwpy
+    def test_a_combined_record_carries_the_merging_host_whole(self, tmp_path: Path, two_frames, monkeypatch) -> None:
+        from gwmock.cli.utils.environment import cpu_model
+
+        monkeypatch.setattr("socket.gethostname", lambda: "merge-host-canary")
+        metadata = [str(_metadata_for(path, tmp_path / f"{path.stem}.yaml")) for path in two_frames]
+        merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"), metadata=metadata, split_metadata=False)
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+
+        assert record["host"]["hostname"] == "merge-host-canary"
+        assert record["host"]["cpu_model"] == cpu_model()
+
+    @pytest.mark.requires_gwpy
+    def test_a_source_records_processor_model_stays_in_the_shareable_record(self, tmp_path: Path, two_frames) -> None:
+        """The generating machine's model is what reproducing a source file needs, merge or not."""
+        metadata = []
+        for path in two_frames:
+            record_path = tmp_path / f"{path.stem}.yaml"
+            record_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "file_hashes": {path.name: compute_file_hash(path)},
+                        "host": {"cpu": "x86_64", "cpu_model": "Some CPU 9000", "hostname": "source-host-canary"},
+                    }
+                )
+            )
+            metadata.append(str(record_path))
+        merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"), metadata=metadata)
+        record_text = (tmp_path / "merged.metadata.yaml").read_text()
+        record = yaml.safe_load(record_text)
+
+        for source in record["source_files"].values():
+            assert source["host"]["cpu_model"] == "Some CPU 9000"
+        assert "source-host-canary" not in record_text
+
+    @pytest.mark.requires_gwpy
     def test_the_author_defaults_to_the_user_running_it(self, tmp_path: Path, two_frames) -> None:
         self._merge_with_metadata(tmp_path, two_frames)
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())

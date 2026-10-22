@@ -121,12 +121,21 @@ def _to_plain_number(value: Any) -> float | int | None:
 
 
 def _get_host_metadata() -> dict[str, Any]:
-    """Collect stable host metadata for provenance reporting."""
+    """Collect the host fingerprint a metadata record carries, read on the machine writing it.
+
+    ``cpu_model`` is what a bit-for-bit reproduction needs: two processor models of one architecture
+    can differ in the last bit of some samples. ``hostname`` names the machine, so a split record keeps
+    it in the private details file only (see :func:`~gwmock.cli.utils.metadata.shareable_host`).
+    """
+    from gwmock.cli.utils.environment import cpu_model, hostname  # noqa: PLC0415
+
     git_sha = _get_distribution_git_sha() or _get_source_tree_git_sha()
     return {
         "platform": platform.platform(),
         "python": platform.python_version(),
         "cpu": platform.processor() or platform.machine() or "unknown",
+        "cpu_model": cpu_model(),
+        "hostname": hostname(),
         "git_sha": git_sha,
     }
 
