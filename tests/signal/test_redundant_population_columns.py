@@ -13,11 +13,7 @@ import math
 
 import pytest
 
-from gwmock.signal.population_columns import (
-    DIRECTION_BAND,
-    orbit_aligned_angular_momentum_side,
-    require_redundant_columns_agree,
-)
+from gwmock.signal.population_columns import require_redundant_columns_agree
 
 
 def _check(event: dict, *, reference_frequency: float | None = 20.0, ignored=()) -> None:
@@ -71,10 +67,13 @@ class TestSpinMagnitudeAndTilt:
 #: An equal-mass binary without spin: J is L, so theta_jn must be the inclination.
 _NO_SPIN = {"detector_frame_mass_1": 30.0, "detector_frame_mass_2": 30.0, "spin_1z": 0.0, "spin_2z": 0.0}
 
-
-def _heavy_primary(chi1z: float) -> dict:
-    """100 + 5 Msun at 5 Hz: |L| ~ 2.5e3 Msun**2 against S_z = 1e4 chi1z Msun**2."""
-    return {"detector_frame_mass_1": 100.0, "detector_frame_mass_2": 5.0, "spin_1z": chi1z, "spin_2z": 0.0}
+#: A reviewer's event near J = 0, whose side truncated post-Newtonian series disagree on: S_z < 0.
+_NEAR_ZERO_J = {
+    "detector_frame_mass_1": 169.903,
+    "detector_frame_mass_2": 49.555,
+    "spin_1z": -0.994375,
+    "spin_2z": -1.0,
+}
 
 
 class TestThetaJN:
@@ -90,23 +89,26 @@ class TestThetaJN:
         with pytest.raises(ValueError, match="J is parallel to L"):
             _check({**_NO_SPIN, "theta_jn": math.pi - 0.5, "inclination": 0.5})
 
-    def test_an_unrelated_value_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="is not inclination"):
-            _check({**_NO_SPIN, "theta_jn": 0.4, "inclination": 0.5})
+    def test_positive_aligned_spin_accepts_only_the_inclination(self) -> None:
+        event = {**_NO_SPIN, "spin_1z": 0.7, "spin_2z": 0.2, "inclination": 0.5}
+        _check({**event, "theta_jn": 0.5})
+        with pytest.raises(ValueError, match="J is parallel to L"):
+            _check({**event, "theta_jn": math.pi - 0.5})
 
-    def test_clearly_anti_parallel_it_must_be_pi_minus_the_inclination(self) -> None:
-        """A strongly anti-aligned heavy primary outweighs L: J points the other way."""
-        event = {**_heavy_primary(-0.9), "inclination": 0.5}
-        _check({**event, "theta_jn": math.pi - 0.5}, reference_frequency=5.0)
-        with pytest.raises(ValueError, match="J is anti-parallel"):
-            _check({**event, "theta_jn": 0.5}, reference_frequency=5.0)
+    def test_mixed_spins_adding_up_to_a_positive_s_z_accept_only_the_inclination(self) -> None:
+        """S_z = 30**2 (0.8 - 0.5) > 0: the anti-aligned spin cannot outweigh the aligned one and L."""
+        event = {**_NO_SPIN, "spin_1z": 0.8, "spin_2z": -0.5, "inclination": 0.5}
+        _check({**event, "theta_jn": 0.5})
+        with pytest.raises(ValueError, match="J is parallel to L"):
+            _check({**event, "theta_jn": math.pi - 0.5})
 
-    def test_where_the_sign_is_not_resolved_either_value_is_accepted(self) -> None:
-        event = {**_heavy_primary(-0.25), "inclination": 0.5}
-        _check({**event, "theta_jn": 0.5}, reference_frequency=5.0)
-        _check({**event, "theta_jn": math.pi - 0.5}, reference_frequency=5.0)
+    def test_a_negative_s_z_accepts_either_side_and_nothing_else(self) -> None:
+        """Whether anti-aligned spin turns J around depends on |L|, which no truncated series settles."""
+        event = {**_NEAR_ZERO_J, "inclination": 0.5}
+        _check({**event, "theta_jn": 0.5})
+        _check({**event, "theta_jn": math.pi - 0.5})
         with pytest.raises(ValueError, match="is neither inclination"):
-            _check({**event, "theta_jn": math.pi - 0.5 + 1e-5}, reference_frequency=5.0)
+            _check({**event, "theta_jn": 0.4})
 
     def test_without_the_masses_it_is_refused(self) -> None:
         with pytest.raises(ValueError, match="theta_jn is given without detector_frame_mass_1"):
@@ -117,31 +119,8 @@ class TestThetaJN:
         with pytest.raises(ValueError, match="without spin_1z, spin_2z"):
             _check(event)
 
-    def test_without_a_reference_frequency_it_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="reference frequency"):
-            _check({**_NO_SPIN, "theta_jn": 0.5, "inclination": 0.5}, reference_frequency=None)
-
     def test_with_in_plane_spin_it_may_differ(self) -> None:
         _check({"theta_jn": 0.4, "inclination": 0.5, **_SPIN})
-
-
-class TestTheDirectionOfJ:
-    def test_without_spin_j_is_parallel(self) -> None:
-        assert orbit_aligned_angular_momentum_side((30.0, 30.0), (0.0, 0.0), 20.0) == 1
-
-    def test_the_band_is_relative_to_l(self) -> None:
-        """J_z just outside the band is resolved; just inside, it is not."""
-        m1, m2, f = 100.0, 5.0, 5.0
-        total = m1 + m2
-        v = (math.pi * total * 4.925490947641267e-06 * f) ** (1 / 3)
-        orbital = m1 * m2 / v
-        for fraction, side in ((DIRECTION_BAND * 0.99, 0), (DIRECTION_BAND * 1.01, 1)):
-            chi = (fraction - 1.0) * orbital / m1**2
-            assert orbit_aligned_angular_momentum_side((m1, m2), (chi, 0.0), f) == side
-
-    def test_past_the_innermost_stable_orbit_it_is_not_decided(self) -> None:
-        with pytest.raises(ValueError, match="innermost stable circular orbit"):
-            orbit_aligned_angular_momentum_side((500.0, 500.0), (0.0, 0.0), 20.0)
 
 
 class TestReferenceFrequency:

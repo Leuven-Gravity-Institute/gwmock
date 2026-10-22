@@ -469,18 +469,16 @@ waveform call depends on the column:
       non-spinning binaries.
     - `theta_jn`: `inclination` is present. Where neither body has an in-plane
       spin component the binary has no precession and the total angular momentum
-      J lies along the orbital one L, parallel or anti-parallel. Which one is
-      decided from the event: J along L is `J_z = |L| + S_z`, with the Newtonian
-      `|L| = ν M² / v`, `v = (π M f_ref)^(1/3)` for the detector-frame total
-      mass `M` at the reference frequency the backend uses, and
-      `S_z = m1² χ1z + m2² χ2z`. When J is clearly parallel `theta_jn` must
-      equal `inclination`; when clearly anti-parallel — anti-aligned spin
-      outweighing L — `π − inclination`; within `|J_z| ≤ 0.5 |L|`, where
-      post-Newtonian corrections to `|L|` (up to 0.34 of it at the innermost
-      stable orbit) could flip the sign, either. All to 1e-6 rad. A binary
-      without spin therefore needs `theta_jn = inclination`. An event without
-      both detector-frame masses and both aligned spin components, or whose
-      reference frequency is past the innermost stable orbit, is refused. With
+      J lies along the orbital one L: `J_z = |L| + S_z`, with
+      `S_z = m1² χ1z + m2² χ2z` from the detector-frame masses and aligned
+      spins. Where `S_z ≥ 0` — a binary without spin included — `J_z` is
+      positive whatever `|L|` is, so J is parallel to L exactly and `theta_jn`
+      must equal `inclination`. Where `S_z < 0`, anti-aligned spin may outweigh
+      `|L|` and turn J around; which happens depends on `|L|` at the reference
+      frequency, which no truncated post-Newtonian series pins down near
+      `J = 0`, so `inclination` and `π − inclination` are both accepted.
+      Anything else is refused, to 1e-6 rad. An event without both
+      detector-frame masses and both aligned spin components is refused. With
       in-plane spin the two angles differ in general, and only the presence of
       `inclination` is required.
     - A per-event `f_ref`: equals, to a relative 1e-6, the reference frequency

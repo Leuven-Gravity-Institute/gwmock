@@ -59,7 +59,7 @@ REDUNDANT_COLUMNS: Mapping[str, str] = {
     "spin_2": "spin magnitude; needs the Cartesian components it is the norm of",
     "tilt_1": "spin tilt; needs the Cartesian components it is the polar angle of",
     "tilt_2": "spin tilt; needs the Cartesian components it is the polar angle of",
-    "theta_jn": "orientation of J; needs the inclination, and without in-plane spin the side J is on",
+    "theta_jn": "orientation of J; needs the inclination, and equals it unless anti-aligned spin could flip J",
     "f_ref": "reference frequency of the spins; must equal the one the waveform backend uses",
 }
 
@@ -159,12 +159,12 @@ def require_redundant_columns_agree(  # noqa: PLR0912
       norm and the tilt is ``arccos(z / |chi|)``, each to an absolute 1e-6 (the tilt only where
       ``|chi| > 1e-6``, since it is undefined at zero spin).
     - ``theta_jn``: the inclination is present. Where both bodies' in-plane spin components are
-      zero (or absent) the binary has no precession and J lies along L, on the side
-      :func:`orbit_aligned_angular_momentum_side` decides from the event's masses and aligned
-      spins: ``theta_jn`` must equal the inclination when J is parallel to L, pi minus it when
-      anti-parallel, and either within the band where the sign is not resolved -- each to 1e-6 rad.
-      An event lacking a mass, an aligned spin or a reference frequency to decide that is refused.
-      With in-plane spin the two differ in general, so nothing more is required.
+      zero (or absent) the binary has no precession and J lies along L, ``J_z = |L| + S_z`` with
+      ``S_z = m1**2 chi1z + m2**2 chi2z``. Where ``S_z >= 0`` -- zero spin included -- J is exactly
+      parallel to L and ``theta_jn`` must equal the inclination; where ``S_z < 0`` either side is
+      possible, so the inclination or pi minus it is accepted. Each to 1e-6 rad. An event lacking a
+      mass or an aligned spin component is refused. With in-plane spin the two differ in general,
+      so nothing more is required.
     - ``f_ref``: equal, to a relative 1e-6, to *reference_frequency* -- the frequency the waveform
       backend references the spins to for this run.
 
@@ -244,7 +244,6 @@ def require_redundant_columns_agree(  # noqa: PLR0912
                         inclination,
                         masses=(value("detector_frame_mass_1"), value("detector_frame_mass_2")),
                         aligned_spins=(value("spin_1z"), value("spin_2z")),
-                        reference_frequency=reference_frequency,
                     )
                 )
         if "f_ref" in checked and "f_ref" in event:
@@ -264,82 +263,22 @@ def require_redundant_columns_agree(  # noqa: PLR0912
             )
 
 
-#: Solar mass in seconds, G M_sun / c^3 (IAU 2015 nominal, as LAL uses).
-_SOLAR_MASS_SECONDS = 4.925490947641267e-06
-
-#: Orbital velocity at the innermost stable circular orbit of a test mass, ``v = 6**-0.5``; past it
-#: the post-Newtonian orbital angular momentum below does not describe a binary.
-_ISCO_VELOCITY = 6.0**-0.5
-
-#: Half-width, relative to the Newtonian orbital angular momentum, of the band where the sign of
-#: ``J_z = L + S_z`` is not resolved.
-#:
-#: **Measured.** The relative difference between the 2PN and the Newtonian orbital angular
-#: momentum of a circular non-spinning binary, ``(3/2 + nu/6) x + (27/8 - 19 nu/8 + nu**2/24) x**2``
-#: with ``x = v**2``, grows with ``v`` and is largest at the edge of the range checked here,
-#: ``v = v_ISCO``: 0.344 for ``nu -> 0`` and 0.334 for ``nu = 1/4``. At the reference frequencies
-#: typical of ground-based detectors it is far smaller -- 0.006 for a 3 Msun binary at 5 Hz, 0.12 for
-#: 60 Msun at 20 Hz. 0.5 leaves margin over the largest value. **Not anchored**: the spin-orbit
-#: (1.5PN and higher) and spin-spin corrections to L are not included in that measurement; the
-#: margin is meant to absorb them but is not shown to.
-DIRECTION_BAND = 0.5
-
-
-def orbit_aligned_angular_momentum_side(
-    masses: tuple[float, float],
-    aligned_spins: tuple[float, float],
-    reference_frequency: float,
-) -> int:
-    """Return on which side of the orbital angular momentum L the total J lies, for an aligned-spin binary.
-
-    With no in-plane spin, J = L + S lies along L: ``J_z = |L| + S_z`` with
-    ``S_z = m1**2 chi1z + m2**2 chi2z``. The orbital angular momentum is taken at Newtonian order,
-    ``|L| = nu M**2 / v`` with ``v = (pi M f_ref)**(1/3)`` in geometric units and ``M`` the
-    detector-frame total mass. Post-Newtonian corrections change ``|L|``, so a ``J_z`` within
-    :data:`DIRECTION_BAND` of zero, relative to ``|L|``, is reported as unresolved.
-
-    The post-Newtonian expression the band is measured against is the circular-orbit angular
-    momentum of a non-spinning binary to 2PN, ``J = (G m**2 nu / c x**0.5) [1 + (3/2 + nu/6) x +
-    (27/8 - 19 nu/8 + nu**2/24) x**2]`` (L. Blanchet, Living Rev. Relativ. 17, 2 (2014)); its
-    coefficients were checked against the 2PN binding energy through the first law of binary
-    mechanics, ``dE = omega dJ``, which they satisfy exactly to that order.
-
-    Args:
-        masses: The detector-frame component masses, in solar masses.
-        aligned_spins: The dimensionless spin components along L, ``chi1z`` and ``chi2z``.
-        reference_frequency: The gravitational-wave frequency the spins are referenced to, in Hz.
-
-    Returns:
-        ``1`` when J is parallel to L, ``-1`` when anti-parallel, ``0`` when unresolved.
-
-    Raises:
-        ValueError: If the reference frequency puts the orbit past the innermost stable circular
-            orbit, where the orbital angular momentum above does not apply.
-    """
-    m1, m2 = masses
-    total = m1 + m2
-    velocity = (np.pi * total * _SOLAR_MASS_SECONDS * reference_frequency) ** (1.0 / 3.0)
-    if velocity >= _ISCO_VELOCITY:
-        raise ValueError(
-            f"at the reference frequency {reference_frequency!r} Hz the orbit of a {total!r} Msun binary is past "
-            "the innermost stable circular orbit"
-        )
-    orbital = (m1 * m2 / total**2) * total**2 / velocity
-    total_z = orbital + m1**2 * aligned_spins[0] + m2**2 * aligned_spins[1]
-    if abs(total_z) <= DIRECTION_BAND * orbital:
-        return 0
-    return 1 if total_z > 0 else -1
-
-
 def _theta_jn_problems(
     theta_jn: float,
     inclination: float,
     *,
     masses: tuple[float | None, float | None],
     aligned_spins: tuple[float | None, float | None],
-    reference_frequency: float | None,
 ) -> list[str]:
-    """Return what is wrong with leaving out *theta_jn* for an event without in-plane spin."""
+    """Return what is wrong with leaving out *theta_jn* for an event without in-plane spin.
+
+    Without in-plane spin J and L are collinear, ``J_z = |L| + S_z`` with
+    ``S_z = m1**2 chi1z + m2**2 chi2z``. Where ``S_z >= 0`` -- zero spin included -- ``J_z > 0``
+    exactly, whatever ``|L|`` is, so J is parallel to L and ``theta_jn`` must equal the inclination.
+    Where ``S_z < 0`` the side depends on ``|L|``, which a catalogue does not pin down robustly: any
+    truncated post-Newtonian series for it leaves the sign uncertain near ``J = 0``. Either the
+    inclination or pi minus it is then accepted, and nothing else.
+    """
     missing = [
         name
         for name, given in (
@@ -350,29 +289,16 @@ def _theta_jn_problems(
         )
         if given is None
     ]
-    if missing or reference_frequency is None:
-        needed = ", ".join(missing) if missing else "the waveform backend's reference frequency"
-        return [f"theta_jn is given without {needed}, which decide whether it must equal the inclination"]
-    try:
-        side = orbit_aligned_angular_momentum_side(
-            (float(masses[0]), float(masses[1])),  # type: ignore[arg-type]
-            (float(aligned_spins[0]), float(aligned_spins[1])),  # type: ignore[arg-type]
-            reference_frequency,
-        )
-    except ValueError as error:
-        return [f"theta_jn cannot be checked: {error}"]
+    if missing:
+        return [f"theta_jn is given without {', '.join(missing)}, which decide whether it must equal the inclination"]
+    spin_z = float(masses[0]) ** 2 * float(aligned_spins[0]) + float(masses[1]) ** 2 * float(aligned_spins[1])  # type: ignore[arg-type]
     parallel = abs(theta_jn - inclination) <= ABSOLUTE_TOLERANCE
     anti_parallel = abs(theta_jn - (np.pi - inclination)) <= ABSOLUTE_TOLERANCE
-    if side > 0 and not parallel:
+    if spin_z >= 0.0 and not parallel:
         return [
-            f"theta_jn = {theta_jn!r} is not inclination = {inclination!r}, although J is parallel to L for this "
-            "event's masses and aligned spins"
+            f"theta_jn = {theta_jn!r} is not inclination = {inclination!r}, although J is parallel to L: the "
+            "aligned spins add to the orbital angular momentum rather than oppose it"
         ]
-    if side < 0 and not anti_parallel:
-        return [
-            f"theta_jn = {theta_jn!r} is not pi - inclination = {np.pi - inclination!r}, although the anti-aligned "
-            "spin outweighs L and J is anti-parallel to it for this event"
-        ]
-    if side == 0 and not (parallel or anti_parallel):
+    if spin_z < 0.0 and not (parallel or anti_parallel):
         return [f"theta_jn = {theta_jn!r} is neither inclination = {inclination!r} nor pi minus it"]
     return []
