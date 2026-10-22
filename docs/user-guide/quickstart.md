@@ -26,8 +26,11 @@ It requires an internet connection to fetch the BBH population file from GitHub.
 
 <!-- prettier-ignore -->
 !!! note
-    The quick-start fetches a population file on first run.
-    Ensure you have internet access and approximately 50 MB of free disk space.
+    The quick-start fetches a population file on first run, so it needs internet access.
+    It also needs about 200 MB of free disk space: the HDF5 output is uncompressed
+    float64, so each run writes `duration × sampling-frequency × 8 bytes` per file,
+    for every detector, once for signal and once for noise. Here that is
+    1024 s × 4096 Hz × 8 B = 32 MiB per file, × 3 detectors × 2 = 192 MiB.
 
 You should see output like:
 
