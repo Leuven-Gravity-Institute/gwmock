@@ -56,7 +56,7 @@ dependencies = [
   # strain written as a stack) are gwmock-data's rather than GWpy's; earlier releases require GWpy.
   # 0.19.0 writes and reads that stack as HDF5 without h5py.
   # 0.20.0 falls back to the ripple waveform backend where lalsuite is not installed.
-  "gwmock-signal>=0.20.0",
+  "gwmock-signal>=0.21.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -91,7 +91,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.20.0"]
+sgwb = ["gwmock-signal[sgwb]>=0.21.0"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -107,10 +107,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.20.0"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.20.0"]
+jax = ["gwmock-signal[jax]>=0.21.0"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.20.0", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.21.0", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -134,7 +134,7 @@ hdf5 = [
   "gwmock-pop[hdf5]>=0.18.0",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
-gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.20.0"]
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.21.0"]
 
 [dependency-groups]
 dev = [
@@ -152,7 +152,7 @@ dev = [
   # Pinned to the `ruff-pre-commit` rev in `.pre-commit-config.yaml`; bump the two together.
   "ruff==0.17.1",
 ]
-docs = ["zensical>=0.0.71", "mkdocstrings-python>=2.0.9"]
+docs = ["zensical>=0.0.71", "mkdocstrings-python>=2.0.10"]
 build = ["hatch>=1.18.1"]
 release = ["git-cliff>=2.14.2"]
 
