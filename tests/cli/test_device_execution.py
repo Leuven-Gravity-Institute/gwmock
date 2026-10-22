@@ -520,6 +520,51 @@ _SKIP_EVENT: dict[str, Any] = {
 }
 
 
+def _projection_padding_in_the_query(raw: float, answered: float) -> float:
+    """Return how much of *answered* is projection padding, checking it is all or nothing.
+
+    gwmock-signal pads the projected strain at both ends by ``edge_padding(fs)`` samples -- the
+    largest detector light-travel delay -- so the signal a delay moves past the waveform buffer is
+    kept, and its duration queries cover that padded output. Releases before the padding answer with
+    the waveform buffer alone. Either way the query must describe the strain that is *written*, so
+    the difference from the raw waveform buffer is exactly the padding or exactly zero; anything
+    else is a query describing some other buffer.
+
+    Args:
+        raw: The generating backend's own answer for the waveform buffer.
+        answered: The placement query's answer.
+
+    Returns:
+        The padding, in seconds, the answer includes.
+    """
+    from gwmock_signal.projection.resampling import edge_padding
+
+    padding = edge_padding(_SAMPLING_FREQUENCY) / _SAMPLING_FREQUENCY
+    assert padding > 0
+    included = answered - raw
+    tolerance = 0.5 / _SAMPLING_FREQUENCY
+    assert included == pytest.approx(0.0, abs=tolerance) or included == pytest.approx(padding, abs=tolerance), (
+        f"the query answers {answered} s against a {raw} s waveform buffer: {included} s more, which is "
+        f"neither nothing nor the {padding} s projection padding"
+    )
+    return padding if included > tolerance else 0.0
+
+
+def _ripple_simulator_answer(side: str, parameters: dict[str, Any], minimum_frequency: float) -> float | None:
+    """Return gwmock-signal's own answer for a ripple-backed compact-binary simulator.
+
+    The simulator's queries state what its projected output covers, padding included where it
+    pads, so this is the contract the placement query has to match -- without restating any
+    number gwmock-signal owns.
+    """
+    from gwmock_signal import CBCSimulator
+    from gwmock_signal.waveform.backends.ripple import RippleBackend
+
+    simulator = CBCSimulator("IMRPhenomD", waveform_backend=RippleBackend())
+    query = simulator.pre_coalescence_duration if side == "pre" else simulator.post_coalescence_duration
+    return query(parameters, _SAMPLING_FREQUENCY, minimum_frequency)
+
+
 def _install(orchestrator, coa_times: list[float]) -> None:
     """Replace the catalogue and drop the cached placement order."""
     orchestrator._population_events = [{**_SKIP_EVENT, "coa_time": t} for t in coa_times]
@@ -648,11 +693,17 @@ class TestTheQueryAnswersForTheBackendThatGenerates:
 
         assert answered is not None
         assert generated is not None
+        # The written strain is ripple's buffer plus the projection padding, when the installed
+        # gwmock-signal pads; ripple's own query sizes only the waveform buffer.
+        generated += _projection_padding_in_the_query(generated, answered)
         assert answered == pytest.approx(generated, abs=0.5 / _SAMPLING_FREQUENCY), (
             f"the placement query answers {answered} s while ripple generates {generated} s; an "
             f"event whose content reaches {generated - answered} s further than the query admits "
             "can be skipped while it is still contributing to the segment"
         )
+        assert answered == pytest.approx(
+            _ripple_simulator_answer("post", parameters, minimum_frequency), abs=0.5 / _SAMPLING_FREQUENCY
+        ), "the placement query disagrees with gwmock-signal's ripple-backed simulator"
 
 
 class TestTheLeadIsAlignedToo:
@@ -704,10 +755,14 @@ class TestTheLeadIsAlignedToo:
 
         assert answered is not None
         assert generated is not None
+        generated += _projection_padding_in_the_query(generated, answered)
         assert answered == pytest.approx(generated, abs=0.5 / _SAMPLING_FREQUENCY), (
             f"the placement query answers a {answered} s lead while ripple generates {generated} s; "
             "the segment an event is claimed by is decided from a different library's buffer"
         )
+        assert answered == pytest.approx(
+            _ripple_simulator_answer("pre", parameters, minimum_frequency), abs=0.5 / _SAMPLING_FREQUENCY
+        ), "the placement query disagrees with gwmock-signal's ripple-backed simulator"
 
 
 class TestTheRippleSubstitutionIsHonest:

@@ -235,7 +235,14 @@ class TestSignalAdapter:
             waveform_arguments={"reference_frequency": 50.0},
         )
 
-        assert strain.shape == (2, n)
+        # The projected strain is the waveform plus, where gwmock-signal pads the projection, the
+        # largest detector light-travel delay at each end -- not the waveform's own length.
+        from gwmock_signal.projection.resampling import edge_padding
+
+        padding = (strain.shape[1] - n) // 2
+        assert strain.shape[0] == 2
+        assert padding in {0, edge_padding(4.0)}, f"{strain.shape[1]} samples for an {n}-sample waveform"
+        assert strain.shape[1] == n + 2 * padding
         backend = adapter._backend
         assert isinstance(backend.waveform_model, str)
         assert backend.waveform_model.startswith("__gwmock_custom__")
