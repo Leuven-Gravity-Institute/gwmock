@@ -508,3 +508,99 @@ class TestAFailureAfterTheMoveIntoPlace:
             config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
 
         assert list(tmp_path.iterdir()) == []
+
+
+class TestWhetherTheMoveHappenedIsDecidedByIdentity:
+    """Only the very file that was staged counts as installed; anything else is left alone."""
+
+    _SOURCE = _EXAMPLES / "signal" / "bbh_population.csv"
+
+    @pytest.fixture(params=[False, True], ids=["posix-order", "windows-order"])
+    def closes_before_rename(self, request, monkeypatch):
+        from gwmock.cli import config as config_module
+
+        monkeypatch.setattr(config_module, "_closes_before_rename", lambda: request.param)
+        return request.param
+
+    def test_an_unrelated_destination_is_not_taken_for_the_install(
+        self, tmp_path: Path, monkeypatch, closes_before_rename
+    ):
+        """The staged copy vanished and another process created the destination: neither is ours to delete."""
+        import os
+
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+        real_replace = os.replace
+
+        def replace(source, target):
+            if str(source).endswith(".part"):
+                # The other file first: an inode freed by the unlink could otherwise be reused for it
+                # on this test's file system, which NTFS file IDs, carrying a sequence number, are not.
+                Path(target).write_bytes(b"someone else's catalogue\n")
+                Path(source).unlink()
+                raise OSError("interrupted")
+            return real_replace(source, target)
+
+        monkeypatch.setattr("os.replace", replace)
+        with pytest.raises(OSError, match="interrupted"):
+            config_module._DataFileInstall(self._SOURCE, destination)
+
+        assert destination.read_bytes() == b"someone else's catalogue\n"
+
+    def test_the_previous_catalogue_is_untouched_when_no_backup_was_taken(
+        self, tmp_path: Path, monkeypatch, closes_before_rename
+    ):
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+        real_create = config_module._create_temporary_file
+
+        def create(path, suffix):
+            if suffix == ".backup":
+                for staged in tmp_path.glob("*.part"):
+                    staged.unlink()
+                raise OSError("no room for a backup")
+            return real_create(path, suffix)
+
+        monkeypatch.setattr(config_module, "_create_temporary_file", create)
+        with pytest.raises(OSError, match="no room"):
+            config_module._DataFileInstall(self._SOURCE, destination)
+
+        assert destination.read_bytes() == b"old catalogue\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_without_an_identity_nothing_is_undone_and_the_paths_are_named(self, tmp_path: Path, monkeypatch):
+        import os
+
+        from gwmock.cli import config as config_module
+
+        destination = tmp_path / "bbh_population.csv"
+        destination.write_bytes(b"old catalogue\n")
+        monkeypatch.setattr(
+            config_module, "_witness", lambda descriptor: config_module._identity_from(_NoInode(os.fstat(descriptor)))
+        )
+        real_replace = os.replace
+
+        def replace(source, target):
+            real_replace(source, target)
+            if str(source).endswith(".part"):
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr("os.replace", replace)
+        with pytest.raises(RuntimeError, match="cannot be established") as excinfo:
+            config_module._DataFileInstall(self._SOURCE, destination)
+
+        backups = sorted(tmp_path.glob("*.backup"))
+        assert len(backups) == 1
+        assert str(backups[0]) in str(excinfo.value)
+        assert backups[0].read_bytes() == b"old catalogue\n"
+        assert filecmp.cmp(destination, self._SOURCE, shallow=False)
+
+
+class _NoInode:
+    """A stat result whose file system reports no inode."""
+
+    def __init__(self, status) -> None:
+        self.st_dev, self.st_mode, self.st_ino = status.st_dev, status.st_mode, 0

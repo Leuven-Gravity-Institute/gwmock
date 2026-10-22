@@ -7,7 +7,7 @@ A tool to generate and manage default configuration files.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -201,6 +201,47 @@ def _close_after_install(descriptor: int, staging: Path) -> None:
         logging.getLogger("gwmock").warning("Could not close the installed copy %s: %s", staging, error)
 
 
+def _closes_before_rename() -> bool:
+    """Whether the staged file must be closed before it is renamed -- on Windows, which cannot rename an open file."""
+    import os
+
+    return os.name == "nt"
+
+
+def _identity_from(status: Any) -> tuple[int, int] | None:
+    """Return ``(st_dev, st_ino)`` from a stat result, or ``None`` when the file system gives no inode.
+
+    On Windows, Python's ``os.stat`` and ``os.fstat`` fill ``st_ino`` from the file's index (its
+    file ID) and ``st_dev`` from the volume serial number; gwmock relies on that, as Python has done
+    since 3.5. An NTFS file ID carries a sequence number, so it is not reused for a new file; on
+    POSIX the staged file's descriptor stays open until after the move, so its inode cannot be
+    reused meanwhile. A file system reporting no index gives ``st_ino == 0``, which identifies
+    nothing.
+    """
+    if not status.st_ino:
+        return None
+    return (status.st_dev, status.st_ino)
+
+
+def _witness(descriptor: int) -> tuple[int, int] | None:
+    """Return the identity of the open staged file, to recognise it again after it is moved."""
+    import os
+
+    return _identity_from(os.fstat(descriptor))
+
+
+def _names_witness(path: Path, witness: tuple[int, int]) -> bool:
+    """Return whether *path* is a regular file, not a link, with the identity *witness*."""
+    import os
+    import stat
+
+    try:
+        entry = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(entry.st_mode) and _identity_from(entry) == witness
+
+
 def _still_names(path: Path, descriptor: int) -> bool:
     """Return whether *path* is still the regular file open at *descriptor*, not a link or another file."""
     import os
@@ -259,6 +300,9 @@ class _DataFileInstall:
         staging, descriptor = _open_temporary_file(destination, ".part")
         swapped = False
         installed = False
+        moving = False
+        witness: tuple[int, int] | None = None
+        existed = os.path.lexists(destination)
         try:
             try:
                 # Written through the descriptor the exclusive create returned, never by reopening
@@ -269,6 +313,7 @@ class _DataFileInstall:
                     shutil.copyfileobj(reader, writer)
                     writer.flush()
                     os.fsync(descriptor)
+                witness = _witness(descriptor)
                 _after_staging(staging)
                 if not _still_names(staging, descriptor):
                     swapped = True
@@ -277,7 +322,7 @@ class _DataFileInstall:
                         f"into place, so {destination} was left untouched. Check who can write to "
                         f"{destination.parent}; the replacing entry has been left as it is."
                     )
-                if os.name == "nt":
+                if _closes_before_rename():
                     # Windows cannot rename a file that is open; the check above is the last look.
                     os.close(descriptor)
                     descriptor = -1
@@ -292,26 +337,34 @@ class _DataFileInstall:
                         _remove_quietly(backup_name)
                         raise
                     self._backup = backup_name
+                moving = True
                 os.replace(staging, destination)
                 installed = True
                 _after_install(destination)
             finally:
-                if not installed:
+                if not installed and moving:
                     # An interrupt can arrive after os.replace has moved the file but before it
-                    # returns. The destination then already names the staged copy: compare it with
-                    # the open descriptor, or -- on Windows, where it is closed -- note that the
-                    # staged name is gone while the destination exists.
-                    installed = (
-                        _still_names(destination, descriptor)
-                        if descriptor >= 0
-                        else not staging.exists() and destination.exists() and not swapped
-                    )
+                    # returns. The move counts as done only when the destination is the very file
+                    # that was staged -- the same (st_dev, st_ino) witness on every platform -- and
+                    # never while a destination that was there at the start has not been backed up.
+                    installed = witness is not None and not (existed and self._backup is None)
+                    installed = installed and _names_witness(destination, witness)
                 if descriptor >= 0:
                     if installed:
                         _close_after_install(descriptor, staging)
                     else:
                         os.close(descriptor)
         except BaseException as error:
+            if moving and not installed and witness is None:
+                # Whether the move happened cannot be told without the witness; guessing could
+                # delete or overwrite a catalogue that is not this call's. Nothing is undone.
+                raise RuntimeError(
+                    f"gwmock config --get was interrupted while moving {staging} to {destination}, and "
+                    f"whether it moved cannot be established on this file system. Nothing was undone. "
+                    f"Check {destination}; the previous catalogue, if there was one, is "
+                    f"{self._backup if self._backup is not None else 'still at ' + str(destination)}; "
+                    f"delete {staging} if it remains."
+                ) from error
             # Restore first, whatever was raised -- an interrupt included -- and whether or not the
             # new file is already in place: the configuration is never saved after this, so the
             # destination must be left as it was.
