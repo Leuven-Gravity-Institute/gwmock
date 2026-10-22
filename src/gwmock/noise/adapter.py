@@ -46,8 +46,11 @@ def _frame_channel_name(detector: str, channel: str) -> str:
         channel: The channel name suffix.
 
     Returns:
-        The detector channel name.
+        The detector channel name. A *channel* that already names *detector* as its prefix is
+        returned unchanged, so a full channel name is never prefixed twice.
     """
+    if channel.startswith(f"{detector}:"):
+        return channel
     return f"{detector}:{channel}"
 
 

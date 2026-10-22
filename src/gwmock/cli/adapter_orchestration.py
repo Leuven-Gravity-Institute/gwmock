@@ -1703,6 +1703,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             )
             first = str(channel_raw[0])
             channel_str = first.split(":", 1)[1] if ":" in first else first
+        elif len(noise_detectors) == 1 and str(channel_raw).startswith(f"{noise_detectors[0]}:"):
+            # `{{ detectors }}:STRAIN` over a one-element detector list expands to a string rather
+            # than a one-element list, and the string already carries the detector prefix. Adding
+            # it again would name the channel `ET1:ET1:STRAIN`, unlike the signal file of the
+            # same run.
+            channels_dict = {noise_detectors[0]: str(channel_raw)}
+            channel_str = str(channel_raw).split(":", 1)[1]
         else:
             channel_str = str(channel_raw)
             channels_dict = None
