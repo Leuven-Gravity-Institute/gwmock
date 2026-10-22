@@ -44,7 +44,16 @@ from gwmock.cli.utils.checkpoint import (
 from gwmock.cli.utils.config import OrchestrationConfig, SimulatorConfig, resolve_class_path
 from gwmock.cli.utils.environment import capture_environment
 from gwmock.cli.utils.hash import compute_content_hash, compute_file_hash
-from gwmock.cli.utils.metadata import embed_metadata_record, save_metadata_record
+from gwmock.cli.utils.metadata import (
+    PRIVATE_REFERENCE_KEY,
+    embed_metadata_record,
+    private_metadata_path,
+    private_reference,
+    save_metadata_record,
+    split_metadata_record,
+    with_private_details,
+    write_private_metadata,
+)
 from gwmock.cli.utils.simulation_plan import (
     SimulationBatch,
     SimulationPlan,
@@ -2383,6 +2392,26 @@ def save_batch_metadata(
     # Store just the file names, not full paths
     metadata["output_files"] = [f.name for f in output_files]
 
+    metadata_file_name = f"{batch.simulator_name}-{batch.batch_index}.metadata.json"
+    metadata_file = metadata_directory / metadata_file_name
+
+    # Split before anything is embedded or indexed: the record that travels with the data -- the
+    # sidecar under its usual name, the copy inside each output and the indexes -- is the shareable
+    # one, and the user name, host name, kernel build and absolute paths go to a private file beside
+    # it. Written first, because the shareable record names it by its SHA-256. With the split off,
+    # `record` is the complete record and nothing below differs from a run before the split existed.
+    record = metadata
+    if batch.globals_config.split_metadata:
+        parts = split_metadata_record(
+            metadata,
+            base_directory=Path(batch.globals_config.working_directory or ".").absolute(),
+            record_file_name=metadata_file_name,
+        )
+        private_file = private_metadata_path(metadata_file)
+        digest = write_private_metadata(parts.private, private_file)
+        record = parts.shareable
+        record[PRIVATE_REFERENCE_KEY] = private_reference(private_file, digest)
+
     # Embed the record in the artifacts it describes, so a file handed to another pipeline says
     # which run wrote it. One record, written to both places, rather than two constructions that
     # can disagree -- and the embedded copy withholds the injection parameters unless this run
@@ -2391,7 +2420,7 @@ def save_batch_metadata(
     for output_file in output_files:
         embed_metadata_record(
             output_file,
-            metadata,
+            record,
             include_injection_parameters=include_injection_parameters,
         )
 
@@ -2400,7 +2429,14 @@ def save_batch_metadata(
     #   * content_hashes -- decoded scientific content, stable across write-time
     #                       and frame-library version (reproducibility check)
     _hash_output_records(output_records)
-    metadata["outputs"] = [artifact.record for artifact in output_records]
+    if record is metadata:
+        record["outputs"] = [artifact.record for artifact in output_records]
+    else:
+        # The shareable descriptors are copies (a path outside the working directory was reduced to
+        # its name), so the digests just taken are carried across to them in order.
+        for descriptor, artifact in zip(record["outputs"], output_records, strict=True):
+            descriptor["sha256"] = artifact.record["sha256"]
+            descriptor["content_sha256"] = artifact.record["content_sha256"]
     file_hashes = {}
     content_hashes = {}
     for output_file in output_files:
@@ -2415,23 +2451,22 @@ def save_batch_metadata(
         if content_hash is not None:
             content_hashes[output_file.name] = content_hash
 
-    metadata["file_hashes"] = file_hashes
-    metadata["content_hashes"] = content_hashes
+    record["file_hashes"] = file_hashes
+    record["content_hashes"] = content_hashes
 
-    metadata_file_name = f"{batch.simulator_name}-{batch.batch_index}.metadata.json"
-    metadata_file = metadata_directory / metadata_file_name
     logger.debug("Saving batch metadata to %s with %d output files", metadata_file, len(output_files))
 
-    save_metadata_record(metadata=metadata, metadata_file=metadata_file)
+    save_metadata_record(metadata=record, metadata_file=metadata_file)
 
     # Update the metadata index for quick lookup
     update_metadata_index(metadata_directory, output_files, metadata_file_name)
 
     # Update the truth indexes (event id -> containing frame file(s)) for event->frame lookup.
     # One per producer: signals into `signal_index.yaml`, glitches into `glitch_index.yaml`. A
-    # batch that injected neither writes neither.
-    update_signal_index(metadata_directory, metadata, metadata_file_name)
-    update_glitch_index(metadata_directory, metadata, metadata_file_name)
+    # batch that injected neither writes neither. Built from the shareable record, so an index
+    # written during the run is the one `gwmock reindex` rebuilds from the records on disk.
+    update_signal_index(metadata_directory, record, metadata_file_name)
+    update_glitch_index(metadata_directory, record, metadata_file_name)
 
 
 def process_batch(
@@ -2684,6 +2719,11 @@ def _batch_outputs_present(batch: SimulationBatch, metadata_directory: Path) -> 
             "Failed to read metadata for batch %d during checkpoint reconciliation: %s", batch.batch_index, error
         )
         return None
+    # The private details, when they are beside the record, restore an output path outside the
+    # working directory that the shareable record holds only as a file name. Without them such an
+    # output reads as missing and its batch is re-run, which is safe.
+    if isinstance(metadata, dict):
+        metadata = with_private_details(metadata_file, metadata)
     working_directory = getattr(batch.globals_config, "working_directory", None)
     recorded = _resolve_recorded_output_paths(metadata, working_directory)
     if not recorded:

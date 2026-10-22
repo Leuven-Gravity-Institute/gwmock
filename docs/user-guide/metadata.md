@@ -16,7 +16,143 @@ default, the injection parameters; see
 [Injection parameters in the data files](configuration.md#injection-parameters-in-the-data-files)
 for the flag that includes them and
 [The record inside the file](reading-data.md#the-record-inside-the-file) for
-reading it back. The sidecar written here is always the complete record.
+reading it back. The embedded copy is the shareable record described below; the
+sidecar keeps the injection parameters and hashes the embedded copy omits.
+
+## Shareable and private metadata
+
+A record describes the run, but a complete one also describes who ran it and on
+which machine: the user name, the absolute directories (which often contain a
+home directory), and the exact kernel build. A data set is usually shared
+together with its metadata, so by default gwmock writes every record as two
+files:
+
+| File                                                        | Holds                                                     | Share it |
+| ----------------------------------------------------------- | --------------------------------------------------------- | -------- |
+| `orchestration-<k>.metadata.json`, `<merged>.metadata.yaml` | the shareable record                                      | yes      |
+| `orchestration-<k>.private.json`, `<merged>.private.yaml`   | the private details: what the shareable record leaves out | no       |
+
+The shareable record keeps the name records always had, so everything that reads
+records -- `gwmock merge`, `gwmock validate`, `gwmock reindex`,
+`gwmock find-signal`, `gwmock find-glitch`, replay with `gwmock simulate`, and
+checkpoint resume -- finds it, and all of them work from it alone. The private
+file never matches the `*.metadata.json` pattern those readers look for.
+
+What goes where:
+
+| Field                                                                  | Shareable record                                                       | Private details file                              |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------- |
+| `author`, `email`                                                      | absent                                                                 | `author`, `email`                                 |
+| `config.globals.working-directory`, `globals_config.working-directory` | `.`                                                                    | the absolute directory                            |
+| any other absolute path (a value, a mapping key, or inside text)       | relative to the working directory; its file name if it lies outside it | the original, at its location in the record       |
+| `outputs[].path`, `file_hashes`, `content_hashes`, `output_files`      | unchanged: already relative paths and file names                       | --                                                |
+| `host.platform`                                                        | `<os>-<architecture>`, e.g. `Linux-x86_64`                             | the full string, e.g. `Linux-6.8.0-...-glibc2.39` |
+| `host.os`, `host.architecture`, `host.cpu_model`                       | added; `cpu_model` is `null` when the platform does not report it      | --                                                |
+| `host.python`, `host.cpu`, `host.git_sha`                              | unchanged                                                              | --                                                |
+| host name                                                              | absent                                                                 | `hostname`                                        |
+| `private_metadata`                                                     | `{"file": <private file name>, "sha256": <digest of its bytes>}`       | --                                                |
+
+The private file is JSON (or YAML, beside a YAML record) with the author, the
+host name, the full platform string and the working directory at its top level,
+for a person to read, and under `values` every original value at a JSON pointer
+into the shareable record (`/config/globals/working-directory`, `/author`,
+`/host`, ...), with any renamed mapping key under `renamed_keys`. Together the
+two files rebuild the combined record exactly.
+
+Paths are recognised as a whole value, as a mapping key, and inside text where a
+path can begin: at the start of the value, or after whitespace, a quote, `=`,
+`:`, `,`, `;` or an opening bracket (`source:/home/...`, `a,/opt/...`,
+`(C:\Users\...)`). A `/` after a letter, digit, `+`, `-`, `^`, `\` or a closing
+bracket is read as notation, not as the start of a path, so `h_+/h_x`,
+`(h_+)/(h_x)`, `m1/m2` and `strain/Hz` are left alone. Besides POSIX and Windows
+drive paths this covers `file://` URIs, with or without a host, UNC paths
+(`\\server\share\...`, `//server/share/...` or a mixture) and home paths. A URI
+naming another host and a UNC path are always reduced to their file name, since
+the host and the server are what is withheld; other URIs (`https://...`,
+`x://...`) are left alone.
+
+`~/...` is always a home path and is reduced to its file name. `~name`, bare or
+followed by `/` or `\`, is a home path only when `name` is an account on the
+machine writing the record -- the current user, or on POSIX systems any name in
+the password database -- and is then reduced (a bare `~name` to `~`). **A
+`~name` that is not an account on the writing machine is left as written**: it
+cannot be told apart from notation such as `~Msun`, `~pi/2` or `~M_\odot`, so a
+home directory of an account that exists only on another machine is not
+recognised.
+
+When two mapping keys reduce to the same file name, the later ones become
+`a~2.h5`, `a~3.h5`, ... rather than a longer path, which would spell the
+directories outside the working directory; the original keys are in
+`renamed_keys`. To rebuild the combined record:
+
+```python
+import json
+
+from gwmock.cli.utils.metadata import combine_metadata_records
+
+shareable = json.load(open("metadata/orchestration-0.metadata.json"))
+private = json.load(open("metadata/orchestration-0.private.json"))
+complete = combine_metadata_records(shareable, private)
+```
+
+The private file is created readable and writable by its owner only (mode `0600`
+on POSIX systems, whatever the umask), so on a shared filesystem other users
+cannot read the author, host name and paths in it. Each write goes to its own
+temporary file beside the target (`.<name>.<random>.tmp`), which is then renamed
+into place, so concurrent writers never leave a mixture of two writes. A writer
+killed mid-write can leave such a temporary file behind; it is safe to delete.
+The shareable record is written with the ordinary mode for new files: it is the
+one meant to be read by others.
+
+The private file also carries a random `nonce`. The shareable record publishes
+the private file's SHA-256, and what the private file holds -- a user name, a
+host name, a directory layout -- is often few enough possibilities to guess; the
+nonce stops the published digest from confirming a guess.
+
+**On the machine that wrote the run**, gwmock's readers use the private details
+when they are beside the record and their SHA-256 matches: replay and checkpoint
+resume then use the original absolute paths, exactly as from a combined record.
+**Anywhere else** -- a data set received without its private files -- they work
+from the shareable record: hashes are keyed by file name, outputs are located
+relative to the record's own directory, and replay resolves paths against the
+directory it is started in (see
+[Reproducing a run](reproducibility.md#reproducing-a-run)).
+
+**The copy embedded in each HDF5 output is the shareable record**, never the
+private details, so a data file released on its own names no person, machine or
+directory either. The signal and glitch indexes are built from it too.
+
+`gwmock merge` writes its record the same way: the merged record, with the paths
+of its sources relative to the directory the merge runs in (or reduced to file
+names), and `file_hashes` keyed by the merged file's name; the author and the
+original paths go to `<merged>.private.yaml`. The source records it nests are
+split too, so a merge of records written with the split turned off still yields
+a shareable merged record.
+
+### Keeping the combined layout
+
+Set `globals.metadata.split: false` in the configuration (and pass
+`--no-split-metadata` to `gwmock merge`) to write one combined record per batch,
+with the same keys as before the split existed -- including `author`, the
+absolute paths and the full `host.platform` -- and no private file. That record
+is also the one embedded in the outputs. See
+[Configuration](configuration.md#metadata-shareable-and-private-records).
+
+### Before sharing a data set
+
+Share the `*.metadata.json` / `*.metadata.yaml` files, the indexes and the data;
+keep the `*.private.*` files. Copying a whole metadata directory copies the
+private files too, so exclude them, for example:
+
+```bash
+rsync -a --exclude '*.private.*' run/ destination/
+```
+
+Paths written _inside_ your configuration that are relative already are kept as
+you wrote them, and free-text values from backends are scanned for absolute
+paths, but nothing can recognise a user name typed into an unrelated
+configuration value; review the `config` section of a record before a public
+release.
 
 See [Reproducibility](reproducibility.md) for the full schema, reproduction
 recipe, and versioning rules.

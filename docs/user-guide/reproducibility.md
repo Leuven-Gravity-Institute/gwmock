@@ -1,16 +1,19 @@
 # Reproducibility
 
 `gwmock` writes one versioned JSON provenance record per generated batch as
-`*.metadata.json`.
+`*.metadata.json`. By default that record is the **shareable** one -- no user
+name, no host name, no absolute path -- and the details it leaves out are kept
+in a private file beside it; see
+[Shareable and private metadata](metadata.md#shareable-and-private-metadata).
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.7.0`.
+Each record is validated at write time and uses schema version `1.8.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.7.0",
+    "schema_version": "1.8.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -76,10 +79,17 @@ Consumers must reject unknown major versions.
         }
     ],
     "host": {
-        "platform": "...",
+        "platform": "Linux-x86_64",
+        "os": "Linux",
+        "architecture": "x86_64",
         "python": "3.12.x",
-        "cpu": "...",
+        "cpu": "x86_64",
+        "cpu_model": "AMD EPYC 7763 64-Core Processor",
         "git_sha": "..."
+    },
+    "private_metadata": {
+        "file": "orchestration-0.private.json",
+        "sha256": "..."
     },
     "environment": {
         "python": "3.12.5",
@@ -108,7 +118,8 @@ locally. Adapter-backed noise now consumes one shared
 `gwmock_noise.open_stream(...)` iterator per run, so the top-level `seed` is
 recorded once and noise continuation no longer appears as one derived seed per
 batch. The subpackage `metadata` objects are preserved as JSON objects without
-gwmock rewriting their internal structure.
+gwmock rewriting their internal structure; in the shareable record, the absolute
+paths among their values are made relative like every other path.
 
 `signal.injections` records the source parameters of the signals attributed to
 that batch's frame(s), in injection order. Each entry is
@@ -137,6 +148,22 @@ written by an older gwmock lacks them, which is not the same fact as a
 contiguous run. See
 [Gapped segments](generating-data.md#gapped-segments-discontiguous-data).
 
+`host` describes a kind of machine rather than a machine: the operating system,
+the architecture, the Python version, the git SHA of the gwmock that ran and the
+processor model (`null` when the platform does not report one). Its `platform`
+is reduced to `<os>-<architecture>`; the full string, which names the exact
+kernel build, is in the private details file, with the host name. A record
+written with the split turned off (`globals.metadata.split: false`) carries the
+full `platform` and no `os`, `architecture` or `cpu_model`, exactly as before
+schema 1.8.0.
+
+`private_metadata` names the private details file written beside the record and
+the SHA-256 of its bytes. It is absent from a record written with the split
+turned off. Schema 1.8.0 introduced the split: a 1.8.0 record has no `author` or
+`email`, and its paths -- `config.globals.working-directory` reads `.` -- are
+relative to the run's working directory, or reduced to a file name for a path
+outside it.
+
 `environment` is a full freeze of the environment that produced the run — the
 Python version and the version of every installed distribution (direct and
 transitive) — recorded so the run can be reproduced against exactly those
@@ -144,13 +171,14 @@ dependencies. It is `null` for records written before this field existed.
 
 A copy of the record is written into each HDF5 output as well, at the file root,
 so a data file that reaches a consumer without its sidecar still describes the
-run. It is the same record with three omissions: the file hashes (a file cannot
-carry its own digest), `pre_batch_state` (stored as separate `.npy` files an
-embedded copy could not point at), and the injection truth --
-`signal.injections`, `noise.glitch_injections`, `signal.gap_excluded_injections`
-and `signal.gap_discarded_injections` -- unless the run set
+run. It is a copy of the shareable record -- never of the private details --
+with three omissions: the file hashes (a file cannot carry its own digest),
+`pre_batch_state` (stored as separate `.npy` files an embedded copy could not
+point at), and the injection truth -- `signal.injections`,
+`noise.glitch_injections`, `signal.gap_excluded_injections` and
+`signal.gap_discarded_injections` -- unless the run set
 `orchestration.include-injection-parameters: true`. The sidecar described above
-is always complete.
+always keeps all three.
 
 That copy carries a timestamp, the host and the environment freeze, so **two
 identical runs no longer write byte-identical HDF5 files** even though they hold
@@ -368,3 +396,14 @@ gwmock simulate metadata/orchestration-0.metadata.json metadata/orchestration-1.
 # Or reproduce everything from a metadata directory
 gwmock simulate metadata/
 ```
+
+Replay reads the shareable record, and uses its private details when they are
+beside it. On the machine that wrote the run the private file is there, its
+SHA-256 matches the one the record names, and replay uses the original absolute
+paths -- the same behaviour as a record written with the split turned off.
+Anywhere else -- a data set received without its private files -- the shareable
+record is replayed as it stands: the working directory reads `.`, so the replay
+writes under the directory it is started in, and an input that lay outside the
+original working directory (a population file, a PSD file) is expected there by
+its file name. Run the replay from a directory holding those inputs, or edit the
+paths in the record's `config`.

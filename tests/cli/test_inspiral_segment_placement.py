@@ -589,7 +589,8 @@ class TestWhatAConsumerSees:
         glitches. 1.7.0: segment epochs may advance by ``duration + segment-gap``, so consecutive
         frames need no longer be adjacent in GPS; the layout and what the gaps cost the injections
         are recorded, and an older record lacking those keys is not the same fact as a contiguous
-        run.
+        run. 1.8.0: the record that travels with the data is the shareable one, without ``author``
+        or absolute paths, and its private details are written to a separate file.
 
         A consumer reading an old record and a new one sees the same shape while ``injections``
         means something different in each. The version is the only signal available, so it has to
@@ -597,7 +598,7 @@ class TestWhatAConsumerSees:
         """
         from gwmock.cli.utils.metadata import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.7.0"
+        assert SCHEMA_VERSION == "1.8.0"
 
     def test_an_older_record_still_loads(self):
         """Bumping the minor must not orphan archived runs: the major is what gates parsing."""
