@@ -461,9 +461,11 @@ waveform call depends on the column:
   each event, the waveform's own copy is present and agrees**; otherwise the run
   stops, naming the event. Every value a rule reads must be finite — a NaN would
   make each comparison false and let any value through — and masses must be
-  positive:
+  positive. A column declared ignored is never read, even by the rule of a
+  column it accompanies:
     - `source_frame_mass_1`/`_2`: the detector-frame mass is present, and with
-      `redshift` present equals `m_src (1 + z)` to a relative 1e-6.
+      `redshift` present (and not declared ignored) equals `m_src (1 + z)` to a
+      relative 1e-6.
     - `spin_1`, `spin_2`, `tilt_1`, `tilt_2`: all three Cartesian components of
       that spin are present, and the magnitude is their norm and the tilt
       `arccos(z / |chi|)`, to 1e-6 (the tilt is not checked at zero spin). A

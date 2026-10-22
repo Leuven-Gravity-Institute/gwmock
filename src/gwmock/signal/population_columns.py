@@ -154,7 +154,7 @@ def require_redundant_columns_agree(  # noqa: PLR0912
 
     - ``eccentricity``, ``long_asc_node``, ``mean_per_ano``: zero.
     - ``source_frame_mass_k``: the detector-frame mass is present, and with ``redshift`` present
-      ``m_det = m_src (1 + z)`` to a relative 1e-6.
+      and not declared ignored ``m_det = m_src (1 + z)`` to a relative 1e-6.
     - ``spin_k``, ``tilt_k``: all three Cartesian components are present, the magnitude is their
       norm and the tilt is ``arccos(z / |chi|)``, each to an absolute 1e-6 (the tilt only where
       ``|chi| > 1e-6``, since it is undefined at zero spin).
@@ -199,7 +199,9 @@ def require_redundant_columns_agree(  # noqa: PLR0912
         # Every value a rule below reads must be finite: a NaN makes each comparison false, which
         # would let an event pass a rule it does not meet.
         non_finite = sorted(
-            name for name in _values_read(checked) if (number := value(name)) is not None and not np.isfinite(number)
+            name
+            for name in _values_read(checked, ignored)
+            if (number := value(name)) is not None and not np.isfinite(number)
         )
         if non_finite:
             raise DeterministicRefusalError(
@@ -219,7 +221,8 @@ def require_redundant_columns_agree(  # noqa: PLR0912
         for k in (1, 2):
             source = f"source_frame_mass_{k}"
             if source in checked and source in event:
-                detector, z = value(f"detector_frame_mass_{k}"), value("redshift")
+                detector = value(f"detector_frame_mass_{k}")
+                z = None if "redshift" in ignored else value("redshift")
                 if detector is None:
                     problems.append(f"{source} is given without detector_frame_mass_{k}, the mass the waveform reads")
                 elif detector <= 0.0 or value(source) <= 0.0:
@@ -282,14 +285,23 @@ def require_redundant_columns_agree(  # noqa: PLR0912
             )
 
 
-def _values_read(checked: Collection[str]) -> set[str]:
-    """Return the names whose values the rules for the *checked* conditional columns read."""
+def _values_read(checked: Collection[str], ignored: Collection[str]) -> set[str]:
+    """Return the names whose values the rules for the *checked* conditional columns read.
+
+    Built rule by rule, so a column the configuration declares ignored is never read: a magnitude
+    rule reads ``spin_k`` and the components, a tilt rule ``tilt_k`` and the components, and the
+    source-frame mass rule reads ``redshift`` only when it is not ignored. The waveform's own columns
+    -- masses, spin components, inclination -- cannot be declared ignored.
+    """
     read: set[str] = set(checked) & ZERO_ONLY_COLUMNS
     for k in (1, 2):
         if f"source_frame_mass_{k}" in checked:
-            read |= {f"source_frame_mass_{k}", f"detector_frame_mass_{k}", "redshift"}
-        if {f"spin_{k}", f"tilt_{k}"} & set(checked):
-            read |= {f"spin_{k}", f"tilt_{k}", f"spin_{k}x", f"spin_{k}y", f"spin_{k}z"}
+            read |= {f"source_frame_mass_{k}", f"detector_frame_mass_{k}"}
+            if "redshift" not in ignored:
+                read.add("redshift")
+        for rule in (f"spin_{k}", f"tilt_{k}"):
+            if rule in checked:
+                read |= {rule, f"spin_{k}x", f"spin_{k}y", f"spin_{k}z"}
     if "theta_jn" in checked:
         read |= {"theta_jn", "inclination", "detector_frame_mass_1", "detector_frame_mass_2"}
         read |= {f"spin_{k}{c}" for k in (1, 2) for c in "xyz"}

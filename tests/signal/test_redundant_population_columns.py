@@ -222,3 +222,31 @@ class TestNonFiniteValuesAreRefused:
     def test_a_zero_only_column(self) -> None:
         with pytest.raises(ValueError, match="not finite"):
             _check({"eccentricity": math.nan})
+
+
+class TestAnIgnoredColumnIsNeverRead:
+    """A column declared ignored is not read, even by the rule of a column it accompanies."""
+
+    def test_a_magnitude_rule_does_not_read_an_ignored_tilt(self) -> None:
+        _check({**_SPIN, "spin_1": 0.5, "tilt_1": math.nan}, ignored=("tilt_1",))
+
+    def test_a_tilt_rule_does_not_read_an_ignored_magnitude(self) -> None:
+        _check({**_SPIN, "spin_1": math.nan, "tilt_1": math.acos(0.8)}, ignored=("spin_1",))
+
+    def test_the_magnitude_rule_still_reads_its_own_column(self) -> None:
+        with pytest.raises(ValueError, match="spin_1 is not finite"):
+            _check({**_SPIN, "spin_1": math.nan, "tilt_1": math.nan}, ignored=("tilt_1",))
+
+    def test_a_source_frame_mass_rule_does_not_read_an_ignored_redshift(self) -> None:
+        _check(
+            {"source_frame_mass_1": 30.0, "detector_frame_mass_1": 33.0, "redshift": math.nan}, ignored=("redshift",)
+        )
+
+    def test_nor_checks_the_mass_against_it(self) -> None:
+        _check({"source_frame_mass_1": 30.0, "detector_frame_mass_1": 30.0, "redshift": 0.1}, ignored=("redshift",))
+
+    def test_an_ignored_theta_jn_is_not_read(self) -> None:
+        _check({**_NO_SPIN, "theta_jn": math.nan, "inclination": 0.5}, ignored=("theta_jn",))
+
+    def test_an_ignored_zero_only_column_is_not_read(self) -> None:
+        _check({"eccentricity": math.nan}, ignored=("eccentricity",))
