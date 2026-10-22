@@ -26,8 +26,9 @@ orchestration:
             # file_name: 'E-{{ detectors }}_STRAIN-{{ start_time }}-{{ duration }}.gwf'
 ```
 
-Everything below works for either: GWpy reads both, and the channel is named the
-same way in each.
+GWpy reads both, and the channel is named the same way in each. The one
+difference is the keyword that selects it: an HDF5 file is read by the dataset's
+`path=`, a frame file by its `channel=` (see [Reading a file](#reading-a-file)).
 
 ## What the file says it is
 
@@ -144,7 +145,7 @@ with three deliberate omissions:
 from gwpy.timeseries import TimeSeries
 
 # HDF5, what a run writes by default
-data = TimeSeries.read("filename.hdf5", channel="ET1_EMR:STRAIN")
+data = TimeSeries.read("filename.hdf5", path="ET1_EMR:STRAIN")
 
 # GWF, if you configured frame output
 data = TimeSeries.read("filename.gwf", channel="ET1_EMR:STRAIN")
@@ -153,7 +154,10 @@ data = TimeSeries.read("filename.gwf", channel="ET1_EMR:STRAIN")
 **Parameters:**
 
 - `filename`: Path to the file, HDF5 or GWF
-- `channel`: Channel name to read (common format: `DETECTOR:CHANNEL_NAME`)
+- `path` (HDF5): the dataset to read, named after the channel (common format:
+  `DETECTOR:CHANNEL_NAME`). A file holding one dataset can omit it.
+- `channel` (GWF): the channel to read, in the same format. GWpy's HDF5 reader
+  does not accept `channel=` and raises a `TypeError`.
 
 ### Example
 
