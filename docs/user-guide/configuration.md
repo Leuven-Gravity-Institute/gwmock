@@ -361,9 +361,13 @@ exactly these keys, with hyphens and underscores interchangeable:
 Any other key is an error naming the key, rather than being ignored: a
 misspelled or misplaced setting would otherwise leave the run on the default
 while looking entirely normal. In particular the noise floor is
-`low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. A
-custom `noise.backend` receives `noise.arguments` as its constructor's keyword
-arguments instead, so that backend decides which keys it accepts.
+`low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. The
+keys of each `glitches` entry are checked the same way against the glitch model
+its `kind` names, which also calls its floor `low_frequency_cutoff`. Both checks
+run when the configuration is loaded, so `gwmock simulate` stops before anything
+is generated. A custom `noise.backend` receives `noise.arguments` as its
+constructor's keyword arguments instead, so that backend decides which keys it
+accepts.
 
 ### Injection parameters in the data files
 

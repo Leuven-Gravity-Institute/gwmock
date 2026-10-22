@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from gwmock.cli.adapter_orchestration import _DEFAULT_NOISE_ARGUMENT_KEYS
+from gwmock.cli.utils.config import DEFAULT_NOISE_ARGUMENT_KEYS
 from gwmock.noise.adapter import _parse_csd_file_map
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,7 +50,7 @@ def test_documented_noise_arguments_are_keys_the_default_backend_reads():
     assert blocks, "no documented noise.arguments block was found, so nothing was checked"
 
     unread = {
-        location: sorted(key for key in arguments if key.replace("-", "_") not in _DEFAULT_NOISE_ARGUMENT_KEYS)
+        location: sorted(key for key in arguments if key.replace("-", "_") not in DEFAULT_NOISE_ARGUMENT_KEYS)
         for location, arguments in blocks
     }
     assert {location: keys for location, keys in unread.items() if keys} == {}

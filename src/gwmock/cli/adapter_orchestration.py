@@ -15,7 +15,7 @@ from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
-from gwmock.cli.utils.config import OrchestrationConfig
+from gwmock.cli.utils.config import OrchestrationConfig, check_default_noise_arguments
 from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
 from gwmock.cli.utils.template import expand_template_variables
 from gwmock.data.time_series.time_series import TimeSeries
@@ -56,27 +56,6 @@ def _default_waveform_backend_name() -> str:
 _RIPPLE_UNAVAILABLE = "__ripple_unavailable__"
 
 logger = logging.getLogger("gwmock")
-
-#: Keys the default noise backend reads from ``orchestration.noise.arguments`` (after hyphens are
-#: normalised to underscores). ``detectors`` and ``seed`` are resolved by the orchestrator itself;
-#: the rest are forwarded to ``NoiseAdapter.build_config`` and ``NoiseAdapter.open_stream``. Any
-#: other key is rejected, because it would otherwise be ignored and the run would look normal while
-#: generating noise from a setting the author never made. A custom ``noise.backend`` receives the
-#: arguments as constructor keywords instead, so it is the constructor that decides what it accepts.
-_DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
-    {
-        "detectors",
-        "seed",
-        "psd_file",
-        "psd_schedule",
-        "psd_files",
-        "csd_files",
-        "low_frequency_cutoff",
-        "high_frequency_cutoff",
-        "spectral_lines",
-        "glitches",
-    }
-)
 
 
 def _placement_query_note(edge: str, parameters: Mapping[str, Any]) -> str:
@@ -354,16 +333,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             else {}
         )
         if has_noise and orchestration_config.noise.backend is None:  # type: ignore[union-attr]
-            unrecognised = sorted(
-                key
-                for key in orchestration_config.noise.arguments  # type: ignore[union-attr]
-                if key.replace("-", "_") not in _DEFAULT_NOISE_ARGUMENT_KEYS
-            )
-            if unrecognised:
-                raise ValueError(
-                    f"Unrecognised noise.arguments key(s) for the default noise backend: {', '.join(unrecognised)}. "
-                    f"Recognised keys: {', '.join(sorted(_DEFAULT_NOISE_ARGUMENT_KEYS))}."
-                )
+            # Checked again here because a config object can be changed after it was loaded.
+            check_default_noise_arguments(orchestration_config.noise.arguments)  # type: ignore[union-attr]
         if global_args.get("seed") is not None:
             noise_arguments.setdefault("seed", int(global_args["seed"]))
 

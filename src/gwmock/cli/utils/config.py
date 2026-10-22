@@ -318,6 +318,81 @@ class SignalConfig(BaseModel):
         return v
 
 
+#: Keys the default noise backend reads from ``orchestration.noise.arguments`` (after hyphens are
+#: normalised to underscores). ``detectors`` and ``seed`` are resolved by the orchestrator itself;
+#: the rest are forwarded to ``NoiseAdapter.build_config`` and ``NoiseAdapter.open_stream``. Any
+#: other key is rejected, because it would otherwise be ignored and the run would look normal while
+#: generating noise from a setting the author never made. A custom ``noise.backend`` receives the
+#: arguments as constructor keywords instead, so it is the constructor that decides what it accepts.
+DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
+    {
+        "detectors",
+        "seed",
+        "psd_file",
+        "psd_schedule",
+        "psd_files",
+        "csd_files",
+        "low_frequency_cutoff",
+        "high_frequency_cutoff",
+        "spectral_lines",
+        "glitches",
+    }
+)
+
+
+def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
+    """Raise if the default noise backend would refuse, or ignore, a key in *arguments*.
+
+    Checked when the configuration is loaded, so a misnamed key fails ``gwmock simulate`` and
+    ``gwmock validate`` before anything is generated rather than partway into a run. Covers the
+    top-level keys and the keys of each ``glitches`` entry, which gwmock-noise passes to the glitch
+    model's constructor as keyword arguments: ``minimum_frequency`` there is a ``TypeError`` at run
+    time, because the glitch models, like the noise itself, call their floor
+    ``low_frequency_cutoff``.
+
+    Args:
+        arguments: ``orchestration.noise.arguments`` as written.
+
+    Raises:
+        ValueError: If a top-level key is not one the default backend reads, a glitch entry names an
+            unknown ``kind``, or a glitch entry has a key its model does not accept.
+    """
+    unrecognised = sorted(key for key in arguments if key.replace("-", "_") not in DEFAULT_NOISE_ARGUMENT_KEYS)
+    if unrecognised:
+        raise ValueError(
+            f"Unrecognised noise.arguments key(s) for the default noise backend: {', '.join(unrecognised)}. "
+            f"Recognised keys: {', '.join(sorted(DEFAULT_NOISE_ARGUMENT_KEYS))}."
+        )
+    glitches = next((value for key, value in arguments.items() if key.replace("-", "_") == "glitches"), None)
+    if not isinstance(glitches, list):
+        # The type itself is gwmock-noise's to refuse, with its own message.
+        return
+    import inspect  # noqa: PLC0415
+
+    from gwmock_noise.glitches.models import supported_glitch_kinds  # noqa: PLC0415
+
+    kinds = supported_glitch_kinds()
+    for index, entry in enumerate(glitches):
+        if not isinstance(entry, dict):
+            continue
+        kind = entry.get("kind")
+        if kind not in kinds:
+            raise ValueError(
+                f"noise.arguments.glitches[{index}] has kind {kind!r}; the supported kinds are "
+                f"{', '.join(sorted(kinds))}."
+            )
+        parameters = inspect.signature(kinds[kind]).parameters
+        if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+            continue
+        rejected = sorted(key for key in entry if key != "kind" and key not in parameters)
+        if rejected:
+            raise ValueError(
+                f"noise.arguments.glitches[{index}] (kind {kind!r}) has key(s) the glitch model does not "
+                f"accept: {', '.join(rejected)}. Accepted keys: {', '.join(sorted(parameters))}. The "
+                "frequency floor is 'low_frequency_cutoff'."
+            )
+
+
 class NoiseAdapterConfig(BaseModel):
     """Adapter-backed noise configuration."""
 
@@ -335,6 +410,13 @@ class NoiseAdapterConfig(BaseModel):
         ),
         description="Noise output configuration",
     )
+
+    @model_validator(mode="after")
+    def _validate_default_backend_arguments(self) -> NoiseAdapterConfig:
+        """Refuse, at load time, arguments the default noise backend would reject or ignore."""
+        if self.backend is None:
+            check_default_noise_arguments(self.arguments)
+        return self
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
