@@ -32,13 +32,16 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
         overwrite: Whether an existing, different file of the same name may be replaced.
 
     Returns:
-        ``(source, destination)`` of the data file to copy, or ``None`` when there is none.
+        ``(source, destination)`` of the data file to copy, or ``None`` when there is nothing to
+        copy -- no data file, or the destination is already that file or holds the same bytes. The
+        path is rewritten either way.
 
     Raises:
         FileExistsError: If a different file already exists where the data file would be copied
             and *overwrite* is not set.
     """
     import filecmp
+    import os
 
     from gwmock.cli.utils.config import get_examples_dir
 
@@ -55,9 +58,14 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
         return None
 
     destination = dst_path.parent / source.name
-    if destination.exists() and not filecmp.cmp(source, destination, shallow=False) and not overwrite:
-        raise FileExistsError(f"File already exists: {destination}. Use --overwrite to overwrite.")
     arguments["path"] = destination.as_posix()
+    if destination.exists():
+        # The same file -- the copy written into the example's own directory -- or one already
+        # holding the same bytes needs no copy; copying a file onto itself raises.
+        if os.path.samefile(source, destination) or filecmp.cmp(source, destination, shallow=False):
+            return None
+        if not overwrite:
+            raise FileExistsError(f"File already exists: {destination}. Use --overwrite to overwrite.")
     return source, destination
 
 
@@ -102,16 +110,29 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
 
         data_file = _redirect_example_data_file(config, src_path=src_path, dst_path=dst_path, overwrite=overwrite)
 
-        # Save the configuration file to the destination
-        try:
-            save_config(file_name=dst_path, config=config, overwrite=overwrite, backup=False)
-        except FileExistsError as e:
-            raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.") from e
+        # The data file first, so a configuration is never written pointing at a catalogue that
+        # failed to arrive; and removed again if the configuration then cannot be written, so a
+        # failed copy leaves neither behind.
+        if dst_path.exists() and not overwrite:
+            raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.")
+        copied = None
         if data_file is not None:
             import shutil
 
+            existed = data_file[1].exists()
             shutil.copyfile(*data_file)
+            copied = None if existed else data_file[1]
             logger.info("Copied the example's data file %s to %s", data_file[0].name, data_file[1])
+
+        # Save the configuration file to the destination
+        try:
+            save_config(file_name=dst_path, config=config, overwrite=overwrite, backup=False)
+        except BaseException as e:
+            if copied is not None:
+                copied.unlink(missing_ok=True)
+            if isinstance(e, FileExistsError):
+                raise FileExistsError(f"File already exists: {dst_path}. Use --overwrite to overwrite.") from e
+            raise
 
     logger = logging.getLogger("gwmock")
 

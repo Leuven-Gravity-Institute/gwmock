@@ -107,3 +107,55 @@ class TestRunningAnExampleInPlace:
         assert result.exit_code != 0
         assert "Run gwmock from" in str(result.exception) + result.output
         assert not (tmp_path / "output").exists()
+
+
+class TestWritingBesideTheCatalogue:
+    """``--output`` into the directory the catalogue already lives in must not copy it onto itself."""
+
+    def test_a_copy_written_into_the_catalogues_own_directory(self, tmp_path: Path, monkeypatch):
+        import shutil
+
+        examples = tmp_path / "examples"
+        shutil.copytree(_EXAMPLES, examples)
+        monkeypatch.setattr("gwmock.cli.utils.config.get_examples_dir", lambda: examples)
+        catalogue_directory = examples / "signal"
+        monkeypatch.chdir(tmp_path)
+
+        result = _get("signal/bbh/ligo_hl", str(catalogue_directory / "ligo.yaml"))
+
+        assert result.exit_code == 0, result.output
+        path = load_config(catalogue_directory / "ligo.yaml").orchestration.population.arguments["path"]
+        assert Path(path).resolve() == (catalogue_directory / "bbh_population.csv").resolve()
+
+    def test_an_identical_catalogue_already_there_is_kept(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes((_EXAMPLES / "signal" / "bbh_population.csv").read_bytes())
+
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code == 0, result.output
+
+    def test_a_configuration_that_cannot_be_written_leaves_no_catalogue_behind(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        def fail(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("gwmock.cli.utils.config.save_config", fail)
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code != 0
+        assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+    def test_a_catalogue_that_cannot_be_copied_leaves_no_configuration_behind(self, tmp_path: Path, monkeypatch):
+        """Written first, the configuration would point at a catalogue that never arrived."""
+        monkeypatch.chdir(tmp_path)
+
+        def fail(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("shutil.copyfile", fail)
+        result = _get("noise/uncorrelated_gaussian/quick_start", "config.yaml")
+
+        assert result.exit_code != 0
+        assert not (tmp_path / "config.yaml").exists()
