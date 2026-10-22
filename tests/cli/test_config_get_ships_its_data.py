@@ -13,6 +13,7 @@ from __future__ import annotations
 import filecmp
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -263,7 +264,7 @@ class TestRestoringComesBeforeCleaningUp:
         monkeypatch.setattr(Path, "unlink", unlink)
 
         with pytest.raises(OSError, match="rename refused"):
-            _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+            _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True)
 
         assert destination.read_bytes() == b"old catalogue\n"
 
@@ -274,7 +275,7 @@ class TestRestoringComesBeforeCleaningUp:
 
         destination = tmp_path / "bbh_population.csv"
         destination.write_bytes(b"old catalogue\n")
-        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True)
         backup = install._backup
         real_replace = os.replace
 
@@ -353,7 +354,7 @@ class TestLeftoversOfAnInterruptedCopy:
 
         destination = tmp_path / "bbh_population.csv"
         destination.write_bytes(b"old catalogue\n")
-        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+        install = _DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True)
         assert _leftovers_of_an_interrupted_copy(destination) == [install._backup]
         install.commit()
         assert _leftovers_of_an_interrupted_copy(destination) == []
@@ -416,7 +417,7 @@ class TestTheStagedCopyIsWrittenThroughItsOwnDescriptor:
         monkeypatch.setattr(config_module, "_after_staging", swap)
 
         with pytest.raises(RuntimeError, match="was replaced by another file"):
-            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True)
 
         assert target.read_bytes() == b"not yours\n"
         assert destination.read_bytes() == b"old catalogue\n"
@@ -469,7 +470,9 @@ class TestAFailureAfterTheMoveIntoPlace:
 
         monkeypatch.setattr("os.close", close)
         with caplog.at_level("WARNING", logger="gwmock"):
-            install = config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+            install = config_module._DataFileInstall(
+                _EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True
+            )
         monkeypatch.setattr("os.close", real_close)
         install.commit()
 
@@ -489,7 +492,7 @@ class TestAFailureAfterTheMoveIntoPlace:
         self._after_the_move(monkeypatch, interrupt)
 
         with pytest.raises(type(interruption)):
-            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
+            config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination, may_replace=True)
 
         assert destination.read_bytes() == self._OLD
         assert sorted(p.name for p in destination.parent.iterdir()) == ["bbh_population.csv"]
@@ -498,11 +501,13 @@ class TestAFailureAfterTheMoveIntoPlace:
         from gwmock.cli import config as config_module
 
         destination = tmp_path / "bbh_population.csv"
+        real_place = config_module._place_without_replacing
 
-        def interrupt():
+        def place_then_interrupt(staging, target):
+            real_place(staging, target)
             raise KeyboardInterrupt
 
-        self._after_the_move(monkeypatch, interrupt)
+        monkeypatch.setattr(config_module, "_place_without_replacing", place_then_interrupt)
 
         with pytest.raises(KeyboardInterrupt):
             config_module._DataFileInstall(_EXAMPLES / "signal" / "bbh_population.csv", destination)
@@ -526,27 +531,23 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
         self, tmp_path: Path, monkeypatch, closes_before_rename
     ):
         """The staged copy vanished and another process created the destination: neither is ours to delete."""
-        import os
 
         from gwmock.cli import config as config_module
 
         destination = tmp_path / "bbh_population.csv"
-        real_replace = os.replace
 
-        def replace(source, target):
-            if str(source).endswith(".part"):
-                # The other file first: an inode freed by the unlink could otherwise be reused for it
-                # on this test's file system, which NTFS file IDs, carrying a sequence number, are not.
-                Path(target).write_bytes(b"someone else's catalogue\n")
-                Path(source).unlink()
-                raise OSError("interrupted")
-            return real_replace(source, target)
+        def place(source, target):
+            # The other file first: an inode freed by the unlink could otherwise be reused for it
+            # on this test's file system, which NTFS file IDs, carrying a sequence number, are not.
+            Path(target).write_bytes(b"someone else's catalogue\n")
+            Path(source).unlink()
+            raise KeyboardInterrupt
 
-        monkeypatch.setattr("os.replace", replace)
+        monkeypatch.setattr(config_module, "_place_without_replacing", place)
         with pytest.raises(RuntimeError, match="did not write") as excinfo:
             config_module._DataFileInstall(self._SOURCE, destination)
 
-        assert isinstance(excinfo.value.__cause__, OSError)
+        assert isinstance(excinfo.value.__cause__, KeyboardInterrupt)
         assert destination.read_bytes() == b"someone else's catalogue\n"
 
     def test_the_previous_catalogue_is_untouched_when_no_backup_was_taken(
@@ -567,7 +568,7 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
 
         monkeypatch.setattr(config_module, "_create_temporary_file", create)
         with pytest.raises(OSError, match="no room"):
-            config_module._DataFileInstall(self._SOURCE, destination)
+            config_module._DataFileInstall(self._SOURCE, destination, may_replace=True)
 
         assert destination.read_bytes() == b"old catalogue\n"
         assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
@@ -583,7 +584,7 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
         monkeypatch.setattr("os.fstat", lambda descriptor: _NoInode(real_fstat(descriptor)))
 
         with pytest.raises(RuntimeError, match="does not report file identity"):
-            config_module._DataFileInstall(self._SOURCE, destination)
+            config_module._DataFileInstall(self._SOURCE, destination, may_replace=True)
 
         assert destination.read_bytes() == b"old catalogue\n"
         assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
@@ -612,7 +613,7 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
 
         monkeypatch.setattr("os.replace", replace)
         with pytest.raises(RuntimeError, match="did not write") as excinfo:
-            config_module._DataFileInstall(self._SOURCE, destination)
+            config_module._DataFileInstall(self._SOURCE, destination, may_replace=True)
 
         assert isinstance(excinfo.value.__cause__, OSError)
         assert destination.read_bytes() == b"old catalogue\n"
@@ -691,3 +692,97 @@ class TestALinkAtTheDestination:
         assert (tmp_path / "bbh_population.csv").is_symlink()
         assert os.readlink(tmp_path / "bbh_population.csv") == str(target)
         assert not (tmp_path / "config.yaml").exists()
+
+
+class TestAFileThatAppearsWhileInstalling:
+    """Only a file seen before the install, with --overwrite, is replaced; one that appears later is not."""
+
+    _LABEL = "noise/uncorrelated_gaussian/quick_start"
+
+    @staticmethod
+    def _during_the_install(monkeypatch, action) -> None:
+        from gwmock.cli import config as config_module
+
+        monkeypatch.setattr(config_module, "_before_placing", action)
+
+    @pytest.mark.parametrize("overwrite", [(), ("--overwrite",)])
+    def test_a_file_created_meanwhile_is_not_replaced(self, tmp_path: Path, monkeypatch, overwrite):
+        monkeypatch.chdir(tmp_path)
+        self._during_the_install(monkeypatch, lambda d: d.write_bytes(b"appeared meanwhile\n"))
+
+        result = _get(self._LABEL, "config.yaml", *overwrite)
+
+        assert result.exit_code != 0
+        assert "appeared" in str(result.exception)
+        assert (tmp_path / "bbh_population.csv").read_bytes() == b"appeared meanwhile\n"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_a_symlink_created_meanwhile_is_left_as_it_was(self, tmp_path: Path, monkeypatch):
+        import os
+
+        monkeypatch.chdir(tmp_path)
+        target = tmp_path / "elsewhere.csv"
+
+        def link(destination: Path) -> None:
+            try:
+                os.symlink(target, destination)
+            except (OSError, NotImplementedError) as error:
+                pytest.skip(f"symlinks are unavailable here: {error}")
+
+        self._during_the_install(monkeypatch, link)
+
+        result = _get(self._LABEL, "config.yaml")
+
+        assert result.exit_code != 0
+        assert (tmp_path / "bbh_population.csv").is_symlink()
+        assert os.readlink(tmp_path / "bbh_population.csv") == str(target)
+        assert not target.exists()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_a_symlink_replacing_a_seen_file_is_refused_on_the_overwrite_path(self, tmp_path: Path, monkeypatch):
+        import os
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(b"old catalogue\n")
+        target = tmp_path / "elsewhere.csv"
+
+        def link(destination: Path) -> None:
+            destination.unlink()
+            try:
+                os.symlink(target, destination)
+            except (OSError, NotImplementedError) as error:
+                pytest.skip(f"symlinks are unavailable here: {error}")
+
+        self._during_the_install(monkeypatch, link)
+
+        result = _get(self._LABEL, "config.yaml", "--overwrite")
+
+        assert result.exit_code != 0
+        assert "symbolic link" in str(result.exception)
+        assert os.readlink(tmp_path / "bbh_population.csv") == str(target)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv"]
+
+    def test_overwrite_still_replaces_a_file_seen_before(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bbh_population.csv").write_bytes(b"old catalogue\n")
+
+        result = _get(self._LABEL, "config.yaml", "--overwrite")
+
+        assert result.exit_code == 0, result.output
+        assert filecmp.cmp(tmp_path / "bbh_population.csv", _EXAMPLES / "signal" / "bbh_population.csv", shallow=False)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bbh_population.csv", "config.yaml"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows installs with os.rename, not a hard link")
+    def test_a_file_system_without_hard_links_is_refused_rather_than_replaced(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        def no_links(*_args, **_kwargs):
+            raise PermissionError("operation not permitted")
+
+        monkeypatch.setattr("os.link", no_links)
+
+        result = _get(self._LABEL, "config.yaml")
+
+        assert result.exit_code != 0
+        assert "cannot place a file there" in str(result.exception)
+        assert list(tmp_path.iterdir()) == []

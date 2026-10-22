@@ -12,7 +12,9 @@ from typing import Annotated, Any
 import typer
 
 
-def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overwrite: bool) -> tuple[Path, Path] | None:
+def _redirect_example_data_file(
+    config, *, src_path: Path, dst_path: Path, overwrite: bool
+) -> tuple[Path, Path, bool] | None:
     """Point a copied example at its own copy of the data file it references.
 
     An example's population catalogue ships beside it in the package and is referenced by a path
@@ -32,9 +34,11 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
         overwrite: Whether an existing, different file of the same name may be replaced.
 
     Returns:
-        ``(source, destination)`` of the data file to copy, or ``None`` when there is nothing to
-        copy -- no data file, or the destination is already that file or holds the same bytes. The
-        path is rewritten either way.
+        ``(source, destination, may_replace)`` of the data file to copy, or ``None`` when there is
+        nothing to copy -- no data file, or the destination is already that file or holds the same
+        bytes. The path is rewritten either way. ``may_replace`` is whether a file was at the
+        destination here, with ``--overwrite`` given: only such a file may be replaced; one that
+        appears later is not.
 
     Raises:
         FileExistsError: If a different file already exists where the data file would be copied
@@ -76,7 +80,8 @@ def _redirect_example_data_file(config, *, src_path: Path, dst_path: Path, overw
             return None
         if not overwrite:
             raise FileExistsError(f"File already exists: {destination}. Use --overwrite to overwrite.")
-    return source, destination
+        return source, destination, True
+    return source, destination, False
 
 
 #: The prefix of every temporary file ``config --get`` writes beside a catalogue. Reserved for it, so
@@ -188,6 +193,30 @@ def _after_staging(staging: Path) -> None:
     del staging
 
 
+class _AppearedError(Exception):
+    """Raised inside the install when a file appeared at a destination that was absent."""
+
+
+def _before_placing(destination: Path) -> None:
+    """Run between the preflight and the install's look at the destination; a seam for tests."""
+    del destination
+
+
+def _place_without_replacing(staging: Path, destination: Path) -> None:
+    """Move *staging* to *destination*, failing with ``FileExistsError`` if anything is there.
+
+    POSIX: ``os.link`` creates the new name only if it is free, then the staged name is removed.
+    Windows: ``os.rename`` refuses an existing destination there.
+    """
+    import os
+
+    if _closes_before_rename():
+        os.rename(staging, destination)
+        return
+    os.link(staging, destination, follow_symlinks=False)
+    _remove_quietly(staging)
+
+
 class _ForeignEntryError(Exception):
     """Raised inside the install when the moved file is not the one that was staged."""
 
@@ -292,8 +321,15 @@ class _DataFileInstall:
     and moved into place with ``os.replace``, so a copy that fails partway never touches the
     destination. A file already there is first moved to a temporary
     ``.gwmock-config-get.<name>.*.backup`` beside it: :meth:`roll_back` restores it -- or, when there
-    was none, removes the new file -- and :meth:`commit` discards the backup. On every failure path
-    the restore comes first and deleting temporary files after, best effort.
+    was none, removes the new file -- and :meth:`commit` discards the backup. Where a file is
+    restored, the restore comes before deleting temporary files, which is best effort. A file that
+    is not this call's -- one that appeared at the destination, or a foreign entry found there after
+    the move -- is never deleted: with a backup of the previous catalogue that backup is put back
+    over it, and without one it is left as it is.
+
+    A destination that was absent when the command looked is filled with an operation that fails
+    if anything is there by then (``os.link`` on POSIX, ``os.rename`` on Windows), so a file that
+    appears meanwhile is not replaced; only ``--overwrite`` on a destination already seen replaces.
 
     **The guarantee is against exceptions, not against the process being killed.** A kill between
     the steps can leave the catalogue's name missing with its old bytes in the backup, a stray
@@ -301,12 +337,16 @@ class _DataFileInstall:
     while such files are present, naming them, rather than guessing how to recover.
     """
 
-    def __init__(self, source: Path, destination: Path) -> None:
+    def __init__(self, source: Path, destination: Path, *, may_replace: bool = False) -> None:
         """Install *source* at *destination*.
 
         Args:
             source: The data file to copy.
             destination: Where it goes.
+            may_replace: Whether a file found at *destination* may be backed up and replaced --
+                true only when the caller saw one there and ``--overwrite`` was given. Otherwise
+                the file is installed with an operation that fails if anything is there, so one
+                that appeared meanwhile is never replaced.
         """
         import os
         import shutil
@@ -351,20 +391,46 @@ class _DataFileInstall:
                     # Windows cannot rename a file that is open; the check above is the last look.
                     os.close(descriptor)
                     descriptor = -1
-                if destination.exists():
-                    backup_name = _create_temporary_file(destination, ".backup")
+                _before_placing(destination)
+                if not may_replace:
+                    if os.path.lexists(destination):
+                        raise _AppearedError
+                    _before_move(staging)
+                    moving = True
                     try:
-                        # os.replace renames the directory entry onto backup_name: were that entry
-                        # swapped for a symlink meanwhile, the link itself would be replaced, and
-                        # its target neither followed nor written.
-                        os.replace(destination, backup_name)
-                    except BaseException:
-                        _remove_quietly(backup_name)
-                        raise
-                    self._backup = backup_name
-                _before_move(staging)
-                moving = True
-                os.replace(staging, destination)
+                        _place_without_replacing(staging, destination)
+                    except FileExistsError:
+                        moving = False
+                        raise _AppearedError from None
+                    except OSError as error:
+                        moving = False
+                        raise RuntimeError(
+                            f"The file system holding {destination.parent} cannot place a file there "
+                            f"without risking replacing one that appeared meanwhile ({error}), so "
+                            "gwmock config --get did not install the catalogue. Nothing was changed. "
+                            f"Copy the catalogue {source} there by hand, or write the configuration to "
+                            "another file system with --output."
+                        ) from error
+                else:
+                    if destination.is_symlink():
+                        raise FileExistsError(
+                            f"{destination} became a symbolic link while installing. Nothing was "
+                            "replaced; gwmock config --get does not replace a link with the catalogue."
+                        )
+                    if os.path.lexists(destination):
+                        backup_name = _create_temporary_file(destination, ".backup")
+                        try:
+                            # os.replace renames the directory entry onto backup_name: were that
+                            # entry swapped for a symlink meanwhile, the link itself would be
+                            # replaced, and its target neither followed nor written.
+                            os.replace(destination, backup_name)
+                        except BaseException:
+                            _remove_quietly(backup_name)
+                            raise
+                        self._backup = backup_name
+                    _before_move(staging)
+                    moving = True
+                    os.replace(staging, destination)
                 if not _names_witness(destination, witness):
                     # The rename moved whatever was at the staged name; if that entry was swapped
                     # after the check above, the destination now holds a file this command did not
@@ -390,6 +456,13 @@ class _DataFileInstall:
                     else:
                         os.close(descriptor)
         except BaseException as error:
+            if isinstance(error, _AppearedError):
+                # Not ours: leave it, and remove only our staged copy.
+                _remove_quietly(staging)
+                raise FileExistsError(
+                    f"A file appeared at {destination} while installing the catalogue; nothing was "
+                    "replaced. Run the command again with --overwrite to replace it."
+                ) from None
             if foreign:
                 # The backup is ours and holds the user's previous catalogue: put it back over the
                 # foreign entry. With no backup the foreign entry is left alone -- it is not ours.
@@ -416,7 +489,7 @@ class _DataFileInstall:
                 self.roll_back(error)
             elif self._backup is not None and not destination.exists():
                 self._restore(error)
-            if not swapped and not installed:
+            if not swapped:
                 _remove_quietly(staging)
             raise
 
@@ -500,7 +573,9 @@ def _config_command_impl(  # pylint: disable=too-many-locals,too-many-branches,t
         # The catalogue and the configuration are installed as a pair: the catalogue first, so a
         # configuration is never written pointing at one that failed to arrive, and undone if the
         # configuration then cannot be written, so a failure leaves the destination as it was.
-        installed = _DataFileInstall(*data_file) if data_file is not None else None
+        installed = (
+            _DataFileInstall(data_file[0], data_file[1], may_replace=data_file[2]) if data_file is not None else None
+        )
         try:
             save_config(file_name=dst_path, config=config, overwrite=overwrite, backup=False)
         except BaseException as e:
