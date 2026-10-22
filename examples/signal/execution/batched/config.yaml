@@ -46,9 +46,13 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            # The population that ships with gwmock, as in the ripple example this is derived from;
-            # `gwmock config --get` copies it next to the configuration it writes. The same file
-            # pinned to a commit, to fetch instead:
+            # The population that ships with gwmock, as in the ripple example this is derived from.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
+            # The same file pinned to a commit, to fetch instead:
             #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
             path: ../../bbh_population.csv
     signal:

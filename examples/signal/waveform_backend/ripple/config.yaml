@@ -34,10 +34,13 @@ orchestration:
         arguments:
             # The small population that ships with gwmock, not the sandbox Zenodo deposit the
             # other signal examples use: sandbox records are purged, so that URL has a built-in
-            # expiry. The path is relative to this file's directory; `gwmock config --get` copies
-            # the catalogue next to the configuration it writes and points the path at the copy,
-            # so a run needs no network access. To fetch it instead, use the same file pinned to a
-            # commit:
+            # expiry, and so that a run needs no network access.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
+            # To fetch it instead, use the same file pinned to a commit:
             #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
             path: ../../bbh_population.csv
     signal:

@@ -24,8 +24,12 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            # The one-event population that ships with gwmock, by a path relative to this file's
-            # directory; `gwmock config --get` copies it next to the configuration it writes.
+            # The one-event population that ships with gwmock.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
             path: ../../bbh_population.csv
     signal:
         waveform-model: IMRPhenomD

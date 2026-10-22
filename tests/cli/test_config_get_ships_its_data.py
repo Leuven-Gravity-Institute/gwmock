@@ -77,3 +77,33 @@ def test_every_shipped_example_names_no_population_on_a_branch():
     """A URL on a branch can change under an example; a remote population, if any, is pinned."""
     for config_file in _EXAMPLES.rglob("config.yaml"):
         assert "/main/" not in config_file.read_text(encoding="utf-8"), config_file
+
+
+class TestRunningAnExampleInPlace:
+    """Relative paths are read from the working directory; an example run from elsewhere says so."""
+
+    _QUICK_START = _EXAMPLES / "noise" / "uncorrelated_gaussian" / "quick_start" / "config.yaml"
+
+    def test_a_catalogue_beside_the_file_but_not_here_names_where_to_run(self, tmp_path: Path, monkeypatch):
+        from gwmock.cli.utils.config import require_population_path_found
+        from gwmock.utils.errors import DeterministicRefusalError
+
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(DeterministicRefusalError, match=r"Run gwmock from .*quick_start.*gwmock config --get"):
+            require_population_path_found(load_config(self._QUICK_START), self._QUICK_START)
+
+    def test_run_from_the_example_directory_the_path_is_found(self, monkeypatch):
+        from gwmock.cli.utils.config import require_population_path_found
+
+        monkeypatch.chdir(self._QUICK_START.parent)
+        require_population_path_found(load_config(self._QUICK_START), self._QUICK_START)
+
+    def test_gwmock_simulate_stops_before_anything_starts(self, tmp_path: Path, monkeypatch):
+        """Through the CLI, the dry run included: the plan is never built."""
+        monkeypatch.chdir(tmp_path)
+
+        result = _RUNNER.invoke(app, ["simulate", str(self._QUICK_START), "--dry-run"])
+
+        assert result.exit_code != 0
+        assert "Run gwmock from" in str(result.exception) + result.output
+        assert not (tmp_path / "output").exists()

@@ -662,6 +662,42 @@ class Config(BaseModel):
         return data
 
 
+def require_population_path_found(config: Config, config_file: Path) -> None:
+    """Refuse a relative population path that is missing where it is read but present beside the file.
+
+    Relative paths in a configuration -- the population, PSD files, the working and output
+    directories -- are read from the directory gwmock runs in, not from the configuration file's.
+    The bundled examples write their catalogue path from their own directory, so running one in
+    place from elsewhere names a file that is not there. That failed deep in the population loader
+    with the bare path; this says which directory to run from instead, before anything starts.
+
+    Args:
+        config: The loaded configuration.
+        config_file: The file it was loaded from.
+
+    Raises:
+        DeterministicRefusalError: If the population path is relative, absent from the current
+            directory and present relative to *config_file*'s directory.
+    """
+    from gwmock.utils.errors import DeterministicRefusalError  # noqa: PLC0415
+
+    orchestration = config.orchestration
+    population = None if orchestration is None else orchestration.population
+    value = None if population is None else (population.arguments or {}).get("path")
+    if not isinstance(value, str) or "://" in value or Path(value).is_absolute() or Path(value).exists():
+        return
+    beside = (config_file.parent / value).resolve()
+    if not beside.exists():
+        return
+    raise DeterministicRefusalError(
+        f"The population path {value!r} does not exist from the directory gwmock runs in, "
+        f"{Path.cwd()}: relative paths in a configuration are read from there, not from the "
+        f"configuration file's directory. It does exist relative to {config_file}. Run gwmock from "
+        f"{config_file.parent.resolve()}, give an absolute path, or copy the example with "
+        "`gwmock config --get`, which puts the catalogue next to the configuration it writes."
+    )
+
+
 def load_config(file_name: Path, encoding: str = "utf-8") -> Config:
     """Load configuration file with validation.
 
