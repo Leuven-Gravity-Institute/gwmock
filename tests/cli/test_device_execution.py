@@ -711,9 +711,10 @@ class TestTheLeadIsAlignedToo:
 
     A reviewer found this after the tail fix: the adapter answers both queries, so aligning it to
     ripple changed ``pre_coalescence_duration`` too -- and the lead drives ``_placement_key`` and the
-    upper bound. LAL and ripple disagree there as well (30+25 at 30 Hz: 3.60 s against 2.81 s), so an
-    event at ``end + 3.0`` was claimed by this segment before the fix and belongs to the next one
-    after it.
+    upper bound. LAL and ripple disagree there as well (30+25 at 30 Hz: 3.60 s against 2.81 s with
+    gwmock-signal 0.21.1, 6.71 s against 2.81 s with 0.21.2, whose LAL buffer starts below the
+    cutoff), so an event at ``end + 3.0`` was claimed by this segment before the fix and belongs to
+    the next one after it.
 
     That is the same defect as the tail, on the other side: the query described a buffer a different
     library would produce. It is a real behaviour change, it moves boundary events for configs where

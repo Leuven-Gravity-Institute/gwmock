@@ -192,7 +192,8 @@ class TestTheWarning:
         merger, so a ``coa_time`` 0.5 s past a segment boundary leaves all but the last 0.5 s of
         that lead in the previous segment -- which is already written. How long the lead is belongs
         to the waveform backend's conditioning and changes with it (3.6 s in one gwmock-signal
-        release, 7.2 s in the next), so the expected loss is taken from the backend's own answer.
+        release, 7.2 s in the next, 13.8 s from 0.21.2, whose buffer starts below the cutoff), so
+        the expected loss is taken from the backend's own answer.
 
         Segments now claim an event by where its waveform starts, so this configuration keeps that
         inspiral -- ``tests/cli/test_inspiral_segment_placement.py`` measures that it survives, by
