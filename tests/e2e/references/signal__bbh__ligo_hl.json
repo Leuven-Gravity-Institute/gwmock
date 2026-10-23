@@ -2,10 +2,10 @@
   "environment": {
     "astropy": "8.0.2",
     "astropy-iers-data": "0.2026.10.12.1.3.27",
-    "gwmock": "0.19.0-post.12+8ba6643",
+    "gwmock": "0.19.0-post.6+fa7cd4f",
     "gwmock-noise": "0.18.2",
-    "gwmock-pop": "0.17.0",
-    "gwmock-signal": "0.21.1",
+    "gwmock-pop": "0.18.0",
+    "gwmock-signal": "0.21.2",
     "jax": "0.11.2",
     "jaxlib": "0.11.2",
     "lalsuite": "7.26.16",
@@ -44,23 +44,23 @@
     },
     "output/signal/H1_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4084,
-      "content_hash": "sha256:d05ad7ff3ddbdcd124f939eca31f0626d76cd7de3fc02a82645d6204578bf548",
-      "mean": -9.798433914464942e-28,
+      "content_hash": "sha256:08e26df5b523a6d8c5e4b491524dde38739e74e642ab6bbe741b5b3527c8a2f0",
+      "mean": 1.130859052037295e-29,
       "n": 16384,
-      "nonzero": 4915,
-      "peak": 5.399205291554141e-22,
-      "rms": 3.359073312500535e-23,
-      "signed_peak": -5.399205291554141e-22
+      "nonzero": 6449,
+      "peak": 5.313659714004203e-22,
+      "rms": 3.4797017071013155e-23,
+      "signed_peak": -5.313659714004203e-22
     },
     "output/signal/L1_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4079,
-      "content_hash": "sha256:9c31c562d3f0bff898b614c74125131d0214d93afb22f672e54584fddcf43458",
-      "mean": 4.594350083835342e-28,
+      "content_hash": "sha256:dca485e35de75383400f9d3a698ffef93c2f11550a2bc9c652c290a74989c2d9",
+      "mean": -6.408860400711165e-30,
       "n": 16384,
-      "nonzero": 4915,
-      "peak": 9.268447819933627e-22,
-      "rms": 5.956624730329472e-23,
-      "signed_peak": -9.268447819933627e-22
+      "nonzero": 6441,
+      "peak": 9.350265704656287e-22,
+      "rms": 6.170535119910247e-23,
+      "signed_peak": -9.350265704656287e-22
     }
   }
 }

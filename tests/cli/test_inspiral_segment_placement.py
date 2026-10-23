@@ -690,14 +690,29 @@ class TestAgainstRealGeneration:
 
     @pytest.mark.requires_lalsuite
     def test_an_event_just_past_the_boundary_is_claimed_using_the_real_query(self, tmp_path):
-        """End to end through the real adapter: no stub, no supplied lead."""
+        """End to end through the real adapter: no stub, no supplied lead.
+
+        The lead is read from the adapter rather than written here, because it is the waveform
+        library's buffer and changes with its conditioning (a 30+25 binary at 1024 Hz from 30 Hz
+        leads coalescence by 6.8 s with gwmock-signal 0.21.2, by 3.6 s before it). An orchestrator
+        that ignored it and claimed by ``coa_time`` fails the first assertion.
+        """
         orchestrator = _orchestrator(tmp_path)
         end_time = _end_time(orchestrator)
-
-        assert orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 1.0}), (
-            "a 30+25 binary at 1024 Hz leads coalescence by 3.6 s, so this event starts in this segment"
+        adapter = orchestrator.signal_adapter
+        assert adapter is not None
+        lead = adapter.pre_coalescence_duration(
+            {**_COMPLETE_EVENT, "coa_time": end_time},
+            sampling_frequency=_SAMPLING_FREQUENCY,
+            minimum_frequency=30.0,
         )
-        assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 5.0})
+        assert lead is not None
+        assert lead > 2.0, f"a lead of {lead} s leaves no room for the margins below to discriminate"
+
+        assert orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + lead - 1.0}), (
+            f"the waveform leads coalescence by {lead} s, so this event starts in this segment"
+        )
+        assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + lead + 1.0})
 
 
 class TestAnOffGridCoalescenceTime:

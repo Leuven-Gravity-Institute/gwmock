@@ -1,56 +1,56 @@
 {
   "environment": {
-    "astropy": "8.0.1",
-    "astropy-iers-data": "0.2026.10.5.1.0.7",
-    "gwmock": "0.16.3-post.4+5bee1dd",
-    "gwmock-noise": "0.14.0",
-    "gwmock-pop": "0.14.1",
-    "gwmock-signal": "0.17.4",
+    "astropy": "8.0.2",
+    "astropy-iers-data": "0.2026.10.12.1.3.27",
+    "gwmock": "0.19.0-post.6+fa7cd4f",
+    "gwmock-noise": "0.18.2",
+    "gwmock-pop": "0.18.0",
+    "gwmock-signal": "0.21.2",
     "jax": "0.11.2",
     "jaxlib": "0.11.2",
     "lalsuite": "7.26.16",
-    "numpy": "2.5.3",
+    "numpy": "2.5.4",
     "pyerfa": "2.0.1.5",
-    "ripplegw": "0.4.0",
+    "ripplegw": "0.4.1",
     "scipy": "1.18.1"
   },
   "fingerprint": {
     "device": "cpu",
     "machine": "x86_64",
-    "python": "3.12",
+    "python": "3.13",
     "system": "Linux"
   },
   "label": "signal/waveform_backend/ripple",
   "outputs": {
     "output/signal/E-ET1_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4078,
-      "content_hash": "sha256:e75c57c43fe69e91dab7284a348187aeafea74e682992e21e7902154f4eda02a",
-      "mean": 1.0006218476591191e-28,
+      "content_hash": "sha256:0d8c6f982d8b9110422f18163d9e096531116baf00568c77319867d1d398dc47",
+      "mean": 1.0006249493501977e-28,
       "n": 16384,
-      "nonzero": 4557,
-      "peak": 8.53530916393549e-22,
-      "rms": 5.249422343122002e-23,
-      "signed_peak": 8.53530916393549e-22
+      "nonzero": 4606,
+      "peak": 8.535308511755879e-22,
+      "rms": 5.2494219888748346e-23,
+      "signed_peak": 8.535308511755879e-22
     },
     "output/signal/E-ET2_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4077,
-      "content_hash": "sha256:490cfa819bc0052bf12f5785733e62cda8b5888a333b49f958ffc1e9dd6b6a6b",
-      "mean": -6.600198499172188e-29,
+      "content_hash": "sha256:f36d2be562e0e330f7d3263dcecaf01ee71966df82263f45392b7b6180bfdbec",
+      "mean": -6.600378704411225e-29,
       "n": 16384,
-      "nonzero": 4557,
-      "peak": 8.355238039594769e-22,
-      "rms": 5.425529963898917e-23,
-      "signed_peak": -8.355238039594769e-22
+      "nonzero": 4606,
+      "peak": 8.355238822008373e-22,
+      "rms": 5.425530740113672e-23,
+      "signed_peak": -8.355238822008373e-22
     },
     "output/signal/E-ET3_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4079,
-      "content_hash": "sha256:f30d027d390cf591ca81d99a3a00533b95d919966bd10b3b18c64faef745650d",
-      "mean": -3.428376778544655e-29,
+      "content_hash": "sha256:552912637c1fb04fd9f56d1f200652781674cf81093894f12e88daa8154987ae",
+      "mean": -3.4282675344381145e-29,
       "n": 16384,
-      "nonzero": 4557,
-      "peak": 8.193710112735218e-22,
-      "rms": 5.541023941158113e-23,
-      "signed_peak": -8.193710112735218e-22
+      "nonzero": 4606,
+      "peak": 8.1937101710415295e-22,
+      "rms": 5.541024013122507e-23,
+      "signed_peak": -8.1937101710415295e-22
     }
   }
 }
