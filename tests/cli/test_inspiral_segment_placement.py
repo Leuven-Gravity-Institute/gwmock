@@ -3,8 +3,8 @@
 A compact binary's buffer begins seconds before ``coa_time``. A segment chosen from ``coa_time``
 alone therefore starts *after* the waveform does, and injection crops the difference away with
 nowhere to put it: the earlier segments are already written. The loss is not marginal -- for a 30+25
-solar-mass binary at 1024 Hz the lead is 3.6 s, so an event landing 1 s into a 16-second segment
-loses 2.6 s of inspiral.
+solar-mass binary at 1024 Hz from 30 Hz the lead is 6.8 s with gwmock-signal 0.21.2 (3.6 s before
+it), so an event landing 1 s into a 16-second segment loses 5.8 s of its buffer.
 
 The rule these tests pin is that a segment claims the events whose *waveform* starts before it ends,
 taken from :meth:`SignalAdapter.pre_coalescence_duration`. Two loops apply it -- per-event and
@@ -465,28 +465,27 @@ class TestNothingIsDiscarded:
     def test_a_waveform_straddling_the_boundary_keeps_all_of_its_energy(self, tmp_path, caplog):
         """No sample is dropped, and the check is the strain itself rather than the absence of a log.
 
-        The event coalesces 1 s into the *second* segment, so its buffer starts 2.6 s before that
+        The event coalesces 0.5 s into the *second* segment, so its buffer starts 6.3 s before that
         segment begins. Claimed by ``coa_time`` it would be generated during the second segment, and
-        injection would crop those 2.6 s -- 65% of its samples -- because the first segment is
+        injection would crop those 6.3 s -- 77% of its samples -- because the first segment is
         already written by then.
 
         This offset is deliberately the *mild* case. **At this module's 30 Hz cutoff, on the
-        ET-Triangle-Sardinia network it configures**, the unweighted strain-squared energy lost runs
-        0.34% at 1 s past the boundary, 11.5% at 0.25 s, 50.3% at 0.1 s and 99.8% at 1 ms, because a
-        compact binary's energy is concentrated in the last fraction of a second before merger. Testing the mild case makes the assertion depend on placement rather
+        ET-Triangle-Sardinia network it configures, with gwmock-signal 0.21.2**, the unweighted
+        strain-squared energy lost runs 0.34% at 0.5 s past the boundary, 21.4% at 0.25 s, 54.6% at
+        0.1 s and 100% at 1 ms, because a compact binary's energy is concentrated in the last fraction
+        of a second before merger. Testing the mild case makes the assertion depend on placement rather
         than on that concentration: 0.34% is a loss no energy-fraction tolerance would forgive, and a
         test pinned at the catastrophic end would still pass if placement were only approximately
-        right.
+        right. It is not milder still because the buffer's first seconds are the taper below the
+        cutoff and carry almost nothing: at 1 s past the boundary the loss is 6.7e-7.
 
-        The cutoff has to be stated, because it moves these numbers by more than an order of
-        magnitude while leaving the dropped *span* untouched. The same binary and network at a 20 Hz
-        cutoff -- the one a real ET configuration uses -- loses 32.9% at 0.5 s past the boundary
-        against 0.92% here at 30 Hz, since LAL's conditioning rounds both to the same 4.000 s buffer
-        but only the lower cutoff puts real signal in the early samples. That rounding coincidence
-        holds for this chirp-time bin on this backend and not generally -- a 10+10 binary gets 16 s at
-        20 Hz against 8 s at 30 Hz -- so it is not a rule to carry elsewhere. See
-        ``WaveformBackend.pre_coalescence_duration`` in gwmock-signal for the figures across cutoffs,
-        offsets, masses and backends.
+        The cutoff has to be stated, because it moves these numbers by two orders of magnitude. The
+        same binary and network at a 20 Hz cutoff -- the one a real ET configuration uses -- leads by
+        13.8 s rather than 6.8 s and loses 37.5% at 0.5 s past the boundary against 0.34% here at
+        30 Hz, because only the lower cutoff puts real signal in the samples just before the boundary.
+        See ``WaveformBackend.pre_coalescence_duration`` in gwmock-signal for how the buffer is sized
+        across cutoffs, masses and backends.
 
         Summed squares across the two assembled segments are compared against the same waveform
         generated on its own, which is the quantity that must survive placement.
@@ -494,7 +493,7 @@ class TestNothingIsDiscarded:
         orchestrator = _orchestrator(tmp_path, "per-event", total_duration=2 * _SEGMENT_DURATION)
         adapter = orchestrator.signal_adapter
         assert adapter is not None
-        coa_time = _START + _SEGMENT_DURATION + 1.0
+        coa_time = _START + _SEGMENT_DURATION + 0.5
         standalone = adapter.simulate(
             {**_COMPLETE_EVENT, "coa_time": coa_time},
             sampling_frequency=_SAMPLING_FREQUENCY,
