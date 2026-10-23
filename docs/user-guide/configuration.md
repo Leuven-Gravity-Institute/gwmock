@@ -142,6 +142,11 @@ gwmock config --get noise/uncorrelated_gaussian/quick_start --overwrite
 gwmock config --init config.yaml --overwrite
 ```
 
+With `--get`, `--overwrite` also replaces a different catalogue file that an
+example copies beside the configuration, such as `bbh_population.csv`. It does
+not replace a symbolic link at that path: a link there, dangling or not, is
+refused, so that the link is not replaced by a copy of the catalogue.
+
 #### Flag `--output` (optional)
 
 Specifies the directory where the configuration file will be saved. This flag
@@ -361,9 +366,13 @@ exactly these keys, with hyphens and underscores interchangeable:
 Any other key is an error naming the key, rather than being ignored: a
 misspelled or misplaced setting would otherwise leave the run on the default
 while looking entirely normal. In particular the noise floor is
-`low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. A
-custom `noise.backend` receives `noise.arguments` as its constructor's keyword
-arguments instead, so that backend decides which keys it accepts.
+`low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. The
+keys of each `glitches` entry are checked the same way against the glitch model
+its `kind` names, which also calls its floor `low_frequency_cutoff`. Both checks
+run when the configuration is loaded, so `gwmock simulate` stops before anything
+is generated. A custom `noise.backend` receives `noise.arguments` as its
+constructor's keyword arguments instead, so that backend decides which keys it
+accepts.
 
 ### Injection parameters in the data files
 
@@ -437,6 +446,91 @@ signal:
     waveform-backend-arguments:
         taper_fraction: 0.05 # ripple-specific
 ```
+
+Keep them apart from `signal.waveform-arguments`, which are merged into every
+event's parameters and passed to each waveform call. A key there that the
+backend does not accept stops the run with the backend's message rather than
+being dropped, because dropping it would generate a waveform other than the one
+configured. A constructor setting such as `f_ref` belongs under
+`waveform-backend-arguments`.
+
+### Population columns the waveform does not read
+
+A population catalogue usually carries more columns than the waveform reads.
+Each is recorded in the injection parameters either way; what happens in the
+waveform call depends on the column:
+
+- **Population-only columns are left out quietly**: `redshift` and labels and
+  indices (`event_id`, `source_type`, `source_class`, `class`).
+- **Columns that restate what the waveform reads are left out only when, for
+  each event, the waveform's own copy is present and agrees**; otherwise the run
+  stops, naming the event. Every value a rule reads must be finite — a NaN would
+  make each comparison false and let any value through — and masses must be
+  positive. A column declared ignored is never read, even by the rule of a
+  column it accompanies:
+    - `source_frame_mass_1`/`_2`: the detector-frame mass is present, and with
+      `redshift` present (and not declared ignored) equals `m_src (1 + z)` to a
+      relative 1e-6.
+    - `spin_1`, `spin_2`, `tilt_1`, `tilt_2`: all three Cartesian components of
+      that spin are present, and the magnitude is their norm and the tilt
+      `arccos(z / |chi|)`, to 1e-6 (the tilt is not checked at zero spin). A
+      catalogue giving spins only as magnitude and tilt would otherwise generate
+      non-spinning binaries.
+    - `theta_jn`: `inclination` is present. Where neither body has an in-plane
+      spin component the binary has no precession and the total angular momentum
+      J lies along the orbital one L: `J_z = |L| + S_z`, with
+      `S_z = m1² χ1z + m2² χ2z` from the detector-frame masses and aligned
+      spins. Where `S_z ≥ 0` — a binary without spin included — `J_z` is
+      positive whatever `|L|` is, so J is parallel to L exactly and `theta_jn`
+      must equal `inclination`. Where `S_z < 0`, anti-aligned spin may outweigh
+      `|L|` and turn J around; which happens depends on `|L|` at the reference
+      frequency, which no truncated post-Newtonian series pins down near
+      `J = 0`, so `inclination` and `π − inclination` are both accepted.
+      Anything else is refused, to 1e-6 rad. An event without both
+      detector-frame masses and both aligned spin components is refused. With
+      in-plane spin the two angles differ in general, and only the presence of
+      `inclination` is required.
+    - A per-event `f_ref`: equals, to a relative 1e-6, the reference frequency
+      the waveform backend uses: `f_ref` under `waveform-backend-arguments`, or
+      the `minimum-frequency` when that is unset. A catalogue whose spins refer
+      to 20 Hz needs `f_ref: 20` there.
+- **`eccentricity`, `long_asc_node` and `mean_per_ano` are left out only while
+  they are zero.** gwmock generates quasi-circular waveforms, which are exact at
+  zero eccentricity; a nonzero value stops the run.
+- **Any other column stops the run before anything is generated**, naming every
+  such column and what does not read it: the waveform backend on the per-event
+  path, or the batched path with `execution: batched`. A misspelt column —
+  `spin1_z` for `spin_1z` — would otherwise vanish and the run would generate a
+  different signal than the catalogue describes.
+
+<!-- prettier-ignore -->
+!!! note "Catalogues written by gwmock-pop before 0.18.0"
+    gwmock requires gwmock-pop 0.18.0 or later, whose packaged presets write
+    neither `theta_jn` nor `f_ref`, so their draws pass these checks. A
+    catalogue _file_ drawn from the presets `bbh_flat`, `bbh_gwtc4`,
+    `bns_flat` or `nsbh_flat` with an older gwmock-pop still carries both:
+    `theta_jn` drawn independently of `inclination`, although the presets draw
+    no in-plane spin (`bbh_gwtc4` draws aligned spin components; the others
+    draw none), and `f_ref = 20`. A run on such a file is refused before
+    anything is generated, naming `theta_jn` (and `f_ref`, unless `f_ref: 20` is
+    set under `waveform-backend-arguments`). Draw the catalogue again with the
+    current gwmock-pop rather than declaring the columns ignored, since the
+    inclination the waveform reads and the `theta_jn` the file records
+    disagree.
+
+If a column is not meant as a waveform input, declare it:
+
+```yaml
+orchestration:
+    signal:
+        ignored-population-columns:
+            - snr
+            - catalogue_weight
+```
+
+A declared column is left out of the waveform call without a refusal. Naming a
+column the waveform reads, such as `spin_1z`, is an error when the configuration
+is loaded, since such a column is never left out.
 
 Two things to be aware of:
 

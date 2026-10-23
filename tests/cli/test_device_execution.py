@@ -26,6 +26,16 @@ from gwmock.signal.device_chunks import canonicalise_parameters
 _POPULATION_CSV = Path(__file__).resolve().parents[2] / "examples" / "signal" / "bbh_population.csv"
 _START = 1577491296.0
 _SAMPLING_FREQUENCY = 1024.0
+#: A row the signal simulator can size, so the placement queries answer rather than refuse.
+_COMPLETE_EVENT: dict[str, Any] = {
+    "detector_frame_mass_1": 30.0,
+    "detector_frame_mass_2": 25.0,
+    "distance": 400.0,
+    "right_ascension": 1.0,
+    "declination": 0.5,
+    "polarization_angle": 0.2,
+    "inclination": 0.3,
+}
 
 
 def _config(working_directory: Path, execution: str, waveform_backend: str | None = "ripple") -> dict[str, Any]:
@@ -269,13 +279,16 @@ class TestSegmentEventSelection:
 
     @pytest.mark.requires_lalsuite
     def test_events_beyond_the_segment_are_left_for_the_next_one(self, tmp_path):
-        """The boundary rule is ``coa_time >= end_time``, and it is checkpointed state."""
+        """The boundary rule is the waveform's start against ``end_time``, and it is checkpointed state."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
         end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        lead = orchestrator._pre_coalescence_duration({**_COMPLETE_EVENT, "coa_time": end_time})
+        assert lead is not None
+        assert lead > 0
         orchestrator._population_events = (
-            {"coa_time": end_time - 1.0, "detector_frame_mass_1": 30.0},
-            {"coa_time": end_time, "detector_frame_mass_1": 30.0},
-            {"coa_time": end_time + 5.0, "detector_frame_mass_1": 30.0},
+            {**_COMPLETE_EVENT, "coa_time": end_time - 1.0},
+            {**_COMPLETE_EVENT, "coa_time": end_time + lead},
+            {**_COMPLETE_EVENT, "coa_time": end_time + lead + 5.0},
         )
 
         event_ids, events = orchestrator._events_for_this_segment()
@@ -300,7 +313,7 @@ class TestSegmentEventSelection:
         """A segment with no events must not advance the index or invent provenance."""
         orchestrator = _orchestrator(tmp_path, "batched", waveform_backend=None)
         end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
-        orchestrator._population_events = ({"coa_time": end_time + 100.0},)
+        orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": end_time + 100.0},)
 
         chunks = orchestrator._simulate()
 
@@ -507,6 +520,51 @@ _SKIP_EVENT: dict[str, Any] = {
 }
 
 
+def _projection_padding_in_the_query(raw: float, answered: float) -> float:
+    """Return how much of *answered* is projection padding, checking it is all or nothing.
+
+    gwmock-signal pads the projected strain at both ends by ``edge_padding(fs)`` samples -- the
+    largest detector light-travel delay -- so the signal a delay moves past the waveform buffer is
+    kept, and its duration queries cover that padded output. Releases before the padding answer with
+    the waveform buffer alone. Either way the query must describe the strain that is *written*, so
+    the difference from the raw waveform buffer is exactly the padding or exactly zero; anything
+    else is a query describing some other buffer.
+
+    Args:
+        raw: The generating backend's own answer for the waveform buffer.
+        answered: The placement query's answer.
+
+    Returns:
+        The padding, in seconds, the answer includes.
+    """
+    from gwmock_signal.projection.resampling import edge_padding
+
+    padding = edge_padding(_SAMPLING_FREQUENCY) / _SAMPLING_FREQUENCY
+    assert padding > 0
+    included = answered - raw
+    tolerance = 0.5 / _SAMPLING_FREQUENCY
+    assert included == pytest.approx(0.0, abs=tolerance) or included == pytest.approx(padding, abs=tolerance), (
+        f"the query answers {answered} s against a {raw} s waveform buffer: {included} s more, which is "
+        f"neither nothing nor the {padding} s projection padding"
+    )
+    return padding if included > tolerance else 0.0
+
+
+def _ripple_simulator_answer(side: str, parameters: dict[str, Any], minimum_frequency: float) -> float | None:
+    """Return gwmock-signal's own answer for a ripple-backed compact-binary simulator.
+
+    The simulator's queries state what its projected output covers, padding included where it
+    pads, so this is the contract the placement query has to match -- without restating any
+    number gwmock-signal owns.
+    """
+    from gwmock_signal import CBCSimulator
+    from gwmock_signal.waveform.backends.ripple import RippleBackend
+
+    simulator = CBCSimulator("IMRPhenomD", waveform_backend=RippleBackend())
+    query = simulator.pre_coalescence_duration if side == "pre" else simulator.post_coalescence_duration
+    return query(parameters, _SAMPLING_FREQUENCY, minimum_frequency)
+
+
 def _install(orchestrator, coa_times: list[float]) -> None:
     """Replace the catalogue and drop the cached placement order."""
     orchestrator._population_events = [{**_SKIP_EVENT, "coa_time": t} for t in coa_times]
@@ -635,11 +693,17 @@ class TestTheQueryAnswersForTheBackendThatGenerates:
 
         assert answered is not None
         assert generated is not None
+        # The written strain is ripple's buffer plus the projection padding, when the installed
+        # gwmock-signal pads; ripple's own query sizes only the waveform buffer.
+        generated += _projection_padding_in_the_query(generated, answered)
         assert answered == pytest.approx(generated, abs=0.5 / _SAMPLING_FREQUENCY), (
             f"the placement query answers {answered} s while ripple generates {generated} s; an "
             f"event whose content reaches {generated - answered} s further than the query admits "
             "can be skipped while it is still contributing to the segment"
         )
+        assert answered == pytest.approx(
+            _ripple_simulator_answer("post", parameters, minimum_frequency), abs=0.5 / _SAMPLING_FREQUENCY
+        ), "the placement query disagrees with gwmock-signal's ripple-backed simulator"
 
 
 class TestTheLeadIsAlignedToo:
@@ -691,10 +755,14 @@ class TestTheLeadIsAlignedToo:
 
         assert answered is not None
         assert generated is not None
+        generated += _projection_padding_in_the_query(generated, answered)
         assert answered == pytest.approx(generated, abs=0.5 / _SAMPLING_FREQUENCY), (
             f"the placement query answers a {answered} s lead while ripple generates {generated} s; "
             "the segment an event is claimed by is decided from a different library's buffer"
         )
+        assert answered == pytest.approx(
+            _ripple_simulator_answer("pre", parameters, minimum_frequency), abs=0.5 / _SAMPLING_FREQUENCY
+        ), "the placement query disagrees with gwmock-signal's ripple-backed simulator"
 
 
 class TestTheRippleSubstitutionIsHonest:
@@ -826,3 +894,65 @@ class TestTheRippleSubstitutionIsHonest:
         assert not orchestrator._event_ended_before_segment_start(event), (
             "the event was skipped on a tail the run could not stand behind"
         )
+
+
+class TestThePopulationColumnsTheBatchedPathIgnores:
+    """The batched entry point reads a fixed set and ignores every other column without complaint.
+
+    So it is checked against the same rule as the per-event path, once, before anything is
+    generated or consumed.
+    """
+
+    @staticmethod
+    def _with_columns(orchestrator, **extra):
+        end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": end_time - 1.0, **extra},)
+        return orchestrator
+
+    @pytest.mark.requires_lalsuite
+    def test_a_misspelt_spin_column_stops_the_run_before_anything_is_consumed(self, tmp_path):
+        orchestrator = self._with_columns(_orchestrator(tmp_path, "batched", waveform_backend=None), spin1_z=0.3)
+
+        with pytest.raises(ValueError, match=r"spin1_z.*batched path.*signal\.ignored-population-columns"):
+            orchestrator._simulate()
+        assert int(orchestrator.population_index) == 0
+
+    @pytest.mark.requires_lalsuite
+    def test_known_population_only_columns_pass(self, tmp_path):
+        orchestrator = self._with_columns(
+            _orchestrator(tmp_path, "batched", waveform_backend=None),
+            redshift=0.1,
+            source_frame_mass_1=_COMPLETE_EVENT["detector_frame_mass_1"] / 1.1,
+            eccentricity=0.0,
+        )
+
+        orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_a_declared_column_passes(self, tmp_path):
+        orchestrator = self._with_columns(
+            _orchestrator(tmp_path, "batched", waveform_backend=None, **{"ignored-population-columns": ["spin1_z"]}),
+            spin1_z=0.3,
+        )
+
+        orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_a_nonzero_eccentricity_stops_the_run(self, tmp_path):
+        orchestrator = self._with_columns(_orchestrator(tmp_path, "batched", waveform_backend=None), eccentricity=0.2)
+
+        with pytest.raises(ValueError, match=r"eccentricity is 0\.2"):
+            orchestrator._require_batched_population_columns()
+
+    @pytest.mark.requires_lalsuite
+    def test_spins_fixed_under_waveform_arguments_count_for_theta_jn(self, tmp_path):
+        """The device reads the population merged with the fixed arguments; the check reads the same."""
+        orchestrator = _orchestrator(
+            tmp_path, "batched", waveform_backend=None, **{"waveform-arguments": {"spin_1z": 0.0, "spin_2z": 0.0}}
+        )
+        end_time = float(getattr(orchestrator.end_time, "value", orchestrator.end_time))
+        orchestrator._population_events = (
+            {**_COMPLETE_EVENT, "coa_time": end_time - 1.0, "theta_jn": _COMPLETE_EVENT["inclination"]},
+        )
+
+        orchestrator._require_batched_population_columns()

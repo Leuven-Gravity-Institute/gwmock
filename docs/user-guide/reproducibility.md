@@ -8,12 +8,12 @@ in a private file beside it; see
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.8.0`.
+Each record is validated at write time and uses schema version `1.9.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.8.0",
+    "schema_version": "1.9.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -150,12 +150,17 @@ contiguous run. See
 
 `host` describes a kind of machine rather than a machine: the operating system,
 the architecture, the Python version, the git SHA of the gwmock that ran and the
-processor model (`null` when the platform does not report one). Its `platform`
-is reduced to `<os>-<architecture>`; the full string, which names the exact
-kernel build, is in the private details file, with the host name. A record
-written with the split turned off (`globals.metadata.split: false`) carries the
-full `platform` and no `os`, `architecture` or `cpu_model`, exactly as before
-schema 1.8.0.
+processor model (`null` when the platform does not report one), all read on the
+machine that wrote the record. The processor model is there for bit-for-bit
+reproduction: two processor models of one architecture can differ in the last
+bit of some samples. Its `platform` is reduced to `<os>-<architecture>`; the
+full string, which names the exact kernel build, is in the private details file,
+with the host name. A record written with the split turned off
+(`globals.metadata.split: false`) carries the full `platform`, the processor
+model `cpu_model` and the host name `hostname`, and no `os` or `architecture`.
+Schema 1.9.0 added `cpu_model` and `hostname` to the record a run or a merge
+writes, and a `host` block, for the machine that merged, to a merged record; an
+older record has neither, and only `schema_version` says why.
 
 `private_metadata` names the private details file written beside the record and
 the SHA-256 of its bytes. It is absent from a record written with the split
@@ -231,6 +236,16 @@ Requirements and limits:
     so the packaged table is used regardless of age — at the cost of using
     Earth-orientation data as old as the pinned release. Measured scale: one
     weekly table release moved a strain peak by 1.6e-06 relative.
+
+- **Dates past the tables are extrapolated, and the `gwmock` command does not
+  warn about it.** For a date beyond the leap-second table, or beyond the
+  measured Earth-orientation data — the examples' 2030 epoch is both — Astropy
+  and ERFA extrapolate and warn on every conversion: ERFA's `dubious year` and
+  Astropy's `Tried to get polar motions for times after IERS data is valid`. A
+  run would print them a dozen times or more, and for simulated data at a future
+  date there is no measured value to use instead, so the command line filters
+  exactly these two messages. Every other Astropy or ERFA warning is still
+  shown, and code calling gwmock from Python sees them all.
 
 ## Finding which frame contains a signal
 

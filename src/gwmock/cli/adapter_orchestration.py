@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -15,7 +15,7 @@ from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
-from gwmock.cli.utils.config import OrchestrationConfig
+from gwmock.cli.utils.config import OrchestrationConfig, check_default_noise_arguments
 from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
 from gwmock.cli.utils.template import expand_template_variables
 from gwmock.data.time_series.time_series import TimeSeries
@@ -29,6 +29,7 @@ from gwmock.simulator.base import Simulator
 from gwmock.simulator.seeds import derive_seed
 from gwmock.simulator.state import StateAttribute
 from gwmock.strain_schema import declare_strain_schema
+from gwmock.utils.errors import DeterministicRefusalError, wraps_transient_failure
 
 
 def _default_waveform_backend_name() -> str:
@@ -57,26 +58,66 @@ _RIPPLE_UNAVAILABLE = "__ripple_unavailable__"
 
 logger = logging.getLogger("gwmock")
 
-#: Keys the default noise backend reads from ``orchestration.noise.arguments`` (after hyphens are
-#: normalised to underscores). ``detectors`` and ``seed`` are resolved by the orchestrator itself;
-#: the rest are forwarded to ``NoiseAdapter.build_config`` and ``NoiseAdapter.open_stream``. Any
-#: other key is rejected, because it would otherwise be ignored and the run would look normal while
-#: generating noise from a setting the author never made. A custom ``noise.backend`` receives the
-#: arguments as constructor keywords instead, so it is the constructor that decides what it accepts.
-_DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
-    {
-        "detectors",
-        "seed",
-        "psd_file",
-        "psd_schedule",
-        "psd_files",
-        "csd_files",
-        "low_frequency_cutoff",
-        "high_frequency_cutoff",
-        "spectral_lines",
-        "glitches",
-    }
-)
+
+def _placement_refusal(edge: str, parameters: Mapping[str, Any], cause: Exception) -> DeterministicRefusalError:
+    """Return the error a failed placement query is raised as: the simulator's message, marked final.
+
+    A placement query is arithmetic over the event's parameters and the configuration, so a retry of
+    the batch would ask the same question and get the same refusal.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+        cause: What the simulator raised.
+
+    Returns:
+        The refusal, carrying the simulator's message and a note naming the event.
+    """
+    refusal = DeterministicRefusalError(f"{type(cause).__name__}: {cause}")
+    refusal.add_note(_placement_query_note(edge, parameters))
+    return refusal
+
+
+def _raise_placement_failure(edge: str, parameters: Mapping[str, Any], error: Exception) -> None:
+    """Classify a failed placement query, as generation and the noise stream opening classify theirs.
+
+    Every path notes the event the query was asked about. A refusal is raised as it is, and an error
+    raised from an I/O failure stays retryable; the remaining ``ValueError`` or ``TypeError`` is the
+    simulator refusing the event, and is raised as a :class:`DeterministicRefusalError`. Any other
+    type -- a ``RuntimeError``, an ``ImportError``, an ``OSError`` -- is returned to the caller to
+    re-raise unchanged.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+        error: What the query raised.
+
+    Raises:
+        DeterministicRefusalError: For a ``ValueError`` or ``TypeError`` not raised from an I/O
+            failure.
+    """
+    error.add_note(_placement_query_note(edge, parameters))
+    if isinstance(error, DeterministicRefusalError) or wraps_transient_failure(error):
+        return
+    if isinstance(error, (ValueError, TypeError)):
+        raise _placement_refusal(edge, parameters, error) from error
+
+
+def _placement_query_note(edge: str, parameters: Mapping[str, Any]) -> str:
+    """Return the note added to a failed placement query, naming the event it was asked about.
+
+    Args:
+        edge: ``"starts"`` or ``"ends"``, the side of the waveform the query sizes.
+        parameters: The event's source parameters.
+
+    Returns:
+        One sentence for :meth:`BaseException.add_note`.
+    """
+    return (
+        f"gwmock asked the signal simulator where the waveform of the event with "
+        f"coa_time={parameters.get('coa_time')!r} {edge}, to place it in a segment, and the "
+        "simulator refused. The run stops rather than guess a placement that could crop the signal."
+    )
 
 
 @dataclass(slots=True)
@@ -198,15 +239,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # Recorded into per-batch metadata so a frame's sources are self-describing.
         self._batch_injections: list[dict[str, Any]] = []
         self._pending_noise_chunk: dict[str, Any] | None = None
-        # Warned at most once per distinct reason, not once per event: a catalogue whose parameters
-        # the query cannot read fails for every row alike, and the message would otherwise arrive
-        # thousands of times. Keyed by the failure text rather than a flag, because a single
-        # malformed row fails only its own query and its cause differs from a whole-catalogue one --
-        # collapsing both into one warning would name the wrong cause for everything after it.
         #: Library the run was switched to when the config named none -- ripple for a batched
         #: config, because that is what `execution: batched` generates with. `None` when nothing
         #: was substituted. Provenance reads this so it names the library that actually ran.
         self._substituted_waveform_backend = substituted_waveform_backend
+        # Why a placement query could not be asked -- an adapter without it, or ripple missing for a
+        # batched run -- warned at most once per distinct reason rather than once per event. A query
+        # that is asked and raises is not recorded here: it fails the run.
         self._pre_coalescence_query_failures: set[str] = set()
         self._post_coalescence_query_failures: set[str] = set()
         #: How far the last batched walk traversed, set by `_events_for_this_segment` and consumed
@@ -216,6 +255,10 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # `_placement_order`, because it costs one query per event and the continuous-wave and
         # stochastic paths never consume the catalogue this way.
         self._placement_order_cache: tuple[int, ...] | None = None
+        #: Whether the run has been checked for a span that no event reaches. Once per orchestrator.
+        self._empty_span_checked = False
+        #: Whether the batched path has checked the catalogue's columns. Once per orchestrator.
+        self._batched_population_columns_checked = False
 
         #: Events the catalogue holds that lie wholly inside a segment gap, recorded as the walk
         #: steps over them. Per batch, like `_batch_injections`: the record belongs to the batch
@@ -339,16 +382,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             else {}
         )
         if has_noise and orchestration_config.noise.backend is None:  # type: ignore[union-attr]
-            unrecognised = sorted(
-                key
-                for key in orchestration_config.noise.arguments  # type: ignore[union-attr]
-                if key.replace("-", "_") not in _DEFAULT_NOISE_ARGUMENT_KEYS
-            )
-            if unrecognised:
-                raise ValueError(
-                    f"Unrecognised noise.arguments key(s) for the default noise backend: {', '.join(unrecognised)}. "
-                    f"Recognised keys: {', '.join(sorted(_DEFAULT_NOISE_ARGUMENT_KEYS))}."
-                )
+            # Checked again here because a config object can be changed after it was loaded.
+            check_default_noise_arguments(orchestration_config.noise.arguments)  # type: ignore[union-attr]
         if global_args.get("seed") is not None:
             noise_arguments.setdefault("seed", int(global_args["seed"]))
 
@@ -726,7 +761,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # the reason: the batched entry point generates coalescences from a catalogue of events,
         # and a continuous wave is not one. The specific message is the useful one.
         if self._source_type == "cw" and self._execution_mode() == "batched":
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "execution: batched is not available for continuous waves. The batched entry point "
                 "generates compact-binary events from a catalogue of coalescences; a continuous "
                 "wave has no coalescence and is present in every segment. Use execution: per-event, "
@@ -747,6 +782,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # `population_index` never advances, because every pulsar contributes to every segment.
         if self._source_type == "cw":
             return self._simulate_continuous_wave_segment()
+
+        self._warn_if_no_event_reaches_the_run()
 
         if self._execution_mode() == "batched":
             return self._simulate_batched_segment()
@@ -792,6 +829,76 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             if strain.start_time >= self.end_time:
                 break
         return chunks
+
+    def _warn_if_no_event_reaches_the_run(self) -> None:
+        """Warn, once per orchestrator, when no event of the population reaches the requested span.
+
+        A run whose span misses every event writes signal files holding only zeros and otherwise
+        looks like a success -- the usual cause is shortening ``duration`` without moving
+        ``start-time`` to bracket an event. The warning names the span and the nearest event, so
+        the fix is obvious. It is a warning rather than an error, because a span with no events is
+        also what a long population sliced into per-day jobs legitimately produces for a quiet day.
+
+        An event reaches the span when its waveform does: its coalescence time lies in it, or its
+        inspiral (``coa_time - lead``) or tail (``coa_time + tail``) crosses into it. Only the
+        nearest event on each side is queried, so the check costs two queries however long the
+        catalogue is. An unknown lead or tail counts as zero here, which is how placement treats an
+        unknown lead too.
+        """
+        if self._empty_span_checked:
+            return
+        self._empty_span_checked = True
+        coa_times = sorted(
+            float(event["coa_time"]) for event in self._population_events if event.get("coa_time") is not None
+        )
+        if not coa_times or len(coa_times) != len(self._population_events):
+            # No catalogue, or sources without a coalescence time, which belong to every segment.
+            return
+        layout = self.segment_layout
+        run_start, run_end = layout.start_time, layout.end_time
+        before = [coa for coa in coa_times if coa < run_start]
+        after = [coa for coa in coa_times if coa >= run_end]
+        if len(before) + len(after) < len(coa_times):
+            return
+        events_by_coa = {float(event["coa_time"]): event for event in self._population_events}
+        if after:
+            lead = self._pre_coalescence_duration(events_by_coa[after[0]]) or 0.0
+            if after[0] - float(lead) < run_end:
+                return
+        if before:
+            tail = self._post_coalescence_duration(events_by_coa[before[-1]]) or 0.0
+            if before[-1] + float(tail) > run_start:
+                return
+        nearest = min(
+            [*before[-1:], *after[:1]],
+            key=lambda coa: run_start - coa if coa < run_start else coa - run_end,
+        )
+        logger.warning(
+            "No event of the population (%d event(s)) reaches the requested span [%s, %s): the "
+            "nearest coalescence time is %s. The signal output of this run will hold only zeros. To "
+            "shorten a run, move start-time so that the span brackets an event.",
+            len(coa_times),
+            run_start,
+            run_end,
+            nearest,
+        )
+
+    def _placement_waveform_arguments(self) -> dict[str, Any]:
+        """Return the fixed waveform arguments the placement queries should be given.
+
+        The batched path hands the keys in ``BATCHED_BACKEND_ARGUMENTS`` (``f_ref``) to the backend
+        constructor rather than to each waveform call, so they are left out of the mapping the
+        per-event queries see; passing them would make the backend refuse a setting the batched
+        path does apply.
+
+        Returns:
+            ``waveform_arguments``, less the backend-constructor keys in batched execution.
+        """
+        if self._execution_mode() != "batched":
+            return self.waveform_arguments
+        from gwmock.signal.device_chunks import BATCHED_BACKEND_ARGUMENTS  # noqa: PLC0415
+
+        return {key: value for key, value in self.waveform_arguments.items() if key not in BATCHED_BACKEND_ARGUMENTS}
 
     def _execution_mode(self) -> str:
         """Return how this segment's events should be generated."""
@@ -927,6 +1034,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         can set it explicitly.
         """
         self._signal_adapter = adapter
+        signal_config = getattr(getattr(self, "orchestration_config", None), "signal", None)
+        if signal_config is not None and hasattr(adapter, "ignore_population_columns"):
+            adapter.ignore_population_columns(getattr(signal_config, "ignored_population_columns", ()) or ())
+        if signal_config is not None and hasattr(adapter, "configure_reference_frequency"):
+            adapter.configure_reference_frequency(self._configured_reference_frequency())
         if getattr(self, "_substituted_waveform_backend", None) is not None:
             self._substituted_waveform_backend = None
 
@@ -994,17 +1106,15 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         return float(coa_time) + float(tail) < start_time_value
 
     def _post_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
-        """Return the event's waveform tail in seconds, or ``None`` when it cannot be established.
+        """Return the event's waveform tail in seconds, or ``None`` when the simulator cannot say.
 
-        The complement of :meth:`_pre_coalescence_duration`, with the same swallow-and-report
-        handling and for the same reason: this query decides *placement*, and letting it fail a run
-        would turn an incomplete catalogue column into a crash in an unrelated part of the loop.
-
-        The fallback differs from the pre side's in what it costs. There, an unknown lead falls
-        back to the ``coa_time`` rule and the loss is reported per signal. Here, an unknown tail
-        means the event is claimed and generated -- work that may be discarded, which is exactly
-        today's behaviour and the thing being improved. Failing safe here is failing *slow*, not
-        failing wrong.
+        The complement of :meth:`_pre_coalescence_duration`, with the same split between *cannot
+        say* and *refuses*. ``None`` -- a simulator without the query, or a waveform library that
+        cannot size its buffer up front -- claims the event, which costs work that may be discarded
+        but never drops signal. A query that raises fails the run with the simulator's own message:
+        an event the simulator refuses to describe is one it will refuse, or place wrongly, when asked
+        to generate it, and continuing on a guessed placement can crop signal while the run reports
+        success. How the error is classified for the batch retry is :func:`_raise_placement_failure`'s.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1026,39 +1136,34 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     reason,
                 )
             return None
-        # Called directly, exactly as the pre side calls its own query, and deliberately *not*
-        # behind a `getattr` guard. A guard here returns `None` for an adapter without the method
-        # and says nothing, which is precisely how this change shipped as a silent no-op: the
-        # orchestrator's own `SignalAdapter` had no `post_coalescence_duration`, every tail came
-        # back unknown, and the whole lower bound was dead in production while the stub-driven
-        # tests passed. Letting the `AttributeError` fall into the handler below produces the same
-        # conservative `None` *and* warns once, which is the codebase's stated rule: the fallback
-        # is the previous behaviour, and its cost is reported rather than silent.
+        query = self._placement_query(
+            "post_coalescence_duration", "after coalescence a waveform ends", self._post_coalescence_query_failures
+        )
+        if query is None:
+            return None
         try:
-            return self.signal_adapter.post_coalescence_duration(
+            return query(
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
-                waveform_arguments=self.waveform_arguments,
+                waveform_arguments=self._placement_waveform_arguments(),
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            # Deliberately broad, deduplicated by reason rather than by a flag -- see
-            # `_pre_coalescence_duration` for why a flag mislabels a second, different failure.
-            reason = f"{type(exc).__name__}: {exc}"
-            if reason not in self._post_coalescence_query_failures:
-                self._post_coalescence_query_failures.add(reason)
-                logger.warning(
-                    "Cannot establish how long after coalescence a waveform ends (%s). Affected "
-                    "events are claimed by every segment their coalescence precedes, so a run "
-                    "starting later than its population's first event may batch events whose "
-                    "signal it then crops.",
-                    reason,
-                )
-            return None
+            _raise_placement_failure("ends", parameters, exc)
+            raise
 
     def _pre_coalescence_duration(self, parameters: Mapping[str, Any]) -> float | None:
-        """Return the event's waveform lead in seconds, or ``None`` when it cannot be established.
+        """Return the event's waveform lead in seconds, or ``None`` when the simulator cannot say.
+
+        ``None`` -- a simulator that does not implement the query, or a waveform library that
+        cannot size its buffer up front -- falls back to placing the event by ``coa_time``, and any
+        start cropped by that is reported per signal. A query that *raises* is different: the
+        simulator has refused this event, for instance because its ``coa_time`` lies outside the
+        span the simulator can place it in. That error fails the run with the simulator's own
+        message. Falling back instead would crop the start of the waveform -- or place it wrongly --
+        and the run would still exit successfully. How the error is classified for the batch retry
+        is :func:`_raise_placement_failure`'s.
 
         Args:
             parameters: The candidate event's source parameters.
@@ -1068,38 +1173,53 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """
         if self.signal_adapter is None:
             return None
+        query = self._placement_query(
+            "pre_coalescence_duration", "before coalescence a waveform starts", self._pre_coalescence_query_failures
+        )
+        if query is None:
+            return None
         try:
-            return self.signal_adapter.pre_coalescence_duration(
+            return query(
                 parameters,
                 sampling_frequency=float(self.sampling_frequency.value),
                 minimum_frequency=self.minimum_frequency,
-                waveform_arguments=self.waveform_arguments,
+                waveform_arguments=self._placement_waveform_arguments(),
                 waveform_options=self.waveform_options,
             )
         except Exception as exc:
-            # Deliberately broad, and it does not hide the failure it swallows. This query decides
-            # *placement*; the same parameters are handed to generation immediately afterwards, which
-            # raises whatever this raised -- with the context of the event it was generating rather
-            # than of a boundary test. Letting placement be the thing that fails a run would turn an
-            # incomplete catalogue column into a crash in an unrelated part of the loop.
-            #
-            # The fallback is the previous behaviour, and its cost is reported rather than silent:
-            # any inspiral cropped by it is named by `_report_content_before_segment`.
-            #
-            # Deduplicated by reason rather than by a single flag. A whole catalogue the query cannot
-            # read fails identically for every row, and one message is right for it; but a single
-            # malformed row fails only its own query, and a flag would let every later row with a
-            # *different* problem fall back silently under a warning naming the first one.
-            reason = f"{type(exc).__name__}: {exc}"
-            if reason not in self._pre_coalescence_query_failures:
-                self._pre_coalescence_query_failures.add(reason)
-                logger.warning(
-                    "Cannot establish how long before coalescence a waveform starts (%s). Affected "
-                    "events are claimed by coa_time alone, which crops the start of any waveform "
-                    "beginning before its segment; the amount lost is reported per signal.",
-                    reason,
-                )
-            return None
+            _raise_placement_failure("starts", parameters, exc)
+            raise
+
+    def _placement_query(self, name: str, question: str, reported: set[str]) -> Callable[..., float | None] | None:
+        """Return the signal adapter's placement query *name*, or ``None`` when it has none.
+
+        An adapter without the query cannot say where a waveform starts or ends, which is the same
+        *unknown* a simulator without the query reports through the adapter. Unlike a query that
+        raises, that falls back -- but it says so once, because an unguarded ``getattr`` returning
+        ``None`` in silence is how the lower bound once shipped as a no-op.
+
+        Args:
+            name: ``"pre_coalescence_duration"`` or ``"post_coalescence_duration"``.
+            question: What the query answers, for the warning.
+            reported: The reasons already warned about for this query, updated in place.
+
+        Returns:
+            The bound query, or ``None`` when the adapter does not implement it.
+        """
+        query = getattr(self.signal_adapter, name, None)
+        if query is not None:
+            return query
+        reason = f"{type(self.signal_adapter).__name__} has no {name}"
+        if reason not in reported:
+            reported.add(reason)
+            logger.warning(
+                "Cannot establish how long %s (%s). Events are placed by coa_time and claimed by "
+                "every segment their coalescence precedes; any start this crops is reported per "
+                "signal.",
+                question,
+                reason,
+            )
+        return None
 
     def _gap_excluding_event(self, parameters: Mapping[str, Any]) -> tuple[float, float] | None:
         """Return the segment gap that swallows this event whole, if one does.
@@ -1327,7 +1447,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         requested = getattr(signal_config, "waveform_backend", None)
         if requested is not None and resolve_backend_class("waveform", requested).__name__ != "RippleBackend":
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"execution: batched always generates with ripple, but waveform-backend is "
                 f"{requested!r}. Substituting ripple would produce a different waveform than the "
                 f"configuration asks for. Use execution: per-event, or waveform-backend: ripple."
@@ -1337,16 +1457,16 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         arguments = _normalize_keys(dict(getattr(signal_config, "waveform_backend_arguments", {}) or {}))
 
-        # `f_ref` is written under `waveform-arguments` because that is where the per-event path
-        # takes it, but gwmock-signal treats it as a backend option -- its own reserved-argument
-        # table says "f_ref is configured on the backend, not through waveform_arguments". Left in
-        # the parameter mapping it would reach `simulate_cbc_batch` and do nothing, so the same
-        # config key would set the reference frequency in one execution mode and be inert in the
-        # other. Routed here instead, so the two modes agree.
+        # `f_ref` may be written under `waveform-arguments`, but gwmock-signal treats it as a
+        # backend option -- its own reserved-argument table says "f_ref is configured on the
+        # backend, not through waveform_arguments". Left in the parameter mapping it would reach
+        # `simulate_cbc_batch` and do nothing. Routed to the constructor instead; the per-event
+        # path refuses the same key there and points at `waveform-backend-arguments`, so neither
+        # mode leaves it inert.
         for name in sorted(BATCHED_BACKEND_ARGUMENTS & set(self.waveform_arguments)):
             from_arguments = self.waveform_arguments[name]
             if name in arguments and arguments[name] != from_arguments:
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"{name} is set to {from_arguments!r} in waveform-arguments and "
                     f"{arguments[name]!r} in waveform-backend-arguments. One value has to win and "
                     f"picking silently would make the waveform depend on which of two keys a reader "
@@ -1357,6 +1477,63 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         if not arguments:
             return None
         return instantiate_backend("waveform", "ripple", init_kwargs=arguments)
+
+    def _configured_reference_frequency(self) -> float | None:
+        """Return ``f_ref`` as configured for the waveform backend, or ``None`` when unset.
+
+        Read from ``waveform-backend-arguments``; in batched execution an ``f_ref`` under
+        ``waveform-arguments`` reaches the backend constructor too (see
+        :meth:`_batched_waveform_backend`). With none, the backends reference the spins to the
+        low-frequency cutoff.
+        """
+        signal_config = getattr(getattr(self, "orchestration_config", None), "signal", None)
+        if signal_config is None:
+            return None
+        arguments = _normalize_keys(dict(getattr(signal_config, "waveform_backend_arguments", {}) or {}))
+        if "f_ref" in arguments and arguments["f_ref"] is not None:
+            return float(arguments["f_ref"])
+        if str(getattr(signal_config, "execution", "per-event")) == "batched":
+            fixed = getattr(signal_config, "waveform_arguments", {}) or {}
+            if fixed.get("f_ref") is not None:
+                return float(fixed["f_ref"])
+        return None
+
+    def _require_batched_population_columns(self) -> None:
+        """Refuse, once and before anything is generated, a population column the batched path ignores.
+
+        The batched entry point reads a fixed set of parameters and ignores every other column
+        without complaint, so a misspelt spin column would vanish there as it once did on the
+        per-event path. The same rule applies as there -- see
+        :mod:`gwmock.signal.population_columns` -- and checks the whole catalogue at once, which is
+        possible here because the columns are known before the first segment.
+        """
+        if self._batched_population_columns_checked or not self._population_events:
+            return
+        from gwmock.signal.device_chunks import (  # noqa: PLC0415
+            BATCHED_BACKEND_ARGUMENTS,
+            BATCHED_PARAMETERS,
+            canonicalise_parameters,
+        )
+        from gwmock.signal.population_columns import require_population_columns_read  # noqa: PLC0415
+
+        # Checked as the device sees each event: the population merged with the fixed waveform
+        # arguments, so the waveform's own copy of a value given there counts.
+        fixed = {key: value for key, value in self.waveform_arguments.items() if key not in BATCHED_BACKEND_ARGUMENTS}
+        events = [{**fixed, **dict(event)} for event in self._population_events]
+        columns = set().union(*(canonicalise_parameters(dict(event)) for event in self._population_events))
+        signal_config = self.orchestration_config.signal
+        require_population_columns_read(
+            columns - BATCHED_PARAMETERS,
+            ignored=getattr(signal_config, "ignored_population_columns", ()) or (),
+            reader="the batched path (execution: batched)",
+            events=events,
+            reference_frequency=(
+                self._configured_reference_frequency()
+                if self._configured_reference_frequency() is not None
+                else float(self.minimum_frequency)
+            ),
+        )
+        self._batched_population_columns_checked = True
 
     def _simulate_batched_segment(self) -> TimeSeriesList:
         """Generate this segment's events together, through gwmock-signal's batched path.
@@ -1383,6 +1560,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         # parameters the batched entry point reads.
         waveform_backend = self._batched_waveform_backend()
         require_batched_parameters_supported(canonicalise_parameters(dict(self.waveform_arguments)))
+        self._require_batched_population_columns()
 
         event_ids, events = self._events_for_this_segment()
         self._batch_injections = []
@@ -1554,7 +1732,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
     ) -> None:
         """Persist orchestration signal output through ``DetectorStrainStack.write``."""
         if not isinstance(data, TimeSeries):
-            raise TypeError(f"AdapterOrchestrator can only save TimeSeries signal data, got {type(data)}.")
+            raise DeterministicRefusalError(
+                f"AdapterOrchestrator can only save TimeSeries signal data, got {type(data)}."
+            )
 
         if isinstance(file_name, list):
             file_name = np.asarray(file_name, dtype=object)
@@ -1562,7 +1742,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         channel_names = self._resolve_signal_channels(data=data, channel_spec=kwargs.pop("channel", None))
         if kwargs:
             unsupported = ", ".join(sorted(kwargs))
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"Signal orchestration output arguments only support channel. Unsupported keys: {unsupported}."
             )
 
@@ -1577,7 +1757,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return
 
         if len(file_name.shape) != 1 or file_name.shape[0] != data.num_of_channels:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Resolved signal output paths must be a single path or a one-dimensional array "
                 "matching the number of detector channels."
             )
@@ -1611,7 +1791,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         output_paths = self._expand_noise_output_paths(file_name)
         output_arguments = dict(self._active_noise_output_arguments)
         if "channel_prefix" in output_arguments:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise output argument 'channel_prefix' is no longer supported. "
                 "Rename it to 'channel' (e.g. channel: MOCK_NOISE)."
             )
@@ -1619,7 +1799,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         gps_start = float(output_arguments.pop("gps_start", float(self.start_time.value)))
         if output_arguments:
             unsupported = ", ".join(sorted(output_arguments))
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise orchestration output arguments only support channel and gps_start. "
                 f"Unsupported keys: {unsupported}."
             )
@@ -1627,7 +1807,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         noise_detectors = list(self.noise_arguments["detectors"])
         if isinstance(channel_raw, list):
             if len(channel_raw) != len(noise_detectors):
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"Noise channel list expanded to {len(channel_raw)} entries "
                     f"but there are {len(noise_detectors)} noise detectors."
                 )
@@ -1636,6 +1816,13 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             )
             first = str(channel_raw[0])
             channel_str = first.split(":", 1)[1] if ":" in first else first
+        elif len(noise_detectors) == 1 and str(channel_raw).startswith(f"{noise_detectors[0]}:"):
+            # `{{ detectors }}:STRAIN` over a one-element detector list expands to a string rather
+            # than a one-element list, and the string already carries the detector prefix. Adding
+            # it again would name the channel `ET1:ET1:STRAIN`, unlike the signal file of the
+            # same run.
+            channels_dict = {noise_detectors[0]: str(channel_raw)}
+            channel_str = str(channel_raw).split(":", 1)[1]
         else:
             channel_str = str(channel_raw)
             channels_dict = None
@@ -1730,7 +1917,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         if suffix == "h5":
             suffix = "hdf5"
         if suffix not in {"gwf", "hdf5", "npy", "txt"}:
-            raise ValueError("Signal output files must end with .gwf, .hdf5, .h5, .npy, or .txt.")
+            raise DeterministicRefusalError("Signal output files must end with .gwf, .hdf5, .h5, .npy, or .txt.")
         return cast(Literal["gwf", "hdf5", "npy", "txt"], suffix)
 
     def _infer_noise_output_format(self, file_name_template: str | list[str]) -> Literal["npy", "gwf", "hdf5"]:
@@ -1752,12 +1939,14 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """
         names = list(file_name_template) if isinstance(file_name_template, list) else [file_name_template]
         if not names:
-            raise ValueError("Noise file_name list must contain at least one entry.")
+            raise DeterministicRefusalError("Noise file_name list must contain at least one entry.")
         suffixes = {"hdf5" if (s := Path(name).suffix.lower().lstrip(".")) == "h5" else s for name in names}
         if not suffixes <= {"npy", "gwf", "hdf5"}:
-            raise ValueError("Noise output templates must end with .npy, .gwf, .hdf5, or .h5.")
+            raise DeterministicRefusalError("Noise output templates must end with .npy, .gwf, .hdf5, or .h5.")
         if len(suffixes) != 1:
-            raise ValueError("All noise file_name entries must use the same format (.npy, .gwf, or .hdf5/.h5).")
+            raise DeterministicRefusalError(
+                "All noise file_name entries must use the same format (.npy, .gwf, or .hdf5/.h5)."
+            )
         return cast(Literal["npy", "gwf", "hdf5"], suffixes.pop())
 
     def _expand_noise_output_paths(self, file_name_template: str | list[str]) -> list[Path]:
@@ -1765,7 +1954,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         noise_detectors = list(self.noise_arguments["detectors"])
         if isinstance(file_name_template, list):
             if len(file_name_template) != len(noise_detectors):
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"Noise file_name list has {len(file_name_template)} entries "
                     f"but there are {len(noise_detectors)} noise detectors."
                 )
@@ -1775,7 +1964,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             expanded = expand_template_variables(file_name_template, proxy)
             if isinstance(expanded, list):
                 if len(expanded) != len(noise_detectors):
-                    raise ValueError(
+                    raise DeterministicRefusalError(
                         f"Noise file_name template expanded to {len(expanded)} paths "
                         f"but there are {len(noise_detectors)} noise detectors."
                     )
@@ -1783,7 +1972,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             else:
                 paths = [self._active_noise_output_directory / str(expanded)] * len(noise_detectors)
         if len(set(paths)) < len(paths):
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Noise file_name template produces identical paths for multiple detectors. "
                 "Include {{ detectors }} in the template to generate per-detector paths."
             )
@@ -1824,7 +2013,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         try:
             self._pending_noise_chunk = next(self._noise_stream)
         except StopIteration as error:
-            raise ValueError("Noise stream ended before all orchestration batches were generated.") from error
+            raise DeterministicRefusalError(
+                "Noise stream ended before all orchestration batches were generated."
+            ) from error
         self._noise_stream_position += 1
         self._batch_glitches = [] if self.noise_adapter is None else self.noise_adapter.segment_glitch_events()
         return self._pending_noise_chunk
@@ -1836,13 +2027,38 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return
 
         if int(self.counter) > 0 and self._root_seed() is None:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "Cannot resume an unseeded noise stream from a non-zero batch index; "
                 "the upstream stream is non-deterministic without a seed."
             )
         self._pending_noise_chunk = None
 
-        self._noise_stream = self.noise_adapter.open_stream(
+        try:
+            self._noise_stream = self._open_noise_stream()
+        except DeterministicRefusalError:
+            raise
+        except (ValueError, TypeError) as exc:
+            # Opening the stream validates the noise configuration -- the PSDs, the CSD pairs, the
+            # spectral lines and glitch models -- and resolves it into a generator. A ValueError or
+            # TypeError there is the configuration's, and a retry of the batch would meet it again
+            # -- unless it was raised from an I/O failure, such as a glitch population download a
+            # library reported as a ValueError, which stays retryable.
+            if wraps_transient_failure(exc):
+                raise
+            raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
+        self._noise_stream_position = 0
+        for _ in range(target_position):
+            try:
+                next(self._noise_stream)
+            except StopIteration as error:
+                raise DeterministicRefusalError(
+                    "Noise stream ended before the saved orchestration state could be restored."
+                ) from error
+            self._noise_stream_position += 1
+
+    def _open_noise_stream(self) -> Any:
+        """Open the noise adapter's stream for this run's noise arguments."""
+        return self.noise_adapter.open_stream(
             chunk_duration=float(self.duration.value),
             # The stream advances through the gaps as well, drawing their samples and discarding
             # them, so the PSD schedule's time axis stays locked to GPS and the noise after a gap
@@ -1861,15 +2077,6 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             spectral_lines=self.noise_arguments.get("spectral_lines"),
             glitches=self.noise_arguments.get("glitches"),
         )
-        self._noise_stream_position = 0
-        for _ in range(target_position):
-            try:
-                next(self._noise_stream)
-            except StopIteration as error:
-                raise ValueError(
-                    "Noise stream ended before the saved orchestration state could be restored."
-                ) from error
-            self._noise_stream_position += 1
 
     @classmethod
     def _resolve_detector_network(cls, detector_specs: Sequence[str]) -> tuple[Network, dict[str, Any]]:
@@ -1901,7 +2108,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         channel_names = [str(channel) for channel in list(channel_value)]
         if len(channel_names) != data.num_of_channels:
-            raise ValueError("Length of channel list must match number of channels in data.")
+            raise DeterministicRefusalError("Length of channel list must match number of channels in data.")
         return channel_names
 
     def _build_signal_stack(
@@ -1915,7 +2122,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         active_detector_names = self.detectors if detector_names is None else detector_names
         active_indices = list(range(data.num_of_channels)) if indices is None else indices
         if len(active_detector_names) != len(active_indices) or len(channel_names) != len(active_indices):
-            raise ValueError("Signal detector, channel, and data selections must have matching lengths.")
+            raise DeterministicRefusalError("Signal detector, channel, and data selections must have matching lengths.")
 
         mapping = {}
         effective_names = []

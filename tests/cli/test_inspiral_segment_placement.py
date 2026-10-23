@@ -29,6 +29,7 @@ import pytest
 from gwmock_signal.projection.resampling import resample_uniform_sinc
 
 from gwmock.cli.utils.config import Config
+from gwmock.signal.adapter import SignalAdapter
 
 _POPULATION_CSV = Path(__file__).resolve().parents[2] / "examples" / "signal" / "bbh_population.csv"
 _START = 1577491296.0
@@ -226,62 +227,63 @@ class TestWhenTheLeadIsNotAvailable:
         )
 
     @pytest.mark.requires_lalsuite
-    def test_a_query_that_raises_does_not_fail_the_run(self, tmp_path, caplog):
-        """Placement must not be the thing that turns an odd catalogue into a crash.
+    def test_a_query_that_raises_fails_the_run_with_the_simulators_message(self, tmp_path):
+        """A refusal is not *unknown*: placing the event by ``coa_time`` anyway can crop it silently.
 
-        The same parameters go to generation immediately afterwards, which raises whatever this
-        raised -- with the context of the event it was generating rather than of a boundary test.
+        The simulator raising means it will not describe this event -- for a burst whose
+        ``coa_time`` lies outside the span the simulator can place it in, it refuses generation too.
+        Falling back used to crop the part of the waveform before the claiming segment and exit 0.
         """
         orchestrator = _orchestrator(tmp_path)
-        orchestrator.signal_adapter = _StubAdapter(error=ValueError("Missing required parameter: 'distance'"))
+        orchestrator.signal_adapter = _StubAdapter(error=ValueError("coa_time lies outside the placement span"))
         end_time = _end_time(orchestrator)
 
-        with caplog.at_level(logging.WARNING, logger="gwmock"):
-            claimed = orchestrator._event_starts_before_segment_end({"coa_time": end_time - 0.5})
+        with pytest.raises(ValueError, match="coa_time lies outside the placement span") as excinfo:
+            orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time - 0.5})
 
-        assert claimed, "the fallback is the coa_time rule, not a refusal to place the event"
-        assert "Missing required parameter" in caplog.text, (
-            "the swallowed reason must appear, or a run silently reverts to the cropping behaviour"
-        )
+        notes = " ".join(getattr(excinfo.value, "__notes__", []))
+        assert repr(end_time - 0.5) in notes, "the error must name the event it was asked about"
 
     @pytest.mark.requires_lalsuite
-    def test_the_fallback_warns_once_for_a_repeated_reason(self, tmp_path, caplog):
-        """A catalogue the query cannot read fails identically for every row; say so once."""
-        orchestrator = _orchestrator(tmp_path)
-        orchestrator.signal_adapter = _StubAdapter(error=ValueError("nope"))
-        end_time = _end_time(orchestrator)
+    def test_a_refusal_from_the_real_adapter_is_not_swallowed(self, tmp_path):
+        """The same, through the real ``SignalAdapter`` wrapping a simulator that refuses.
 
-        with caplog.at_level(logging.WARNING, logger="gwmock"):
-            for offset in range(5):
-                orchestrator._event_starts_before_segment_end({"coa_time": end_time - offset - 1.0})
-
-        assert caplog.text.count("Cannot establish how long before coalescence") == 1
-
-    @pytest.mark.requires_lalsuite
-    def test_a_second_distinct_reason_is_also_reported(self, tmp_path, caplog):
-        """Deduplicating by a flag rather than by reason would name the wrong cause.
-
-        One malformed row fails only its own query. Under a single flag, every later event failing for
-        a *different* reason falls back silently beneath a warning describing the first one -- so the
-        operator reads one cause and has no way to see the others.
+        The adapter's own retry handles only unsupported-parameter complaints; any other
+        ``ValueError`` from the simulator's query must reach the run unchanged.
         """
+
+        class _RefusingSimulator:
+            waveform_model = "SineGaussian"
+            required_params = frozenset({"coa_time"})
+
+            def pre_coalescence_duration(self, params, **_):
+                raise ValueError(f"coa_time {params['coa_time']} is outside the simulator's span")
+
         orchestrator = _orchestrator(tmp_path)
-        end_time = _end_time(orchestrator)
-        first, second = end_time - 1.0, end_time - 2.0
-        orchestrator.signal_adapter = _StubAdapter(
-            errors_by_coa_time={
-                first: ValueError("Missing required parameter: 'distance'"),
-                second: TypeError("unsupported operand type(s)"),
-            }
+        orchestrator.signal_adapter = SignalAdapter.from_backend(
+            source_type="burst", backend=_RefusingSimulator(), detectors=["E1"]
         )
+        end_time = _end_time(orchestrator)
 
-        with caplog.at_level(logging.WARNING, logger="gwmock"):
-            orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": first})
-            orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": second})
+        with pytest.raises(ValueError, match="outside the simulator's span"):
+            orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time - 0.5})
 
-        assert caplog.text.count("Cannot establish how long before coalescence") == 2
-        assert "Missing required parameter" in caplog.text
-        assert "unsupported operand" in caplog.text
+    @pytest.mark.requires_lalsuite
+    def test_a_simulator_without_the_query_still_falls_back(self, tmp_path):
+        """*Cannot say* keeps the ``coa_time`` fallback: that is a simulator without the query at all."""
+
+        class _SimulatorWithoutTheQuery:
+            waveform_model = "SineGaussian"
+            required_params = frozenset({"coa_time"})
+
+        orchestrator = _orchestrator(tmp_path)
+        orchestrator.signal_adapter = SignalAdapter.from_backend(
+            source_type="burst", backend=_SimulatorWithoutTheQuery(), detectors=["E1"]
+        )
+        end_time = _end_time(orchestrator)
+
+        assert orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time - 0.5})
+        assert not orchestrator._event_starts_before_segment_end({**_COMPLETE_EVENT, "coa_time": end_time + 0.5})
 
     @pytest.mark.requires_lalsuite
     def test_a_run_without_a_signal_adapter_still_walks_the_catalogue(self, tmp_path):
@@ -590,7 +592,9 @@ class TestWhatAConsumerSees:
         frames need no longer be adjacent in GPS; the layout and what the gaps cost the injections
         are recorded, and an older record lacking those keys is not the same fact as a contiguous
         run. 1.8.0: the record that travels with the data is the shareable one, without ``author``
-        or absolute paths, and its private details are written to a separate file.
+        or absolute paths, and its private details are written to a separate file. 1.9.0: ``host``
+        records the processor model and the host name of the machine that wrote the record, the
+        shareable record withholding the host name.
 
         A consumer reading an old record and a new one sees the same shape while ``injections``
         means something different in each. The version is the only signal available, so it has to
@@ -598,7 +602,7 @@ class TestWhatAConsumerSees:
         """
         from gwmock.cli.utils.metadata import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.8.0"
+        assert SCHEMA_VERSION == "1.9.0"
 
     def test_an_older_record_still_loads(self):
         """Bumping the minor must not orphan archived runs: the major is what gates parsing."""

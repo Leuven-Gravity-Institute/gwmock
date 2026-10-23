@@ -50,6 +50,9 @@ DARWIN = {"system": "Darwin", "machine": "arm64", "python": "3.13", "device": "c
 #: The entries measured to move across architectures. Restated here rather than read from the
 #: matrix, so that flagging a new entry has to be a deliberate edit in two places instead of
 #: silently widening the gate for it.
+#:
+#: ``signal/bbh/ligo_hl`` also generates through LAL but is absent on purpose: its IMRPhenomD
+#: reproduces on Darwin/arm64 at 7.5e-15, so it stays under the tight gate.
 LAL_ENTRIES = {"noise/uncorrelated_gaussian/quick_start", "signal/bbh/et_triangle_sardinia"}
 
 #: The largest relative move measured between Linux/x86_64 and Darwin/arm64 on a LAL entry.

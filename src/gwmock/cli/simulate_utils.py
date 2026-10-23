@@ -63,6 +63,7 @@ from gwmock.cli.utils.template import expand_template_variables
 from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, TRUTH_INDEXES, IndexSpec
 from gwmock.cli.utils.utils import handle_signal
 from gwmock.simulator.base import Simulator
+from gwmock.utils.errors import DeterministicRefusalError
 
 logger = logging.getLogger("gwmock")
 
@@ -121,12 +122,21 @@ def _to_plain_number(value: Any) -> float | int | None:
 
 
 def _get_host_metadata() -> dict[str, Any]:
-    """Collect stable host metadata for provenance reporting."""
+    """Collect the host fingerprint a metadata record carries, read on the machine writing it.
+
+    ``cpu_model`` is what a bit-for-bit reproduction needs: two processor models of one architecture
+    can differ in the last bit of some samples. ``hostname`` names the machine, so a split record keeps
+    it in the private details file only (see :func:`~gwmock.cli.utils.metadata.shareable_host`).
+    """
+    from gwmock.cli.utils.environment import cpu_model, hostname  # noqa: PLC0415
+
     git_sha = _get_distribution_git_sha() or _get_source_tree_git_sha()
     return {
         "platform": platform.platform(),
         "python": platform.python_version(),
         "cpu": platform.processor() or platform.machine() or "unknown",
+        "cpu_model": cpu_model(),
+        "hostname": hostname(),
         "git_sha": git_sha,
     }
 
@@ -622,7 +632,8 @@ class IndexDigestNotRecordedError(RuntimeError):
 
 
 #: Failures a backoff cannot help. Raised past the retry loop rather than attempted again.
-_NOT_WORTH_RETRYING = (StaleIndexReadError, IndexDigestNotRecordedError)
+#: ``DeterministicRefusalError`` is every refusal decided by the configuration and inputs alone.
+_NOT_WORTH_RETRYING = (StaleIndexReadError, IndexDigestNotRecordedError, DeterministicRefusalError)
 
 
 def _is_not_worth_retrying(error: BaseException) -> bool:
@@ -683,9 +694,12 @@ def retry_with_backoff(
         except Exception as e:  # pylint: disable=broad-exception-caught
             if _is_not_worth_retrying(e):
                 # Waiting changes nothing for these: a stale index read is a cache state, not a
-                # transient fault, and an unrecorded digest needs an operator. Retrying also
-                # re-simulates the whole batch each time -- they are raised after the frames and
-                # metadata are already written -- so the attempts cost full simulations and fail
+                # transient fault, an unrecorded digest needs an operator, and a deterministic
+                # refusal -- a column or setting the waveform does not read, a placement the
+                # simulator refuses -- recurs on the same configuration and inputs. For the index
+                # failures, retrying also re-simulates the whole batch each time -- they are raised
+                # after the frames and metadata are already written -- so the attempts cost full
+                # simulations and fail
                 # anyway, with the second onwards tripping over the first's own outputs. Fail
                 # now; a resumed run re-runs the batch because its checkpoint was never saved.
                 raise
@@ -2291,6 +2305,10 @@ def restore_batch_state(
                 batch.batch_index,
                 simulator.counter,
             )
+        except OSError:
+            # Restoring can read state back from disk; an I/O failure is reported as itself, so a
+            # caller can tell it from a state that does not fit the simulator.
+            raise
         except Exception as e:
             logger.error("Failed to restore batch state: %s", e)
             raise ValueError(f"Failed to restore state for batch {batch.batch_index}") from e
@@ -2320,6 +2338,10 @@ def restore_batch_state(
                 batch.batch_index,
                 simulator.counter,
             )
+        except OSError:
+            # Restoring can read state back from disk; an I/O failure is reported as itself, so a
+            # caller can tell it from a state that does not fit the simulator.
+            raise
         except Exception as e:
             logger.error("Failed to restore batch state: %s", e)
             raise ValueError(f"Failed to restore state for batch {batch.batch_index}") from e
@@ -2494,7 +2516,7 @@ def process_batch(
     output_directory.mkdir(parents=True, exist_ok=True)
     if isinstance(batch_data, AdapterOrchestrationResult):
         if not isinstance(batch.simulator_config, OrchestrationConfig):
-            raise TypeError("Adapter orchestration results require an OrchestrationConfig batch.")
+            raise DeterministicRefusalError("Adapter orchestration results require an OrchestrationConfig batch.")
 
         signal_output_files: list[Path] = []
         if batch.simulator_config.signal is not None and batch_data.signal_segment is not None:

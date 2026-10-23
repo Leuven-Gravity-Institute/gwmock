@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,8 @@ import numpy as np
 from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
 
 from gwmock.data.time_series.time_series import TimeSeries
+from gwmock.signal.population_columns import require_population_columns_read, require_redundant_columns_agree
+from gwmock.utils.errors import DeterministicRefusalError, wraps_transient_failure
 
 logger = logging.getLogger("gwmock")
 
@@ -20,7 +22,7 @@ logger = logging.getLogger("gwmock")
 #: when a backend rejects parameters it does not recognise. The backend token varies
 #: (``LAL``, ``ripple``, ``PyCBC``), so match any of them and capture the comma-separated
 #: parameter list that follows.
-_UNSUPPORTED_PARAMS_RE = re.compile(r"^Unsupported .+? waveform parameters:\s*(.*)$")
+_UNSUPPORTED_PARAMS_RE = re.compile(r"^Unsupported (.+?) waveform parameters:\s*(.*)$")
 
 #: Canonical parameter names the on-device batched path requires, with no aliases accepted.
 #:
@@ -167,6 +169,36 @@ def _resolve_detector_spec(detector_spec: str) -> tuple[tuple[DetectorSpec, ...]
     }
 
 
+def _refuse_configured_rejections(
+    rejected: Collection[str],
+    waveform_arguments: Mapping[str, Any] | None,
+    *,
+    cause: BaseException | None = None,
+) -> None:
+    """Raise if the waveform backend rejects a key the configuration set under ``waveform-arguments``.
+
+    Args:
+        rejected: Parameter names the backend refused.
+        waveform_arguments: The configured fixed waveform arguments.
+        cause: The backend's own error, chained so its message stays visible.
+
+    Raises:
+        ValueError: If any rejected name is a configured waveform argument.
+    """
+    configured = sorted(set(rejected) & set(waveform_arguments or {}))
+    if not configured:
+        return
+    message = (
+        f"The waveform backend does not accept {', '.join(configured)}, given under "
+        "signal.waveform-arguments. The setting would not be applied, so the run would generate a "
+        "different waveform than the one configured. Remove it, or -- if it configures the backend "
+        "itself, as f_ref does for LAL -- move it to signal.waveform-backend-arguments."
+    )
+    if cause is not None:
+        raise DeterministicRefusalError(f"{message} Backend error: {cause}") from cause
+    raise DeterministicRefusalError(message)
+
+
 class SignalAdapter:
     """Bridge gwmock population/orchestration state to public gwmock-signal APIs."""
 
@@ -191,6 +223,32 @@ class SignalAdapter:
             detector if isinstance(detector, str) else detector.name for detector in self._network.detector_names
         )
         self._unsupported_params: set[str] = set()
+        #: Population columns the configuration declares are not waveform inputs, left out quietly.
+        self._ignored_population_columns: frozenset[str] = frozenset()
+        #: ``f_ref`` from ``signal.waveform-backend-arguments``; ``None`` means each call's cutoff.
+        self._configured_reference_frequency: float | None = None
+
+    def configure_reference_frequency(self, f_ref: float | None) -> None:
+        """Record the reference frequency the waveform backend was configured with, if any.
+
+        Args:
+            f_ref: ``f_ref`` from ``signal.waveform-backend-arguments``, or ``None`` when unset, in
+                which case the backends reference the spins to each call's ``minimum_frequency``.
+        """
+        self._configured_reference_frequency = None if f_ref is None else float(f_ref)
+
+    def _reference_frequency(self, minimum_frequency: float) -> float:
+        """Return the frequency the waveform backend references the spins to on this call."""
+        configured = self._configured_reference_frequency
+        return float(minimum_frequency) if configured is None else configured
+
+    def ignore_population_columns(self, names: Collection[str]) -> None:
+        """Declare population columns that are not waveform inputs, to be left out without refusal.
+
+        Args:
+            names: Column names, as ``signal.ignored-population-columns`` lists them.
+        """
+        self._ignored_population_columns = frozenset(names)
 
     @classmethod
     def from_source_type(
@@ -388,13 +446,13 @@ class SignalAdapter:
             ValueError: If *events* is empty, or if the events do not all carry the same keys.
         """
         if not events:
-            raise ValueError("events must be non-empty to build a batch.")
+            raise DeterministicRefusalError("events must be non-empty to build a batch.")
         expected = set(events[0])
         for index, event in enumerate(events[1:], start=1):
             if set(event) != expected:
                 absent = sorted(expected - set(event))
                 extra = sorted(set(event) - expected)
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"every event must carry the same parameters, but event {index} differs from the "
                     f"first: missing {absent or 'nothing'}, unexpected {extra or 'nothing'}."
                 )
@@ -471,7 +529,7 @@ class SignalAdapter:
         merged = {**(waveform_arguments or {}), **dict(parameters)}
         missing = [name for name in _DEVICE_REQUIRED_PARAMETERS if name not in merged]
         if missing:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"The device path needs these canonical parameters, which are absent: "
                 f"{', '.join(missing)}. Unlike the per-event path it does not accept aliases, so "
                 f"e.g. 'mass1' must be given as 'detector_frame_mass_1'."
@@ -485,7 +543,7 @@ class SignalAdapter:
         # the catalogue -- `f_ref=20.0` via waveform_arguments -- so scalars stay legal in general.
         scalars = [name for name in _DEVICE_REQUIRED_PARAMETERS if np.ndim(merged[name]) == 0]
         if scalars:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"These parameters vary per event and must be given as arrays, but were scalars: "
                 f"{', '.join(scalars)}. To hold one fixed across the catalogue, repeat it per event."
             )
@@ -495,7 +553,7 @@ class SignalAdapter:
         # where the message no longer names the parameter.
         lengths = {name: len(values) for name, values in merged.items() if np.ndim(values) > 0}
         if len(set(lengths.values())) > 1:
-            raise ValueError(f"catalogue parameters disagree in length: {lengths}")
+            raise DeterministicRefusalError(f"catalogue parameters disagree in length: {lengths}")
 
         return simulate_cbc_catalogue(
             self._device_approximant(),
@@ -552,7 +610,7 @@ class SignalAdapter:
                 f"string, which the device path needs to select an approximant."
             )
         if name.startswith(_CALLABLE_WAVEFORM_PREFIX):
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "This adapter was built with a callable waveform model, which the device path "
                 "cannot run: Ripple generates from its own compiled approximants, not from Python "
                 "callbacks. Use a string approximant, or the per-event path."
@@ -564,7 +622,7 @@ class SignalAdapter:
 
         available = RippleBackend().available_approximants()
         if name not in available:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"Ripple does not implement the approximant '{name}', and the device path always "
                 f"generates with Ripple. It is rejected rather than substituted, because silently "
                 f"generating a different waveform than the one configured would corrupt the "
@@ -577,6 +635,7 @@ class SignalAdapter:
         parameters: Mapping[str, Any],
         waveform_arguments: Mapping[str, Any] | None,
         waveform_options: Mapping[str, Any] | None,
+        minimum_frequency: float,
     ) -> dict[str, Any]:
         """Build the mapping a backend call takes, from per-event and fixed settings.
 
@@ -590,6 +649,8 @@ class SignalAdapter:
             parameters: Per-event source parameters.
             waveform_arguments: Fixed waveform parameters merged flat; per-event values win.
             waveform_options: Extra options passed through as the backend's ``waveform_arguments``.
+            minimum_frequency: The call's low-frequency cutoff, which is the reference frequency
+                when none is configured.
 
         Returns:
             The merged mapping, less any parameters this backend has already rejected.
@@ -600,25 +661,53 @@ class SignalAdapter:
         backend_parameters = {**(waveform_arguments or {}), **dict(parameters)}
         if waveform_options:
             if "waveform_arguments" in backend_parameters:
-                raise ValueError(
+                raise DeterministicRefusalError(
                     "Specify extra waveform options either via waveform_options or as a "
                     "waveform_arguments parameter, not both"
                 )
             backend_parameters["waveform_arguments"] = dict(waveform_options)
         if self._unsupported_params:
+            _refuse_configured_rejections(self._unsupported_params, waveform_arguments)
+            # The columns were classified when the backend first rejected them; a conditional
+            # column is still checked per event, because whether it may be left out depends on
+            # the event's own values. Against the merged mapping, as on the first rejection: the
+            # waveform's own copy of a value may come from waveform-arguments.
+            require_redundant_columns_agree(
+                self._unsupported_params,
+                ignored=self._ignored_population_columns,
+                reader="the waveform backend",
+                events=(backend_parameters,),
+                reference_frequency=self._reference_frequency(minimum_frequency),
+            )
             backend_parameters = {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
         return backend_parameters
 
-    def _without_unsupported(self, exc: ValueError, backend_parameters: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _without_unsupported(
+        self,
+        exc: ValueError,
+        backend_parameters: Mapping[str, Any],
+        waveform_arguments: Mapping[str, Any] | None,
+        minimum_frequency: float,
+    ) -> dict[str, Any] | None:
         """Return *backend_parameters* less what *exc* says the backend rejects, or ``None``.
 
         ``None`` means *exc* is not an unsupported-parameter complaint and the caller should
         re-raise it. Records the rejected names on the adapter, so the next call drops them up front
         rather than paying a failed backend call per event.
 
+        Only population columns that are known not to be waveform inputs -- ``redshift``,
+        source-frame masses, labels; see :mod:`gwmock.signal.population_columns` -- or that the
+        configuration declares ignored are dropped, quietly; they are still recorded in the
+        injection parameters. Any other rejected column stops the run: a misspelt spin column would
+        otherwise vanish. A key the user wrote under ``waveform-arguments`` stops it too: it is a
+        setting the run was asked to apply.
+
         Args:
             exc: The ``ValueError`` a backend call raised.
             backend_parameters: The mapping that call was given.
+            waveform_arguments: The configured fixed waveform arguments merged into that mapping.
+            minimum_frequency: The call's low-frequency cutoff, which is the reference frequency
+                when none is configured.
 
         Returns:
             The filtered mapping, or ``None`` when *exc* is some other failure.
@@ -626,25 +715,32 @@ class SignalAdapter:
         Raises:
             ValueError: If the rejected parameter is ``waveform_arguments`` itself, which no amount
                 of filtering fixes -- the installed gwmock-signal cannot carry the requested
-                waveform options at all, and dropping them would run the wrong waveform silently.
+                waveform options at all, and dropping them would run the wrong waveform silently;
+                or if the backend rejects a key given in *waveform_arguments*, or a population column
+                that is neither known to be population-only nor declared ignored.
         """
         match = _UNSUPPORTED_PARAMS_RE.match(str(exc))
         if match is None:
             return None
-        extras = {token.strip() for token in match.group(1).split(",") if token.strip()}
+        extras = {token.strip() for token in match.group(2).split(",") if token.strip()}
         if "waveform_arguments" in extras:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "The installed gwmock-signal does not support the waveform_arguments "
                 "parameter required by waveform_options; upgrade gwmock-signal"
             ) from exc
+        _refuse_configured_rejections(extras, waveform_arguments, cause=exc)
         new = extras - self._unsupported_params
         if new:
-            logger.warning(
-                "Waveform backend does not accept the following population parameters "
-                "and they will be ignored: %s. "
-                "They are still recorded in injection_parameters metadata.",
-                ", ".join(sorted(new)),
-            )
+            try:
+                require_population_columns_read(
+                    new,
+                    ignored=self._ignored_population_columns,
+                    reader=f"the {match.group(1)} waveform backend",
+                    events=(backend_parameters,),
+                    reference_frequency=self._reference_frequency(minimum_frequency),
+                )
+            except ValueError as refusal:
+                raise refusal from exc
             self._unsupported_params |= new
         return {k: v for k, v in backend_parameters.items() if k not in self._unsupported_params}
 
@@ -680,7 +776,9 @@ class SignalAdapter:
         query = getattr(self._backend, "pre_coalescence_duration", None)
         if query is None:
             return None
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
             return query(
                 backend_parameters,
@@ -691,7 +789,7 @@ class SignalAdapter:
             # The same unsupported-parameter dance generation does, for the same reason: a
             # population column the backend does not know must not be the thing that decides
             # whether an inspiral is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
             if filtered is None:
                 raise
             return query(
@@ -736,7 +834,9 @@ class SignalAdapter:
         query = getattr(self._backend, "post_coalescence_duration", None)
         if query is None:
             return None
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
             return query(
                 backend_parameters,
@@ -746,7 +846,7 @@ class SignalAdapter:
         except ValueError as exc:
             # As on the pre side: a population column the backend does not know must not be what
             # decides whether an event is placed. Anything else propagates.
-            filtered = self._without_unsupported(exc, backend_parameters)
+            filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
             if filtered is None:
                 raise
             return query(
@@ -783,28 +883,42 @@ class SignalAdapter:
         Returns:
             A DetectorStrainStack instance.
         """
-        backend_parameters = self._backend_parameters(parameters, waveform_arguments, waveform_options)
+        backend_parameters = self._backend_parameters(
+            parameters, waveform_arguments, waveform_options, minimum_frequency
+        )
         try:
-            return self._backend.simulate(
-                backend_parameters,
-                self._network.detector_names,
-                background=background,
-                sampling_frequency=sampling_frequency,
-                minimum_frequency=minimum_frequency,
-                earth_rotation=earth_rotation,
-            )
-        except ValueError as exc:
-            filtered = self._without_unsupported(exc, backend_parameters)
-            if filtered is None:
+            try:
+                return self._backend.simulate(
+                    backend_parameters,
+                    self._network.detector_names,
+                    background=background,
+                    sampling_frequency=sampling_frequency,
+                    minimum_frequency=minimum_frequency,
+                    earth_rotation=earth_rotation,
+                )
+            except ValueError as exc:
+                filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
+                if filtered is None:
+                    raise
+                return self._backend.simulate(
+                    filtered,
+                    self._network.detector_names,
+                    background=background,
+                    sampling_frequency=sampling_frequency,
+                    minimum_frequency=minimum_frequency,
+                    earth_rotation=earth_rotation,
+                )
+        except DeterministicRefusalError:
+            raise
+        except (ValueError, TypeError) as exc:
+            # Generation is a pure function of the event's parameters and the configuration, so a
+            # ValueError or TypeError from the simulator -- a missing parameter, aliases mixed for
+            # one quantity, a value out of range -- recurs on every retry of the batch. Marked final
+            # here, in one place, rather than by matching each message. One raised from an I/O
+            # failure -- a waveform or ephemeris file a simulator could not fetch -- stays retryable.
+            if wraps_transient_failure(exc):
                 raise
-            return self._backend.simulate(
-                filtered,
-                self._network.detector_names,
-                background=background,
-                sampling_frequency=sampling_frequency,
-                minimum_frequency=minimum_frequency,
-                earth_rotation=earth_rotation,
-            )
+            raise DeterministicRefusalError(f"{type(exc).__name__}: {exc}") from exc
 
     def simulate(
         self,

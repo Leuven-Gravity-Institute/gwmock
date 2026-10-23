@@ -165,7 +165,10 @@ def _simulate_impl(  # pylint: disable=too-many-locals, too-many-branches, too-m
         execute_plan,
         validate_plan,
     )
-    from gwmock.cli.utils.config import load_config  # pylint: disable=import-outside-toplevel
+    from gwmock.cli.utils.config import (  # pylint: disable=import-outside-toplevel
+        load_config,
+        require_population_path_found,
+    )
     from gwmock.cli.utils.simulation_plan import (  # pylint: disable=import-outside-toplevel
         create_plan_from_config,
         create_plan_from_metadata_files,
@@ -239,6 +242,7 @@ def _simulate_impl(  # pylint: disable=too-many-locals, too-many-branches, too-m
             config_path = Path(config_file_names_list[0])
             config = load_config(file_name=config_path)
             logger.debug("Configuration loaded successfully from %s", config_file_names_list[0])
+            require_population_path_found(config, config_path)
 
             plan = create_plan_from_config(config, checkpoint_dir, author=author, email=email, config_file=config_path)
             logger.info("Created simulation plan with %d batches", plan.total_batches)

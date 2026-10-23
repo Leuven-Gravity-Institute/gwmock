@@ -1378,3 +1378,11 @@ class TestTheDeclaredStrainSchema:
         result = adapter.write_chunk(config=config, chunk={"H1": np.arange(32, dtype=float)})
 
         assert result.output_paths["H1"].exists()
+
+
+def test_a_full_channel_name_is_not_prefixed_again():
+    """``ET1:STRAIN`` for ``ET1`` is already a full name; prefixing it again doubles the detector."""
+    from gwmock.noise.adapter import _frame_channel_name
+
+    assert _frame_channel_name("ET1_SARD", "ET1_SARD:STRAIN") == "ET1_SARD:STRAIN"
+    assert _frame_channel_name("ET1_SARD", "STRAIN") == "ET1_SARD:STRAIN"

@@ -68,9 +68,27 @@ class TestTheInputsAreVouchedFor:
             merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"))
 
     @pytest.mark.requires_gwpy
-    def test_a_metadata_file_per_frame_is_required(self, tmp_path: Path, two_frames) -> None:
+    def test_a_metadata_file_per_frame_or_one_for_all_is_required(self, tmp_path: Path, two_frames) -> None:
         first, _ = two_frames
+        record = str(_metadata_for(first, tmp_path / "a.yaml"))
         with pytest.raises(ValueError, match="number of metadata files must match"):
+            merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"), metadata=[record] * 3)
+
+    @pytest.mark.requires_gwpy
+    def test_one_record_may_vouch_for_every_file(self, tmp_path: Path, two_frames) -> None:
+        """A run writes one record for signal and noise together; it should not be given twice."""
+        record = tmp_path / "run.yaml"
+        record.write_text(yaml.safe_dump({"file_hashes": {path.name: compute_file_hash(path) for path in two_frames}}))
+        output = tmp_path / "merged.gwf"
+
+        merge_command(list(two_frames), output=str(output), metadata=[str(record)])
+
+        np.testing.assert_allclose(TimeSeries.read(output, CHANNEL).value, 3 * np.ones(RATE), rtol=0.0, atol=0.0)
+
+    @pytest.mark.requires_gwpy
+    def test_one_record_must_still_hold_every_files_hash(self, tmp_path: Path, two_frames) -> None:
+        first, _ = two_frames
+        with pytest.raises(ValueError, match=r"No hash found in metadata for file b\.gwf"):
             merge_command(
                 list(two_frames),
                 output=str(tmp_path / "merged.gwf"),
@@ -335,6 +353,60 @@ class TestTheMergedMetadata:
         assert not (tmp_path / "merged.private.yaml").exists()
 
     @pytest.mark.requires_gwpy
+    def test_it_records_the_merging_hosts_processor_and_keeps_its_name_private(
+        self, tmp_path: Path, two_frames, monkeypatch
+    ) -> None:
+        """The processor model is needed to reproduce a merge bit for bit; the host name names a machine."""
+        from gwmock.cli.utils.environment import cpu_model
+
+        monkeypatch.setattr("socket.gethostname", lambda: "merge-host-canary")
+        self._merge_with_metadata(tmp_path, two_frames)
+        record_text = (tmp_path / "merged.metadata.yaml").read_text()
+        record = yaml.safe_load(record_text)
+        private = yaml.safe_load((tmp_path / "merged.private.yaml").read_text())
+
+        assert "cpu_model" in record["host"]
+        assert record["host"]["cpu_model"] == cpu_model()
+        assert "merge-host-canary" not in record_text
+        assert private["hostname"] == "merge-host-canary"
+        assert private["values"]["/host"]["hostname"] == "merge-host-canary"
+
+    @pytest.mark.requires_gwpy
+    def test_a_combined_record_carries_the_merging_host_whole(self, tmp_path: Path, two_frames, monkeypatch) -> None:
+        from gwmock.cli.utils.environment import cpu_model
+
+        monkeypatch.setattr("socket.gethostname", lambda: "merge-host-canary")
+        metadata = [str(_metadata_for(path, tmp_path / f"{path.stem}.yaml")) for path in two_frames]
+        merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"), metadata=metadata, split_metadata=False)
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+
+        assert record["host"]["hostname"] == "merge-host-canary"
+        assert record["host"]["cpu_model"] == cpu_model()
+
+    @pytest.mark.requires_gwpy
+    def test_a_source_records_processor_model_stays_in_the_shareable_record(self, tmp_path: Path, two_frames) -> None:
+        """The generating machine's model is what reproducing a source file needs, merge or not."""
+        metadata = []
+        for path in two_frames:
+            record_path = tmp_path / f"{path.stem}.yaml"
+            record_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "file_hashes": {path.name: compute_file_hash(path)},
+                        "host": {"cpu": "x86_64", "cpu_model": "Some CPU 9000", "hostname": "source-host-canary"},
+                    }
+                )
+            )
+            metadata.append(str(record_path))
+        merge_command(list(two_frames), output=str(tmp_path / "merged.gwf"), metadata=metadata)
+        record_text = (tmp_path / "merged.metadata.yaml").read_text()
+        record = yaml.safe_load(record_text)
+
+        for source in record["source_files"].values():
+            assert source["host"]["cpu_model"] == "Some CPU 9000"
+        assert "source-host-canary" not in record_text
+
+    @pytest.mark.requires_gwpy
     def test_the_author_defaults_to_the_user_running_it(self, tmp_path: Path, two_frames) -> None:
         self._merge_with_metadata(tmp_path, two_frames)
         record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
@@ -474,3 +546,132 @@ class TestTheRecordInsideTheMergedFile:
         merge_command(sources, output=str(output), force=True)
 
         assert read_run_metadata(output) is None
+
+
+class TestMergingAWholeSegment:
+    """With no files named, a run's record is enough to merge every detector's signal and noise.
+
+    A run that writes signal and noise together records all of its files, and their channels, in one
+    record. Merging them used to take one call per detector, with that record passed once per file.
+    """
+
+    DETECTORS = ("H1", "L1")
+
+    @staticmethod
+    def _write(path: Path, channel: str, values) -> None:
+        from gwmock_data import TimeSeries as ChannelSeries
+        from gwmock_signal import DetectorStrainStack
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        DetectorStrainStack.from_mapping(
+            [channel], {channel: ChannelSeries(np.asarray(values, dtype=float), t0=START, sample_rate=RATE)}
+        ).write(path, format="hdf5")
+
+    def _run(self, working_directory: Path) -> tuple[Path, dict[str, np.ndarray]]:
+        """Write a run's signal and noise files and its record; return the record and the sums."""
+        rng = np.random.default_rng(1)
+        outputs, hashes, expected = [], {}, {}
+        for detector in self.DETECTORS:
+            channel = f"{detector}:STRAIN"
+            parts = {kind: rng.normal(size=RATE) * 1e-21 for kind in ("signal", "noise")}
+            for kind, values in parts.items():
+                relative = f"output/{kind}/{detector}_STRAIN_{kind.upper()}-{START}-1.hdf5"
+                self._write(working_directory / relative, channel, values)
+                hashes[Path(relative).name] = compute_file_hash(working_directory / relative)
+                outputs.append({"kind": kind, "path": relative, "channels": [channel], "t0": START, "duration": 1})
+            expected[detector] = parts["signal"] + parts["noise"]
+        record = working_directory / "metadata" / "orchestration-0.metadata.json"
+        record.parent.mkdir(parents=True)
+        record.write_text(
+            json.dumps(
+                {
+                    "config": {"globals": {"working-directory": str(working_directory)}},
+                    "outputs": outputs,
+                    "file_hashes": hashes,
+                }
+            )
+        )
+        return record, expected
+
+    @pytest.mark.requires_gwpy
+    def test_every_detector_is_merged_from_the_record_alone(self, tmp_path: Path) -> None:
+        record, expected = self._run(tmp_path / "run")
+        output_dir = tmp_path / "merged"
+
+        merge_command(None, metadata=[str(record)], output_dir=output_dir)
+
+        for detector, total in expected.items():
+            merged = output_dir / f"{detector}_STRAIN-{START}-1.hdf5"
+            assert merged.is_file(), sorted(path.name for path in output_dir.iterdir())
+            data = TimeSeries.read(merged, path=f"{detector}:STRAIN")
+            np.testing.assert_allclose(data.value, total, rtol=0.0, atol=0.0)
+            assert (output_dir / f"{detector}_STRAIN-{START}-1.metadata.yaml").is_file()
+
+    @pytest.mark.requires_gwpy
+    def test_a_tampered_file_is_still_refused(self, tmp_path: Path) -> None:
+        record, _ = self._run(tmp_path / "run")
+        self._write(tmp_path / "run" / f"output/noise/L1_STRAIN_NOISE-{START}-1.hdf5", "L1:STRAIN", np.zeros(RATE))
+
+        with pytest.raises(ValueError, match="Hash mismatch"):
+            merge_command(None, metadata=[str(record)], output_dir=tmp_path / "merged")
+
+    def test_a_single_output_name_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="one file per channel"):
+            merge_command(None, metadata=["record.json"], output="merged.hdf5", output_dir=tmp_path)
+
+    def test_neither_files_nor_a_record_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Give the files to merge"):
+            merge_command(None, output_dir=tmp_path)
+
+    def test_a_record_with_nothing_to_merge_is_refused(self, tmp_path: Path) -> None:
+        record = tmp_path / "noise-only.json"
+        record.write_text(
+            json.dumps(
+                {
+                    "outputs": [
+                        {"kind": "noise", "path": "n.hdf5", "channels": ["H1:STRAIN"], "t0": START, "duration": 1}
+                    ]
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="nothing to merge"):
+            merge_command(None, metadata=[str(record)], output_dir=tmp_path / "merged")
+
+
+class TestAChannelWithNothingToMergeWith:
+    """A detector written to one file only must not silently drop out of a whole-segment merge."""
+
+    @staticmethod
+    def _with_a_signal_only_detector(working_directory: Path) -> Path:
+        record_path, _ = TestMergingAWholeSegment()._run(working_directory)
+        record = json.loads(record_path.read_text())
+        relative = f"output/signal/V1_STRAIN_SIGNAL-{START}-1.hdf5"
+        TestMergingAWholeSegment._write(working_directory / relative, "V1:STRAIN", np.ones(RATE))
+        record["outputs"].append(
+            {"kind": "signal", "path": relative, "channels": ["V1:STRAIN"], "t0": START, "duration": 1}
+        )
+        record["file_hashes"][Path(relative).name] = compute_file_hash(working_directory / relative)
+        record_path.write_text(json.dumps(record))
+        return record_path
+
+    @pytest.mark.requires_gwpy
+    def test_it_is_refused_before_anything_is_written(self, tmp_path: Path) -> None:
+        record = self._with_a_signal_only_detector(tmp_path / "run")
+        output_dir = tmp_path / "merged"
+
+        with pytest.raises(ValueError, match=r"V1:STRAIN \(only in output/signal/V1_STRAIN_SIGNAL"):
+            merge_command(None, metadata=[str(record)], output_dir=output_dir)
+        assert not output_dir.exists() or list(output_dir.iterdir()) == []
+
+    @pytest.mark.requires_gwpy
+    def test_skipping_it_merges_the_rest_and_names_it(self, tmp_path: Path, caplog) -> None:
+        record = self._with_a_signal_only_detector(tmp_path / "run")
+        output_dir = tmp_path / "merged"
+
+        with caplog.at_level("WARNING", logger="gwmock"):
+            merge_command(None, metadata=[str(record)], output_dir=output_dir, skip_unmatched=True)
+
+        assert (output_dir / f"H1_STRAIN-{START}-1.hdf5").is_file()
+        assert (output_dir / f"L1_STRAIN-{START}-1.hdf5").is_file()
+        assert not (output_dir / f"V1_STRAIN-{START}-1.hdf5").exists()
+        assert "V1:STRAIN" in caplog.text

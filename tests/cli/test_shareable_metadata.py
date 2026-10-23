@@ -37,6 +37,7 @@ import pytest
 import yaml
 
 from gwmock.cli.simulate import _simulate_impl
+from gwmock.cli.utils.environment import cpu_model
 from tests.cli.test_cli_orchestration import _write_signal_file
 from tests.cli.test_embedded_run_metadata import _config, _embedded_document
 
@@ -75,7 +76,8 @@ COMBINED_TOP_LEVEL_KEYS = {
     "versions",
 }
 #: ``git_sha`` is left out when it cannot be read (gwmock not installed from a repository).
-COMBINED_HOST_KEYS = {"platform", "python", "cpu", "git_sha"}
+#: ``cpu_model`` and ``hostname`` describe the generating machine (schema 1.9.0).
+COMBINED_HOST_KEYS = {"platform", "python", "cpu", "cpu_model", "hostname", "git_sha"}
 
 
 def _has_combined_host_keys(host: dict[str, Any]) -> bool:
@@ -271,6 +273,7 @@ class TestThePrivateFile:
         assert {key for key, value in combined.items() if value is not None} == COMBINED_TOP_LEVEL_KEYS
         assert _has_combined_host_keys(combined["host"])
         assert combined["host"]["platform"] == platform.platform()
+        assert combined["host"]["hostname"] == CANARY_HOST
         assert combined["author"] == CANARY_USER
         assert combined["config"]["globals"]["working-directory"] == str(tmp_path / "run")
 
@@ -285,6 +288,8 @@ class TestTheOptOut:
         assert set(record) == COMBINED_TOP_LEVEL_KEYS
         assert _has_combined_host_keys(record["host"])
         assert record["host"]["platform"] == platform.platform()
+        assert record["host"]["hostname"] == CANARY_HOST
+        assert record["host"]["cpu_model"] == cpu_model()
         assert record["author"] == CANARY_USER
         assert record["config"]["globals"]["working-directory"] == str(tmp_path / "run")
         assert _private_files(metadata_directory) == []

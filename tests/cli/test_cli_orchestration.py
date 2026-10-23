@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import numpy as np
@@ -341,7 +342,7 @@ def test_simulate_command_runs_adapter_orchestration(monkeypatch, tmp_path: Path
     assert (tmp_path / "output" / "signal" / "signal-1.gwf").exists()
     _assert_noise_outputs_exist(tmp_path / "output" / "noise")
     metadata = yaml.safe_load((tmp_path / "metadata" / "orchestration-0.metadata.json").read_text())
-    assert metadata["schema_version"] == "1.8.0"
+    assert metadata["schema_version"] == "1.9.0"
     assert metadata["config"]["orchestration"]["population"]["backend"] == FAKE_POPULATION_BACKEND
     assert metadata["config"]["orchestration"]["signal"]["backend"] == FAKE_SIGNAL_BACKEND
     assert metadata["config"]["orchestration"]["noise"]["backend"] == FAKE_NOISE_BACKEND
@@ -1020,6 +1021,61 @@ def test_noise_batch_gwf_per_detector_channel_from_list(monkeypatch, tmp_path: P
     assert result.config.output.channels == {"H1": "H1:STRAIN_NOISE", "L1": "L1:STRAIN_NOISE"}
     assert result.output_paths["H1"] == tmp_path / "noise" / "noise-0-H1.gwf"
     assert result.output_paths["L1"] == tmp_path / "noise" / "noise-0-L1.gwf"
+
+
+def test_noise_batch_one_detector_channel_template_is_not_prefixed_twice(monkeypatch, tmp_path: Path):
+    """A one-element detector list expands ``{{ detectors }}:STRAIN`` to a string, not a list.
+
+    The scalar branch prefixes the detector name, which suits a plain channel such as
+    ``MOCK_NOISE`` but doubled the prefix of an already-expanded template, writing
+    ``H1:H1:STRAIN`` where the signal file of the same run reads ``H1:STRAIN``.
+    """
+    config = _fake_orchestration_config(tmp_path, source_type="bbh")
+    config.orchestration.noise.arguments = {"seed": 7, "detectors": ["H1"]}
+    config.orchestration.noise.output = SimulatorOutputConfig(
+        file_name="noise-{{ counter }}-{{ detectors }}.gwf",
+        output_directory="noise",
+        arguments={"channel": "{{ detectors }}:STRAIN"},
+    )
+    written: list[list[str]] = []
+
+    def _record(self, path, **kwargs):
+        written.append(list(self.detector_names))
+        _write_signal_file(self, path, **kwargs)
+
+    monkeypatch.setattr("gwmock.cli.adapter_orchestration.DetectorStrainStack.write", _record)
+
+    orchestrator = AdapterOrchestrator.from_config(config.orchestration, config.globals.simulator_arguments)
+    batch = SimpleNamespace(simulator_config=config.orchestration)
+    orchestrator.set_batch_context(batch=batch, output_directory=tmp_path, overwrite=True)
+
+    result = orchestrator._run_noise_batch()
+
+    assert written == [["H1:STRAIN"]]
+    assert result.config.output.channels == {"H1": "H1:STRAIN"}
+
+
+def test_noise_batch_plain_channel_still_gets_the_detector_prefix(monkeypatch, tmp_path: Path):
+    """A channel without a detector prefix is still prefixed, one detector or several."""
+    config = _fake_orchestration_config(tmp_path, source_type="bbh")
+    config.orchestration.noise.arguments = {"seed": 7, "detectors": ["H1"]}
+    config.orchestration.noise.output = SimulatorOutputConfig(
+        file_name="noise-{{ counter }}.gwf", output_directory="noise", arguments={"channel": "MOCK_NOISE"}
+    )
+    written: list[list[str]] = []
+
+    def _record(self, path, **kwargs):
+        written.append(list(self.detector_names))
+        _write_signal_file(self, path, **kwargs)
+
+    monkeypatch.setattr("gwmock.cli.adapter_orchestration.DetectorStrainStack.write", _record)
+
+    orchestrator = AdapterOrchestrator.from_config(config.orchestration, config.globals.simulator_arguments)
+    batch = SimpleNamespace(simulator_config=config.orchestration)
+    orchestrator.set_batch_context(batch=batch, output_directory=tmp_path, overwrite=True)
+    orchestrator._run_noise_batch()
+
+    assert written == [["H1:MOCK_NOISE"]]
 
 
 @pytest.mark.requires_gwpy

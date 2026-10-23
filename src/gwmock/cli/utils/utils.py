@@ -11,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from gwmock.utils.errors import UnknownTemplateVariableError
+
 logger = logging.getLogger("gwmock")
 
 
@@ -69,7 +71,9 @@ def get_file_name_from_template(template: str, instance: object, exclude: set[st
         try:
             return str(getattr(instance, label))
         except AttributeError as e:
-            raise ValueError(f"Attribute '{label}' not found in instance of type {type(instance).__name__}") from e
+            raise UnknownTemplateVariableError(
+                f"Attribute '{label}' not found in instance of type {type(instance).__name__}"
+            ) from e
 
     return re.sub(r"\{\{\s*(\w+)\s*\}\}", replace, template)
 

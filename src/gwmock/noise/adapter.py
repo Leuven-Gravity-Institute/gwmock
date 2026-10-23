@@ -33,6 +33,7 @@ from gwmock_noise.output.frame import compose_frame_name, format_time_token
 
 from gwmock.strain_schema import declare_strain_schema
 from gwmock.utils.download import download_file
+from gwmock.utils.errors import DeterministicRefusalError
 
 _SUPPORTED_OUTPUT_FORMATS = {"npy", "gwf", "hdf5"}
 _DETECTOR_PAIR_SIZE = 2
@@ -46,8 +47,11 @@ def _frame_channel_name(detector: str, channel: str) -> str:
         channel: The channel name suffix.
 
     Returns:
-        The detector channel name.
+        The detector channel name. A *channel* that already names *detector* as its prefix is
+        returned unchanged, so a full channel name is never prefixed twice.
     """
+    if channel.startswith(f"{detector}:"):
+        return channel
     return f"{detector}:{channel}"
 
 
@@ -756,7 +760,7 @@ class NoiseAdapter:
         normalized: dict[str, np.ndarray] = {}
         for detector in detectors:
             if detector not in chunk:
-                raise ValueError(f"Noise stream did not produce detector '{detector}'.")
+                raise DeterministicRefusalError(f"Noise stream did not produce detector '{detector}'.")
             normalized[detector] = np.asarray(chunk[detector])
         return normalized
 
@@ -1100,10 +1104,10 @@ class _ChunkNoiseSimulator:
         generated: dict[str, np.ndarray] = {}
         for detector in detectors:
             if detector not in self._chunk:
-                raise ValueError(f"Noise stream did not produce detector '{detector}'.")
+                raise DeterministicRefusalError(f"Noise stream did not produce detector '{detector}'.")
             strain = self._chunk[detector]
             if strain.shape[0] != expected_samples:
-                raise ValueError(
+                raise DeterministicRefusalError(
                     f"Noise chunk for detector '{detector}' has {strain.shape[0]} samples; expected {expected_samples}."
                 )
             generated[detector] = strain

@@ -932,3 +932,81 @@ class TestTheLegacySimulatorClassesAreRefusedWithGuidance:
     def test_an_unrelated_class_still_resolves(self) -> None:
         assert resolve_class_path("WhiteNoise", "noise") == "gwmock.noise.WhiteNoise"
         assert resolve_class_path("numpy.random.Generator", "noise") == "numpy.random.Generator"
+
+
+class TestNoiseArgumentsAreCheckedAtLoadTime:
+    """A key the default noise backend refuses must fail ``load_config``, not the run."""
+
+    @staticmethod
+    def _write(tmp_path: Path, arguments: dict) -> Path:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.safe_dump({"orchestration": {"noise": {"arguments": {"detectors": ["H1"], **arguments}}}}),
+            encoding="utf-8",
+        )
+        return path
+
+    @staticmethod
+    def _glitch(**extra) -> dict:
+        return {
+            "kind": "blip",
+            "rate": 0.01,
+            "amplitude_distribution": {"distribution": "lognormal", "mean": 1.0, "std": 0.0},
+            **extra,
+        }
+
+    def test_a_top_level_minimum_frequency_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match=r"minimum_frequency.*low_frequency_cutoff"):
+            load_config(self._write(tmp_path, {"minimum_frequency": 5.0}))
+
+    def test_a_minimum_frequency_in_a_glitch_model_is_refused(self, tmp_path: Path) -> None:
+        """gwmock-noise passes a glitch entry to its model's constructor, which raises a TypeError mid-run."""
+        with pytest.raises(ValueError, match=r"glitches\[0\].*minimum_frequency.*low_frequency_cutoff"):
+            load_config(self._write(tmp_path, {"glitches": [self._glitch(minimum_frequency=5.0)]}))
+
+    def test_an_unknown_glitch_kind_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match=r"glitches\[0\] has kind 'blips'"):
+            load_config(self._write(tmp_path, {"glitches": [{**self._glitch(), "kind": "blips"}]}))
+
+    def test_the_accepted_spellings_load(self, tmp_path: Path) -> None:
+        config = load_config(
+            self._write(
+                tmp_path,
+                {"low-frequency-cutoff": 5.0, "glitches": [self._glitch(low_frequency_cutoff=5.0)]},
+            )
+        )
+        assert config.orchestration.noise.arguments["low-frequency-cutoff"] == 5.0
+
+    def test_a_custom_backend_decides_for_itself(self, tmp_path: Path) -> None:
+        """A custom backend takes the arguments as constructor keywords; the load does not second-guess it."""
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {"orchestration": {"noise": {"backend": "my.module:Backend", "arguments": {"minimum_frequency": 5}}}}
+            ),
+            encoding="utf-8",
+        )
+        assert load_config(path).orchestration.noise.arguments == {"minimum_frequency": 5}
+
+
+class TestIgnoredPopulationColumns:
+    """``signal.ignored-population-columns`` is checked when the configuration is loaded."""
+
+    @staticmethod
+    def _signal(columns) -> dict:
+        return {"detectors": ["H1"], "ignored-population-columns": columns}
+
+    def test_a_declared_column_loads(self) -> None:
+        assert SignalConfig.model_validate(self._signal(["snr"])).ignored_population_columns == ["snr"]
+
+    def test_the_default_is_empty(self) -> None:
+        assert SignalConfig(detectors=["H1"]).ignored_population_columns == []
+
+    @pytest.mark.parametrize("column", ["spin_1z", "spin1z", "distance"])
+    def test_a_column_the_waveform_reads_is_refused(self, column) -> None:
+        with pytest.raises(ValidationError, match="which the waveform reads"):
+            SignalConfig.model_validate(self._signal([column]))
+
+    def test_a_duplicate_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="more than once"):
+            SignalConfig.model_validate(self._signal(["snr", "snr"]))

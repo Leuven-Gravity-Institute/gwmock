@@ -53,14 +53,12 @@ orchestration:
         source-type: cw
         n-samples: 3
         arguments:
-            # The catalogue that ships beside this file. A relative path, not a URL: the other
-            # signal examples pin a remote population to a commit, but this one has no published
-            # artifact to point at, and a `main` URL would 404 until it merged.
-            #
-            # Relative to the working directory, so it resolves only from inside the examples tree.
-            # `gwmock config --get` copies this file alone and not the catalogue next to it, so
-            # after copying, either point this at a catalogue of your own or fetch
-            # examples/signal/cw_population.csv and give its absolute path.
+            # The catalogue that ships with gwmock.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
             path: ../../cw_population.csv
     signal:
         source-type: cw

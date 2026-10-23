@@ -20,14 +20,26 @@ The configuration file `quick_start_config.yaml` runs the full orchestration
 pipeline — population sampling, CBC signal injection, and noise generation —
 producing a 1024-second dataset for the ET Sardinia configuration.
 
-It requires an internet connection to fetch the BBH population file from GitHub.
+Its one-event BBH population ships with gwmock: `gwmock config --get` copies it
+next to the configuration as `bbh_population.csv` and points the configuration
+at it, so the run needs no internet connection. Run `gwmock simulate` from the
+directory you copied the configuration into, because the path is relative to it.
+
+If copying fails, the command puts back whatever was in the directory before.
+That holds against errors, not against the process being killed: an interrupted
+copy can leave a `.gwmock-config-get.bbh_population.csv.*.backup` file holding
+the catalogue that was there before, or a `.part` file. `gwmock config --get`
+then refuses to run, naming them; rename the backup back if needed and delete
+the rest.
 
 <!-- typos:on -->
 
 <!-- prettier-ignore -->
 !!! note
-    The quick-start fetches a population file on first run.
-    Ensure you have internet access and approximately 50 MB of free disk space.
+    The quick-start needs about 200 MB of free disk space: the HDF5 output is uncompressed
+    float64, so each run writes `duration × sampling-frequency × 8 bytes` per file,
+    for every detector, once for signal and once for noise. Here that is
+    1024 s × 4096 Hz × 8 B = 32 MiB per file, × 3 detectors × 2 = 192 MiB.
 
 You should see output like:
 

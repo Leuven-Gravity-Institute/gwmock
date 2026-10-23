@@ -9,6 +9,8 @@ from typing import Any
 
 from astropy.units import Quantity
 
+from gwmock.utils.errors import UnknownTemplateVariableError
+
 logger = logging.getLogger("gwmock")
 
 
@@ -84,7 +86,8 @@ def expand_template_variables(
         a list of expanded values (Cartesian product).
 
     Raises:
-        AttributeError: If template variable not found in simulator or globals
+        UnknownTemplateVariableError: If template variable not found in simulator or globals (an
+            ``AttributeError`` too).
 
     Example:
         >>> class MockSimulator:
@@ -129,7 +132,8 @@ def _expand_string_template(  # pylint: disable=duplicate-code
         String with expanded variables, or list of strings if iterables present
 
     Raises:
-        AttributeError: If variable not found in simulator or globals
+        UnknownTemplateVariableError: If variable not found in simulator or globals. An
+            ``AttributeError`` as well, and a refusal the batch retry does not repeat.
     """
     # Find all unique placeholders in the template
     placeholders = list(dict.fromkeys(re.findall(r"\{\{\s*(\w+)\s*\}\}", template_str)))
@@ -141,7 +145,7 @@ def _expand_string_template(  # pylint: disable=duplicate-code
         if hasattr(simulator_instance, var_name):
             value = getattr(simulator_instance, var_name)
         else:
-            raise AttributeError(f"Template variable '{var_name}' not found in simulator")
+            raise UnknownTemplateVariableError(f"Template variable '{var_name}' not found in simulator")
 
         # Convert value to list of strings (similar to get_file_name_from_template)
         values_dict[var_name] = _value_to_string_list(value)

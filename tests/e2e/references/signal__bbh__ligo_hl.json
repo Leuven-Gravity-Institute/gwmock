@@ -1,0 +1,66 @@
+{
+  "environment": {
+    "astropy": "8.0.2",
+    "astropy-iers-data": "0.2026.10.12.1.3.27",
+    "gwmock": "0.19.0-post.12+8ba6643",
+    "gwmock-noise": "0.18.2",
+    "gwmock-pop": "0.17.0",
+    "gwmock-signal": "0.21.1",
+    "jax": "0.11.2",
+    "jaxlib": "0.11.2",
+    "lalsuite": "7.26.16",
+    "numpy": "2.5.4",
+    "pyerfa": "2.0.1.5",
+    "ripplegw": "0.4.1",
+    "scipy": "1.18.1"
+  },
+  "fingerprint": {
+    "device": "cpu",
+    "machine": "x86_64",
+    "python": "3.13",
+    "system": "Linux"
+  },
+  "label": "signal/bbh/ligo_hl",
+  "outputs": {
+    "output/noise/H1_STRAIN_NOISE-1419724816-16.hdf5": {
+      "argmax": 1843,
+      "content_hash": "sha256:e578caa85e502e2594165dd3d077b36853950f9ab74f0df16d925f3f9f3873ab",
+      "mean": -1.3510919932403424e-23,
+      "n": 16384,
+      "nonzero": 16384,
+      "peak": 4.061733065981981e-20,
+      "rms": 1.353592090115953e-20,
+      "signed_peak": 4.061733065981981e-20
+    },
+    "output/noise/L1_STRAIN_NOISE-1419724816-16.hdf5": {
+      "argmax": 11740,
+      "content_hash": "sha256:485c24e40cd8fbcdf6d1128ff3731298ddf12e5ac205198d051665b2ff1b10de",
+      "mean": -4.9031239195474654e-23,
+      "n": 16384,
+      "nonzero": 16384,
+      "peak": 5.1827015483845774e-20,
+      "rms": 1.5897044183534273e-20,
+      "signed_peak": -5.1827015483845774e-20
+    },
+    "output/signal/H1_STRAIN_BBH-1419724816-16.hdf5": {
+      "argmax": 4084,
+      "content_hash": "sha256:d05ad7ff3ddbdcd124f939eca31f0626d76cd7de3fc02a82645d6204578bf548",
+      "mean": -9.798433914464942e-28,
+      "n": 16384,
+      "nonzero": 4915,
+      "peak": 5.399205291554141e-22,
+      "rms": 3.359073312500535e-23,
+      "signed_peak": -5.399205291554141e-22
+    },
+    "output/signal/L1_STRAIN_BBH-1419724816-16.hdf5": {
+      "argmax": 4079,
+      "content_hash": "sha256:9c31c562d3f0bff898b614c74125131d0214d93afb22f672e54584fddcf43458",
+      "mean": 4.594350083835342e-28,
+      "n": 16384,
+      "nonzero": 4915,
+      "peak": 9.268447819933627e-22,
+      "rms": 5.956624730329472e-23,
+      "signed_peak": -9.268447819933627e-22
+    }
+  }
+}

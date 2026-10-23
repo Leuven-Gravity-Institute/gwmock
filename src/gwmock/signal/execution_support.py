@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from gwmock.utils.errors import DeterministicRefusalError
+
 logger = logging.getLogger("gwmock")
 
 #: Signal-config fields the batched execution path reads.
@@ -135,7 +137,7 @@ def require_execution_supports_configuration(signal_config: Any, execution: str,
     for field in ignored:
         reason = _BATCHED_REASONS.get(field, "the batched path does not read it")
         lines.append(f"  {_alias_of(signal_config, field)}: {reason}")
-    raise ValueError(
+    raise DeterministicRefusalError(
         "execution: batched would ignore settings this configuration sets:\n"
         + "\n".join(lines)
         + "\n\nA setting that is read but never applied produces output that looks correct, so the "

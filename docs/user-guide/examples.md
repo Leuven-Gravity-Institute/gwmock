@@ -1,7 +1,7 @@
 # Examples
 
 This page provides an overview of example configuration files available for ET
-simulations.
+simulations, and one for the LIGO Hanford and Livingston network.
 
 ## Overview
 
@@ -84,6 +84,12 @@ coalescence (BBH and BNS) signals for various detector configurations.
   [`signal/bbh/et_2l_aligned/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/signal/bbh/et_2l_aligned/config.yaml)
 - 2L misaligned:
   [`signal/bbh/et_2l_misaligned/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/signal/bbh/et_2l_misaligned/config.yaml)
+- LIGO Hanford and Livingston:
+  [`signal/bbh/ligo_hl/config.yaml`](https://github.com/Leuven-Gravity-Institute/gwmock/tree/main/examples/signal/bbh/ligo_hl/config.yaml)
+  — one BBH in Gaussian noise, a 128 s segment, with one PSD per detector
+  (`psd_files`, the measured O3 H1 and L1 sensitivities). H1 and L1 use the
+  detector geometry built into LALSuite. No Virgo PSD ships with gwmock, so
+  adding V1 needs a PSD file of your own.
 
 ### Binary Neutron Star (BNS)
 

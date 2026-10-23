@@ -73,7 +73,15 @@ _logger = logging.getLogger("gwmock")
 #: :data:`PRIVATE_REFERENCE_KEY`. A consumer reading ``author`` or an absolute path from a 1.7.0
 #: record finds neither here, and only ``schema_version`` says why. A run that opts out
 #: (``globals.metadata.split: false``) writes the 1.7.0 layout under this version number.
-SCHEMA_VERSION = "1.8.0"
+#:
+#: 1.9.0: ``host`` records the processor model (``cpu_model``, ``null`` when the platform does not
+#: report one) and the host name (``hostname``) of the machine that wrote the record, read at write
+#: time -- a bit-for-bit reproduction needs the processor model. The shareable record keeps
+#: ``cpu_model`` and withholds ``hostname``, which goes to the private details file with the rest of
+#: the full host. A combined record (``split: false``) carries both in ``host``. A merged record now
+#: has a ``host`` block too, describing the machine that merged, and keeps each source record's
+#: ``cpu_model``, ``os`` and ``architecture`` in its shareable form.
+SCHEMA_VERSION = "1.9.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 #: The key the source parameters of the injected signals are recorded under. Removed from an embedded
@@ -224,11 +232,13 @@ class OutputRecord(BaseModel):
 class HostRecord(BaseModel):
     """Host fingerprint for provenance reporting.
 
-    ``platform``, ``python``, ``cpu`` and ``git_sha`` are the fields every record has carried. In a
-    shareable record ``platform`` is reduced to ``<os>-<architecture>`` -- the full string names the
-    exact kernel build, which goes to the private details file -- and ``os``, ``architecture`` and
-    ``cpu_model`` are added. ``cpu_model`` is written as an explicit ``null`` when the platform does
-    not report one, so "unknown" is not confused with a record that predates the field.
+    ``platform``, ``python``, ``cpu`` and ``git_sha`` are the fields every record has carried. Since
+    1.9.0 the generating host also records ``cpu_model`` and ``hostname``. In a shareable record
+    ``platform`` is reduced to ``<os>-<architecture>`` -- the full string names the exact kernel
+    build, which goes to the private details file -- ``os`` and ``architecture`` are added, and
+    ``hostname`` is withheld, since it names the machine; it is kept in the private details file.
+    ``cpu_model`` is written as an explicit ``null`` when the platform does not report one, so
+    "unknown" is not confused with a record that predates the field.
     """
 
     platform: str
@@ -238,6 +248,7 @@ class HostRecord(BaseModel):
     os: str | None = None
     architecture: str | None = None
     cpu_model: str | None = None
+    hostname: str | None = None
 
 
 class MetadataRecord(BaseModel):
@@ -688,16 +699,16 @@ def shareable_host(host: dict[str, Any], *, describes_this_machine: bool) -> dic
     """Return the part of a host fingerprint that names a kind of machine rather than a machine.
 
     Kept: the Python version, the git SHA of the gwmock that ran, the ``cpu`` field as every record
-    has carried it, and -- for a record this process is writing -- the operating system, the
-    architecture and the processor model, which are what explain a numerical difference between two
-    runs. ``platform`` is reduced to ``<os>-<architecture>``: the full string names the exact kernel
-    build and C library, which identifies a particular installation.
+    has carried it, and the operating system, the architecture and the processor model, which are
+    what explain a numerical difference between two runs. ``platform`` is reduced to
+    ``<os>-<architecture>``: the full string names the exact kernel build and C library, which
+    identifies a particular installation. ``hostname`` is never kept: it names the machine.
 
     Args:
         host: The full fingerprint, as a record carries it.
         describes_this_machine: Whether *host* was taken on the machine running now. Only then can
-            the operating system, architecture and processor model be read; a host nested in a merged
-            source record keeps what it had, without ``platform``.
+            the operating system, architecture and processor model be read here; a host nested in a
+            merged source record keeps the ones it recorded, without ``platform``.
 
     Returns:
         The reduced fingerprint.
@@ -707,6 +718,9 @@ def shareable_host(host: dict[str, Any], *, describes_this_machine: bool) -> dic
     reduced: dict[str, Any] = {
         key: host[key] for key in ("python", "cpu", "git_sha") if key in host and host[key] is not None
     }
+    # A nested source record's processor model is as much a reproduction input as this machine's,
+    # and as little identifying; `null` is kept as the explicit "not reported" it is.
+    reduced.update({key: host[key] for key in ("os", "architecture", "cpu_model") if key in host})
     if describes_this_machine:
         system = platform.system() or "unknown"
         machine = platform.machine() or "unknown"
@@ -715,7 +729,8 @@ def shareable_host(host: dict[str, Any], *, describes_this_machine: bool) -> dic
                 "platform": f"{system}-{machine}",
                 "os": system,
                 "architecture": machine,
-                "cpu_model": cpu_model(),
+                # Read when the record was written, if it was; the machine is the same one.
+                "cpu_model": host["cpu_model"] if "cpu_model" in host else cpu_model(),
             }
         )
         reduced.setdefault("python", platform.python_version())

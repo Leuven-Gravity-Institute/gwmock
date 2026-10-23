@@ -26,8 +26,9 @@ orchestration:
             # file_name: 'E-{{ detectors }}_STRAIN-{{ start_time }}-{{ duration }}.gwf'
 ```
 
-Everything below works for either: GWpy reads both, and the channel is named the
-same way in each.
+GWpy reads both, and the channel is named the same way in each. The one
+difference is the keyword that selects it: an HDF5 file is read by the dataset's
+`path=`, a frame file by its `channel=` (see [Reading a file](#reading-a-file)).
 
 ## What the file says it is
 
@@ -144,7 +145,7 @@ with three deliberate omissions:
 from gwpy.timeseries import TimeSeries
 
 # HDF5, what a run writes by default
-data = TimeSeries.read("filename.hdf5", channel="ET1_EMR:STRAIN")
+data = TimeSeries.read("filename.hdf5", path="ET1_EMR:STRAIN")
 
 # GWF, if you configured frame output
 data = TimeSeries.read("filename.gwf", channel="ET1_EMR:STRAIN")
@@ -153,7 +154,10 @@ data = TimeSeries.read("filename.gwf", channel="ET1_EMR:STRAIN")
 **Parameters:**
 
 - `filename`: Path to the file, HDF5 or GWF
-- `channel`: Channel name to read (common format: `DETECTOR:CHANNEL_NAME`)
+- `path` (HDF5): the dataset to read, named after the channel (common format:
+  `DETECTOR:CHANNEL_NAME`). A file holding one dataset can omit it.
+- `channel` (GWF): the channel to read, in the same format. GWpy's HDF5 reader
+  does not accept `channel=` and raises a `TypeError`.
 
 ### Example
 
@@ -185,17 +189,40 @@ signal_data = TimeSeries.read("filename_signal.gwf", channel="ET1_EMR:STRAIN")
 combined_data = noise_data.inject(signal_data)
 ```
 
-You can also merge files directly using the CLI:
+You can also merge files directly using the CLI. A run that generates signal and
+noise together writes them to separate files, one per detector each, and records
+all of them in one metadata record per segment. Given only that record,
+`gwmock merge` merges every detector at once — signal plus noise, one file per
+channel, named after it (`ET1_EMR_STRAIN-<t0>-<duration>.hdf5`) — and checks
+each source file against the hash the record holds:
 
 ```bash
-gwmock merge filename_noise.gwf filename_signal.gwf \
-    --metadata noise/metadata/orchestration-0.metadata.json \
-    --metadata signal/metadata/orchestration-0.metadata.json \
-    --channel ET1_EMR:STRAIN \
-    --output-channel ET1_EMR:STRAIN
+gwmock merge --metadata metadata/orchestration-0.metadata.json --output-dir merged
 ```
 
-This produces a merged frame file and a merged metadata file documenting all
+Run it from the directory the simulation ran in: the record names the files
+relative to the run's working directory. A run of several segments has one
+record per segment; pass `--metadata` once for each.
+
+A channel written to one file only — a detector with signal but no noise, say —
+has nothing to be merged with. Rather than return a segment with that detector
+silently missing, the merge is then refused before anything is written, naming
+each such channel. Pass `--skip-unmatched` to merge the other channels anyway;
+each skipped channel is named in a warning.
+
+To merge files of your choosing instead, name them. A single record that holds
+all of their hashes — the run's own — is enough; otherwise give one `--metadata`
+per file, in the same order:
+
+```bash
+gwmock merge output/noise/E-ET1_EMR_STRAIN_NOISE-1577491218-1024.hdf5 \
+    output/signal/E-ET1_EMR_STRAIN_BBH-1577491218-1024.hdf5 \
+    --metadata metadata/orchestration-0.metadata.json \
+    --channel ET1_EMR:STRAIN \
+    --output E-ET1_EMR_STRAIN-1577491218-1024.hdf5
+```
+
+Each merge produces the merged file and a merged metadata file documenting all
 input files and merge details.
 
 ### Merging Multiple Files

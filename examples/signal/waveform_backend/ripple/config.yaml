@@ -19,7 +19,7 @@ globals:
         duration: 4096
         total-duration: 4096
         # 1 Jan 2030, as the noise examples use. Chosen to contain the population's event
-        # (GPS 1577491300): a segment placed elsewhere still runs, and writes only zeros.
+        # (GPS 1577491300): a segment placed elsewhere still runs and writes only zeros, with a warning.
         start-time: 1577491218
         seed: 42
     working-directory: .
@@ -32,14 +32,17 @@ orchestration:
         source-type: bbh
         n-samples: 1
         arguments:
-            # The small in-repo population, not the sandbox Zenodo deposit the other signal
-            # examples use: sandbox records are purged, so that URL has a built-in expiry.
-            #
-            # Pinned to a commit rather than `main`, so the input to this example cannot change
-            # under it. Fetching from a branch means two runs of "the same example" can differ,
-            # which matters more here than tracking edits to the file. Update the SHA
-            # deliberately if the population is ever meant to change.
-            path: https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            # The small population that ships with gwmock, not the sandbox Zenodo deposit the
+            # other signal examples use: sandbox records are purged, so that URL has a built-in
+            # expiry, and so that a run needs no network access.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
+            # To fetch it instead, use the same file pinned to a commit:
+            #   https://raw.githubusercontent.com/Leuven-Gravity-Institute/gwmock/9fa389516dfd8b818670b0ae4359e9be04f30e5e/examples/signal/bbh_population.csv
+            path: ../../bbh_population.csv
     signal:
         waveform-model: IMRPhenomD
         waveform-backend: ripple

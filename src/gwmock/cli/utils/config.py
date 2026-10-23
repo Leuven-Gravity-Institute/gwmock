@@ -209,7 +209,21 @@ class SignalConfig(BaseModel):
     waveform_arguments: dict[str, Any] = Field(
         default_factory=dict,
         alias="waveform-arguments",
-        description="Fixed waveform arguments passed to gwmock-signal",
+        description=(
+            "Fixed waveform arguments merged into every event's parameters and passed to gwmock-signal. "
+            "A key the waveform backend does not accept stops the run; backend constructor settings "
+            "such as 'f_ref' belong under 'waveform-backend-arguments'."
+        ),
+    )
+    ignored_population_columns: list[str] = Field(
+        default_factory=list,
+        alias="ignored-population-columns",
+        description=(
+            "Population columns that are not waveform inputs and may be left out of the waveform "
+            "call. A column the waveform does not read stops the run unless it is population-only "
+            "(redshift, labels), restates a column the waveform reads and agrees with it (source-frame "
+            "masses, spin magnitudes and tilts, theta_jn, a per-event f_ref), or is listed here."
+        ),
     )
     waveform_options: dict[str, Any] = Field(
         default_factory=dict,
@@ -300,6 +314,30 @@ class SignalConfig(BaseModel):
         require_projection_backend_runnable(self.projection_backend)
         return self
 
+    @field_validator("ignored_population_columns")
+    @classmethod
+    def validate_ignored_population_columns(cls, v: list[str]) -> list[str]:
+        """Refuse an entry that cannot mean what it says.
+
+        A column the waveform reads is never left out, so listing one would read as an instruction
+        the run silently does not follow.
+        """
+        from gwmock.signal.device_chunks import BATCHED_PARAMETERS, canonicalise_parameters  # noqa: PLC0415
+
+        blank = [name for name in v if not isinstance(name, str) or not name.strip()]
+        if blank:
+            raise ValueError("'ignored-population-columns' entries must be non-empty column names")
+        duplicated = sorted({name for name in v if v.count(name) > 1})
+        if duplicated:
+            raise ValueError(f"'ignored-population-columns' lists {', '.join(duplicated)} more than once")
+        read = sorted(name for name in v if next(iter(canonicalise_parameters({name: 0}))) in BATCHED_PARAMETERS)
+        if read:
+            raise ValueError(
+                f"'ignored-population-columns' lists {', '.join(read)}, which the waveform reads; a "
+                "column the waveform reads is never left out. Remove it from the list."
+            )
+        return v
+
     @field_validator("execution")
     @classmethod
     def validate_execution(cls, v: str) -> str:
@@ -312,6 +350,81 @@ class SignalConfig(BaseModel):
         if v not in allowed:
             raise ValueError(f"'execution' must be one of {sorted(allowed)}, got {v!r}")
         return v
+
+
+#: Keys the default noise backend reads from ``orchestration.noise.arguments`` (after hyphens are
+#: normalised to underscores). ``detectors`` and ``seed`` are resolved by the orchestrator itself;
+#: the rest are forwarded to ``NoiseAdapter.build_config`` and ``NoiseAdapter.open_stream``. Any
+#: other key is rejected, because it would otherwise be ignored and the run would look normal while
+#: generating noise from a setting the author never made. A custom ``noise.backend`` receives the
+#: arguments as constructor keywords instead, so it is the constructor that decides what it accepts.
+DEFAULT_NOISE_ARGUMENT_KEYS = frozenset(
+    {
+        "detectors",
+        "seed",
+        "psd_file",
+        "psd_schedule",
+        "psd_files",
+        "csd_files",
+        "low_frequency_cutoff",
+        "high_frequency_cutoff",
+        "spectral_lines",
+        "glitches",
+    }
+)
+
+
+def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
+    """Raise if the default noise backend would refuse, or ignore, a key in *arguments*.
+
+    Checked when the configuration is loaded, so a misnamed key fails ``gwmock simulate`` and
+    ``gwmock validate`` before anything is generated rather than partway into a run. Covers the
+    top-level keys and the keys of each ``glitches`` entry, which gwmock-noise passes to the glitch
+    model's constructor as keyword arguments: ``minimum_frequency`` there is a ``TypeError`` at run
+    time, because the glitch models, like the noise itself, call their floor
+    ``low_frequency_cutoff``.
+
+    Args:
+        arguments: ``orchestration.noise.arguments`` as written.
+
+    Raises:
+        ValueError: If a top-level key is not one the default backend reads, a glitch entry names an
+            unknown ``kind``, or a glitch entry has a key its model does not accept.
+    """
+    unrecognised = sorted(key for key in arguments if key.replace("-", "_") not in DEFAULT_NOISE_ARGUMENT_KEYS)
+    if unrecognised:
+        raise ValueError(
+            f"Unrecognised noise.arguments key(s) for the default noise backend: {', '.join(unrecognised)}. "
+            f"Recognised keys: {', '.join(sorted(DEFAULT_NOISE_ARGUMENT_KEYS))}."
+        )
+    glitches = next((value for key, value in arguments.items() if key.replace("-", "_") == "glitches"), None)
+    if not isinstance(glitches, list):
+        # The type itself is gwmock-noise's to refuse, with its own message.
+        return
+    import inspect  # noqa: PLC0415
+
+    from gwmock_noise.glitches.models import supported_glitch_kinds  # noqa: PLC0415
+
+    kinds = supported_glitch_kinds()
+    for index, entry in enumerate(glitches):
+        if not isinstance(entry, dict):
+            continue
+        kind = entry.get("kind")
+        if kind not in kinds:
+            raise ValueError(
+                f"noise.arguments.glitches[{index}] has kind {kind!r}; the supported kinds are "
+                f"{', '.join(sorted(kinds))}."
+            )
+        parameters = inspect.signature(kinds[kind]).parameters
+        if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+            continue
+        rejected = sorted(key for key in entry if key != "kind" and key not in parameters)
+        if rejected:
+            raise ValueError(
+                f"noise.arguments.glitches[{index}] (kind {kind!r}) has key(s) the glitch model does not "
+                f"accept: {', '.join(rejected)}. Accepted keys: {', '.join(sorted(parameters))}. The "
+                "frequency floor is 'low_frequency_cutoff'."
+            )
 
 
 class NoiseAdapterConfig(BaseModel):
@@ -331,6 +444,13 @@ class NoiseAdapterConfig(BaseModel):
         ),
         description="Noise output configuration",
     )
+
+    @model_validator(mode="after")
+    def _validate_default_backend_arguments(self) -> NoiseAdapterConfig:
+        """Refuse, at load time, arguments the default noise backend would reject or ignore."""
+        if self.backend is None:
+            check_default_noise_arguments(self.arguments)
+        return self
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -542,6 +662,42 @@ class Config(BaseModel):
         return data
 
 
+def require_population_path_found(config: Config, config_file: Path) -> None:
+    """Refuse a relative population path that is missing where it is read but present beside the file.
+
+    Relative paths in a configuration -- the population, PSD files, the working and output
+    directories -- are read from the directory gwmock runs in, not from the configuration file's.
+    The bundled examples write their catalogue path from their own directory, so running one in
+    place from elsewhere names a file that is not there. That failed deep in the population loader
+    with the bare path; this says which directory to run from instead, before anything starts.
+
+    Args:
+        config: The loaded configuration.
+        config_file: The file it was loaded from.
+
+    Raises:
+        DeterministicRefusalError: If the population path is relative, absent from the current
+            directory and present relative to *config_file*'s directory.
+    """
+    from gwmock.utils.errors import DeterministicRefusalError  # noqa: PLC0415
+
+    orchestration = config.orchestration
+    population = None if orchestration is None else orchestration.population
+    value = None if population is None else (population.arguments or {}).get("path")
+    if not isinstance(value, str) or "://" in value or Path(value).is_absolute() or Path(value).exists():
+        return
+    beside = (config_file.parent / value).resolve()
+    if not beside.exists():
+        return
+    raise DeterministicRefusalError(
+        f"The population path {value!r} does not exist from the directory gwmock runs in, "
+        f"{Path.cwd()}: relative paths in a configuration are read from there, not from the "
+        f"configuration file's directory. It does exist relative to {config_file}. Run gwmock from "
+        f"{config_file.parent.resolve()}, give an absolute path, or copy the example with "
+        "`gwmock config --get`, which puts the catalogue next to the configuration it writes."
+    )
+
+
 def load_config(file_name: Path, encoding: str = "utf-8") -> Config:
     """Load configuration file with validation.
 
@@ -615,6 +771,9 @@ def save_config(
     except Exception as e:
         if temp_file.exists():
             temp_file.unlink()
+        if isinstance(e, OSError):
+            # A disk or permission failure is reported as itself, not as a configuration error.
+            raise
         raise ValueError(f"Failed to save configuration: {e}") from e
 
 

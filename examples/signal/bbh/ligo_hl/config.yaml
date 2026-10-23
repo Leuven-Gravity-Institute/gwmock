@@ -1,0 +1,59 @@
+# A LIGO Hanford + Livingston network: one binary black hole in Gaussian noise, with a different
+# PSD for each detector. H1 and L1 resolve to the detector geometry built into LALSuite, and the
+# two PSDs are the measured O3 sensitivities that ship with gwmock-noise. No Virgo PSD ships, so
+# add V1 together with a PSD file of your own under psd_files.
+#
+# Small on purpose -- one 128-second segment at 4096 Hz, 8 MiB per file -- so it is a quick
+# starting point for checking that another pipeline reads gwmock's output.
+globals:
+    simulator-arguments:
+        sampling-frequency: 4096
+        duration: 128
+        total-duration: 128
+        # Places the population's event (GPS 1577491300) 64 s into the segment. A span that
+        # misses every event still runs, with a warning, and its signal files hold only zeros.
+        start-time: 1577491236
+        seed: 42
+    working-directory: .
+    output-directory: output
+    metadata-directory: metadata
+
+orchestration:
+    population:
+        backend: FilePopulationLoader
+        source-type: bbh
+        n-samples: 1
+        arguments:
+            # The one-event population that ships with gwmock.
+            # Paths in a configuration are read from the directory gwmock runs in, not from this
+            # file's. This one is written from this file's own directory, so run the example from
+            # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
+            # configuration it writes and points the path at the copy. Run from anywhere else, the
+            # run stops and names the directory to run it from.
+            path: ../../bbh_population.csv
+    signal:
+        waveform-model: IMRPhenomD
+        minimum-frequency: 20
+        detectors:
+            - H1
+            - L1
+        output:
+            output_directory: signal
+            file_name:
+                '{{ detectors }}_STRAIN_BBH-{{ start_time }}-{{ duration }}.hdf5'
+            arguments:
+                channel: '{{ detectors }}:STRAIN'
+    noise:
+        arguments:
+            # One PSD per detector, keyed by the detector names above.
+            psd_files:
+                H1: aLIGO_O3_actual_H1_psd
+                L1: aLIGO_O3_actual_L1_psd
+            low_frequency_cutoff: 10
+        output:
+            output_directory: noise
+            file_name:
+                '{{ detectors }}_STRAIN_NOISE-{{ start_time }}-{{ duration
+                }}.hdf5'
+            arguments:
+                channel: '{{ detectors }}:STRAIN'

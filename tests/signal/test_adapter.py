@@ -235,7 +235,14 @@ class TestSignalAdapter:
             waveform_arguments={"reference_frequency": 50.0},
         )
 
-        assert strain.shape == (2, n)
+        # The projected strain is the waveform plus, where gwmock-signal pads the projection, the
+        # largest detector light-travel delay at each end -- not the waveform's own length.
+        from gwmock_signal.projection.resampling import edge_padding
+
+        padding = (strain.shape[1] - n) // 2
+        assert strain.shape[0] == 2
+        assert padding in {0, edge_padding(4.0)}, f"{strain.shape[1]} samples for an {n}-sample waveform"
+        assert strain.shape[1] == n + 2 * padding
         backend = adapter._backend
         assert isinstance(backend.waveform_model, str)
         assert backend.waveform_model.startswith("__gwmock_custom__")
@@ -244,7 +251,11 @@ class TestSignalAdapter:
 
 
 class FailingBackend:
-    """Backend that raises 'Unsupported <backend> waveform parameters' on the first call."""
+    """Backend that raises 'Unsupported <backend> waveform parameters' for the keys in ``REJECTED``."""
+
+    #: What the backend does not read: two population-only columns, a waveform setting, a
+    #: misspelt spin and an orbital parameter it cannot apply.
+    REJECTED = frozenset({"redshift", "source_frame_mass_1", "lambda_1", "spin1_z", "eccentricity"})
 
     def __init__(self, *, waveform_model: str, backend_label: str = "LAL") -> None:
         self.waveform_model = waveform_model
@@ -266,8 +277,9 @@ class FailingBackend:
     ):
         self.call_count += 1
         self.received_params.append(dict(params))
-        if "redshift" in params or "lambda_1" in params:
-            raise ValueError(f"Unsupported {self.backend_label} waveform parameters: lambda_1, redshift")
+        rejected = sorted(set(params) & self.REJECTED)
+        if rejected:
+            raise ValueError(f"Unsupported {self.backend_label} waveform parameters: {', '.join(rejected)}")
         names = tuple(d if isinstance(d, str) else d.name for d in detector_names)
         return DetectorStrainStack.from_mapping(
             names,
@@ -290,50 +302,192 @@ class TestSimulateStackUnsupportedParams:
     """Verify catch-parse-retry for 'Unsupported LAL waveform parameters' errors."""
 
     @pytest.mark.parametrize("backend_label", ["LAL", "ripple", "PyCBC"])
-    def test_unsupported_params_trigger_warning_and_retry(self, backend_label):
-        """On first failure the adapter logs a WARNING and retries without bad keys.
+    def test_known_population_only_columns_are_dropped_quietly(self, backend_label):
+        """``redshift`` and source-frame masses are not waveform inputs: dropped, retried, no warning.
 
         The parse works for every backend's error prefix, not only LAL.
         """
         backend = FailingBackend(waveform_model="IMRPhenomXPHM", backend_label=backend_label)
         adapter = _make_adapter_with_backend(backend)
 
-        params = {"mass_1": 1.4, "redshift": 0.05, "lambda_1": 300.0, "coa_time": 0.0}
+        params = {"detector_frame_mass_1": 1.43, "redshift": 0.1, "source_frame_mass_1": 1.3, "coa_time": 0.0}
 
         with patch("gwmock.signal.adapter.logger") as mock_logger:
             adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
 
-        # Warning was emitted listing the ignored keys
-        mock_logger.warning.assert_called_once()
-        warning_msg = mock_logger.warning.call_args[0][0] % mock_logger.warning.call_args[0][1:]
-        assert "lambda_1" in warning_msg
-        assert "redshift" in warning_msg
-        assert "injection_parameters" in warning_msg
-        # Two backend calls: initial (failing) + retry (filtered)
+        mock_logger.warning.assert_not_called()
         assert backend.call_count == 2
         assert "redshift" not in backend.received_params[1]
-        assert "lambda_1" not in backend.received_params[1]
-        assert "mass_1" in backend.received_params[1]
+        assert "source_frame_mass_1" not in backend.received_params[1]
+        assert "detector_frame_mass_1" in backend.received_params[1]
 
-    def test_unsupported_params_cached_on_second_call(self):
+    def test_known_columns_are_cached_after_the_first_call(self):
         """Subsequent calls pre-filter and do NOT trigger a second backend failure."""
         backend = FailingBackend(waveform_model="IMRPhenomXPHM")
         adapter = _make_adapter_with_backend(backend)
 
-        params = {"mass_1": 1.4, "redshift": 0.05, "lambda_1": 300.0, "coa_time": 0.0}
+        params = {"mass_1": 1.4, "redshift": 0.05, "coa_time": 0.0}
+        adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
+        adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
 
-        with patch("gwmock.signal.adapter.logger") as mock_logger:
-            adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
-            first_warning_count = mock_logger.warning.call_count
-            adapter.simulate_stack(params, sampling_frequency=4.0, minimum_frequency=20.0)
-            second_warning_count = mock_logger.warning.call_count
-
-        # No additional warning on the second call
-        assert second_warning_count == first_warning_count
-        # Second call: only one backend call (pre-filtered, no failure)
         assert backend.call_count == 3  # 2 from first simulate_stack + 1 from second
         assert "redshift" not in backend.received_params[2]
-        assert "lambda_1" not in backend.received_params[2]
+
+    @pytest.mark.parametrize("backend_label", ["LAL", "ripple", "PyCBC"])
+    def test_a_misspelt_spin_column_stops_the_run(self, backend_label):
+        """``spin1_z`` is not ``spin_1z``: dropping it would generate a non-spinning binary silently."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM", backend_label=backend_label)
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match="spin1_z") as excinfo:
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "spin1_z": 0.3, "redshift": 0.05, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+            )
+        message = str(excinfo.value)
+        assert f"the {backend_label} waveform backend" in message
+        assert "signal.ignored-population-columns" in message
+        assert "redshift" not in message.split("Check the spelling", maxsplit=1)[0], (
+            "a known column was named as refused"
+        )
+        assert backend.call_count == 1, "the call was retried without the misspelt column"
+
+    def test_every_refused_column_is_named(self):
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match=r"lambda_1, spin1_z"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "spin1_z": 0.3, "lambda_1": 300.0, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+            )
+
+    def test_a_declared_column_is_dropped(self):
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+        adapter.ignore_population_columns(["spin1_z"])
+
+        adapter.simulate_stack(
+            {"mass_1": 1.4, "spin1_z": 0.3, "coa_time": 0.0}, sampling_frequency=4.0, minimum_frequency=20.0
+        )
+
+        assert "spin1_z" not in backend.received_params[-1]
+
+    def test_a_zero_eccentricity_is_dropped_and_a_nonzero_one_stops_the_run(self):
+        """A quasi-circular waveform is exact at zero eccentricity and wrong at any other value."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+
+        adapter.simulate_stack(
+            {"mass_1": 1.4, "eccentricity": 0.0, "coa_time": 0.0}, sampling_frequency=4.0, minimum_frequency=20.0
+        )
+        with pytest.raises(ValueError, match=r"eccentricity is 0\.1"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "eccentricity": 0.1, "coa_time": 0.0}, sampling_frequency=4.0, minimum_frequency=20.0
+            )
+
+    def test_spins_given_only_as_magnitude_and_tilt_stop_the_run(self):
+        """Dropping them would generate a non-spinning binary from a spinning catalogue."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"spin_1", "tilt_1"})
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match="spin_1, tilt_1 are given without all of spin_1x"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "spin_1": 0.5, "tilt_1": 0.6, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+            )
+
+    def test_a_per_event_f_ref_must_be_the_one_the_backend_uses(self):
+        """Without a configured f_ref the backends reference the spins to the call's cutoff."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"f_ref"})
+        adapter = _make_adapter_with_backend(backend)
+        event = {"mass_1": 1.4, "f_ref": 20.0, "coa_time": 0.0}
+
+        adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=20.0)
+        with pytest.raises(ValueError, match=r"f_ref is 20\.0 Hz.*5\.0 Hz"):
+            adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=5.0)
+
+        adapter.configure_reference_frequency(20.0)
+        adapter.simulate_stack(event, sampling_frequency=4.0, minimum_frequency=5.0)
+
+    def test_later_events_are_checked_against_the_same_merged_mapping_as_the_first(self):
+        """Spins fixed under waveform-arguments are the waveform's own copy for every event, not only the first."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        backend.REJECTED = frozenset({"theta_jn"})
+        adapter = _make_adapter_with_backend(backend)
+        event = {
+            "detector_frame_mass_1": 30.0,
+            "detector_frame_mass_2": 25.0,
+            "inclination": 0.5,
+            "theta_jn": 0.5,
+            "coa_time": 0.0,
+        }
+        fixed_spins = {"spin_1z": 0.0, "spin_2z": 0.0}
+
+        for coa_time in (0.0, 1.0, 2.0):
+            adapter.simulate_stack(
+                {**event, "coa_time": coa_time},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments=fixed_spins,
+            )
+
+        assert backend.call_count == 4  # one rejected call, then one per event
+
+    def test_a_rejected_configured_waveform_argument_fails_the_run(self):
+        """A key the user set under ``waveform-arguments`` is refused, not dropped.
+
+        Dropping it would generate a waveform other than the one configured -- an ``f_ref`` that
+        never reaches the backend runs at the backend's default -- while the run reports success.
+        """
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match=r"lambda_1.*waveform-arguments") as excinfo:
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"lambda_1": 300.0},
+            )
+        assert "Unsupported LAL waveform parameters" in str(excinfo.value)
+        assert backend.call_count == 1, "the call was retried without the configured key"
+
+    def test_a_rejected_configured_waveform_argument_fails_every_entry_point(self):
+        """The placement queries refuse it too, so placement cannot run on a silently changed setting."""
+        backend = TailQueryingBackend()
+        adapter = _make_adapter_with_backend(backend)
+
+        with pytest.raises(ValueError, match="waveform-arguments"):
+            adapter.post_coalescence_duration(
+                {"mass_1": 30.0, "coa_time": 0.0},
+                sampling_frequency=1024.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"redshift": 0.1},
+            )
+
+    def test_a_configured_key_already_rejected_as_a_column_is_not_dropped_silently(self):
+        """The cache of rejected population columns must not swallow a configured key of the same name."""
+        backend = FailingBackend(waveform_model="IMRPhenomXPHM")
+        adapter = _make_adapter_with_backend(backend)
+        adapter.simulate_stack(
+            {"mass_1": 1.4, "redshift": 0.05, "coa_time": 0.0},
+            sampling_frequency=4.0,
+            minimum_frequency=20.0,
+        )
+
+        with pytest.raises(ValueError, match="redshift"):
+            adapter.simulate_stack(
+                {"mass_1": 1.4, "coa_time": 0.0},
+                sampling_frequency=4.0,
+                minimum_frequency=20.0,
+                waveform_arguments={"redshift": 0.05},
+            )
 
     def test_genuine_value_error_is_reraised(self):
         """A ValueError not matching the prefix must propagate unchanged."""

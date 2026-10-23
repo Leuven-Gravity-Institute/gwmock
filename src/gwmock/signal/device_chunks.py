@@ -35,6 +35,7 @@ import numpy as np
 from gwmock.data.time_series.inject import alignment_tolerance, is_aligned
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
+from gwmock.utils.errors import DeterministicRefusalError
 
 #: Dimensions of a batched strain array: event, detector, sample.
 _BATCHED_STRAIN_DIMENSIONS = 3
@@ -131,7 +132,7 @@ def require_batched_parameters_supported(waveform_arguments: dict[str, Any]) -> 
     """
     unsupported = sorted(set(waveform_arguments) - BATCHED_PARAMETERS - BATCHED_BACKEND_ARGUMENTS)
     if unsupported:
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"execution: batched cannot apply these waveform-arguments: {unsupported}. The batched "
             f"entry point reads only {sorted(BATCHED_PARAMETERS | BATCHED_BACKEND_ARGUMENTS)}, and "
             f"would ignore the rest without complaint. Use execution: per-event, or remove them."
@@ -156,7 +157,7 @@ def canonicalise_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
         if alias not in renamed:
             continue
         if canonical in renamed and not np.array_equal(np.asarray(renamed[canonical]), np.asarray(renamed[alias])):
-            raise ValueError(
+            raise DeterministicRefusalError(
                 f"Parameters contain both '{canonical}' and its alias '{alias}' with different "
                 f"values. Remove one; picking either would silently choose which physics to use."
             )
@@ -189,7 +190,7 @@ def batched_strain_to_chunks(
             on that grid, or if the detector names disagree with *expected_detector_names*.
     """
     if batch.grid is None or batch.start_index is None:
-        raise ValueError(
+        raise DeterministicRefusalError(
             "The batched strain was generated without an output grid, so each buffer starts at an "
             "arbitrary time and every chunk would have to be resampled onto the segment grid. Pass "
             "output_grid=SamplingGrid(segment_start, sampling_frequency) to simulate_cbc_batch."
@@ -197,7 +198,7 @@ def batched_strain_to_chunks(
 
     produced_names = tuple(batch.detector_names)
     if expected_detector_names is not None and produced_names != tuple(expected_detector_names):
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"The device returned detectors {produced_names} but the caller expects "
             f"{tuple(expected_detector_names)}. Channel order carries detector identity downstream, "
             f"so this would attribute each signal to the wrong interferometer."
@@ -208,16 +209,20 @@ def batched_strain_to_chunks(
     # bus-bound, so the number of transfers is what costs.
     strain = np.asarray(batch.strain)
     if strain.ndim != _BATCHED_STRAIN_DIMENSIONS:
-        raise ValueError(f"Expected strain of shape (n_events, n_detectors, n_samples), got {strain.shape}.")
+        raise DeterministicRefusalError(
+            f"Expected strain of shape (n_events, n_detectors, n_samples), got {strain.shape}."
+        )
 
     start_indices = np.atleast_1d(np.asarray(batch.start_index))
     if start_indices.size != strain.shape[0]:
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"Got {start_indices.size} start indices for {strain.shape[0]} events; each event needs "
             f"its own buffer position."
         )
     if strain.shape[1] != len(produced_names):
-        raise ValueError(f"Strain has {strain.shape[1]} detector rows but {len(produced_names)} detector names.")
+        raise DeterministicRefusalError(
+            f"Strain has {strain.shape[1]} detector rows but {len(produced_names)} detector names."
+        )
 
     grid = batch.grid
 
@@ -227,7 +232,7 @@ def batched_strain_to_chunks(
     # and sample spacing describe different things -- placed without complaint, wrong by a stretch
     # factor.
     if float(grid.sampling_frequency) != float(batch.sampling_frequency):
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"The output grid is at {grid.sampling_frequency!r} Hz but the batch is at "
             f"{batch.sampling_frequency!r} Hz. Start times are taken from the grid and the samples "
             f"from the batch, so the chunks would be timestamped at one rate and spaced at another."
@@ -237,7 +242,7 @@ def batched_strain_to_chunks(
     # buffer half a sample early and look entirely normal afterwards.
     non_integral = [value for value in start_indices.tolist() if float(value) != int(float(value))]
     if non_integral:
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"Buffer start indices must be whole samples, got {non_integral}. Truncating them would "
             f"displace the affected events by a fraction of a sample without any later check noticing."
         )
@@ -260,7 +265,7 @@ def batched_strain_to_chunks(
     if np.any(rejected):
         first = int(np.argmax(rejected))
         offset = float(grid_offsets[first])
-        raise ValueError(
+        raise DeterministicRefusalError(
             f"Event {first}'s buffer starts at GPS {start_times[first]!r}, which is {offset - round(offset):+.3e} "
             f"samples off the output grid (epoch {grid.epoch!r}, {grid.sampling_frequency!r} Hz). "
             f"gwmock-signal considers it on-lattice: {bool(on_lattice[first])}; gwmock considers it "

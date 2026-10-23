@@ -18,6 +18,7 @@ from gwmock.data.time_series.inject import measure_content_before
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
 from gwmock.simulator.state import StateAttribute
+from gwmock.utils.errors import DeterministicRefusalError
 
 if TYPE_CHECKING:
     from gwmock_data import TimeSeries as ChannelSeries
@@ -593,9 +594,9 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
                 channel = [channel] * data.num_of_channels
             elif isinstance(channel, list):
                 if len(channel) != data.num_of_channels:
-                    raise ValueError("Length of channel list must match number of channels in data.")
+                    raise DeterministicRefusalError("Length of channel list must match number of channels in data.")
             else:
-                raise ValueError("channel must be a string or list of strings.")
+                raise DeterministicRefusalError("channel must be a string or list of strings.")
         else:
             channel = [None] * data.num_of_channels
         if data.num_of_channels == 1 and isinstance(file_name, (str, Path)):
@@ -611,7 +612,7 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
                 single_channel = channel[i]
                 self._save_gwf_data(data=data[i], file_name=single_file_name, channel=single_channel, **kwargs)
         else:
-            raise ValueError(
+            raise DeterministicRefusalError(
                 "file_name must be a single path for single-channel data or an array of paths for multi-channel data."
             )
 

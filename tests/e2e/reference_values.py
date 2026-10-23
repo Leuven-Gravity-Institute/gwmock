@@ -96,7 +96,9 @@ stage:
 * **Six of the eight entries reproduce across the platforms**, at 8.0e-13 and below -- the noise-only
   entries and the stochastic one at 1.9e-16, about one ulp. Only
   ``noise/uncorrelated_gaussian/quick_start`` (3.90e-06) and ``signal/bbh/et_triangle_sardinia``
-  (4.17e-06) fail, and those are exactly the two that generate through LAL.
+  (4.17e-06) fail, and those are exactly the two that generate through LAL with ``IMRPhenomXPHM``.
+  ``signal/bbh/ligo_hl``, added later, generates through LAL with ``IMRPhenomD`` and reproduces at
+  7.5e-15, so the gap belongs to the model's LAL output rather than to LAL as a whole.
 * **The difference is already in LAL's own output**, before numpy touches it: the raw ``IMRPhenomXPHM``
   frequency-domain polarizations differ by 2.0e-07 rms (5.1e-07 peak) between the two builds. Conditioning
   to the time domain conserves that rms and merely redistributes it, concentrating the *maximum* to 1.3e-05.
@@ -242,6 +244,13 @@ STATISTIC_TOLERANCE = 1e-6
 #: macOS release, or a Linux/aarch64 host would give. It is sized so that a plausible variation
 #: between LAL builds does not turn into a red suite, while a real waveform regression -- which
 #: moves these by percent, two orders above this -- still fails.
+#:
+#: Re-measured on 2026-10-22 on an Apple M4 Pro (Darwin/arm64, Python 3.13) against the same
+#: references: 2.89e-06 for ``quick_start`` and 4.49e-06 for ``signal/bbh/et_triangle_sardinia``,
+#: integer statistics unchanged, so the bound keeps a 22x margin over the largest figure. The
+#: LIGO entry ``signal/bbh/ligo_hl``, which also generates through LAL but with ``IMRPhenomD``
+#: rather than ``IMRPhenomXPHM``, moved by 7.5e-15 and is not flagged; ``default_config`` moved
+#: by 3.3e-16.
 #:
 #: This is deliberately *not* applied to every entry. Widening the gate globally would cost the
 #: six entries that reproduce across platforms at 1e-13 and better the sensitivity they

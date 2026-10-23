@@ -47,9 +47,10 @@ What goes where:
 | any other absolute path (a value, a mapping key, or inside text)       | relative to the working directory; its file name if it lies outside it | the original, at its location in the record       |
 | `outputs[].path`, `file_hashes`, `content_hashes`, `output_files`      | unchanged: already relative paths and file names                       | --                                                |
 | `host.platform`                                                        | `<os>-<architecture>`, e.g. `Linux-x86_64`                             | the full string, e.g. `Linux-6.8.0-...-glibc2.39` |
-| `host.os`, `host.architecture`, `host.cpu_model`                       | added; `cpu_model` is `null` when the platform does not report it      | --                                                |
+| `host.os`, `host.architecture`                                         | added                                                                  | --                                                |
+| `host.cpu_model`                                                       | unchanged; `null` when the platform does not report it                 | --                                                |
 | `host.python`, `host.cpu`, `host.git_sha`                              | unchanged                                                              | --                                                |
-| host name                                                              | absent                                                                 | `hostname`                                        |
+| `host.hostname`                                                        | absent                                                                 | `hostname`, and the full `host` under `values`    |
 | `private_metadata`                                                     | `{"file": <private file name>, "sha256": <digest of its bytes>}`       | --                                                |
 
 The private file is JSON (or YAML, beside a YAML record) with the author, the
@@ -125,9 +126,11 @@ directory either. The signal and glitch indexes are built from it too.
 `gwmock merge` writes its record the same way: the merged record, with the paths
 of its sources relative to the directory the merge runs in (or reduced to file
 names), and `file_hashes` keyed by the merged file's name; the author and the
-original paths go to `<merged>.private.yaml`. The source records it nests are
-split too, so a merge of records written with the split turned off still yields
-a shareable merged record.
+original paths go to `<merged>.private.yaml`. Its `host` describes the machine
+that merged, reduced as a run's is: the processor model stays in the merged
+record and the host name goes to the private file. The source records it nests
+are split too, each keeping its own processor model, so a merge of records
+written with the split turned off still yields a shareable merged record.
 
 ### Keeping the combined layout
 

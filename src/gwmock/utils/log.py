@@ -31,6 +31,31 @@ def share_logging(source: logging.Logger) -> None:
         shared.handlers = list(source.handlers)
 
 
+#: Warnings astropy and ERFA raise for any date past their tables, matched by message so that every
+#: other warning they raise stays visible. ERFA's "dubious year" means the date lies beyond the
+#: leap-second table, and the IERS one means Earth-orientation data (UT1-UTC, polar motion) has not
+#: been measured for it yet; both then extrapolate. Simulated data is routinely placed at such dates --
+#: the examples use 2030 -- and there is no measured value to use instead, so the warning describes
+#: the setup rather than a problem, yet a single run repeats it a dozen or more times.
+FUTURE_EPOCH_WARNING_PATTERNS = (
+    r'ERFA function "\w+" yielded \d+ of "dubious year',
+    r"Tried to get polar motions for times after IERS data is valid",
+)
+
+
+def ignore_future_epoch_warnings() -> None:
+    """Stop astropy and ERFA from warning that a date lies past their tables.
+
+    Installed by the command-line interface, which converts the run's GPS times to UTC and UT1 for
+    every segment. Only the two messages in :data:`FUTURE_EPOCH_WARNING_PATTERNS` are filtered; a
+    different warning from either library is still shown.
+    """
+    import warnings  # noqa: PLC0415
+
+    for pattern in FUTURE_EPOCH_WARNING_PATTERNS:
+        warnings.filterwarnings("ignore", message=pattern)
+
+
 def get_version_information() -> str:
     """Get the version information.
 
