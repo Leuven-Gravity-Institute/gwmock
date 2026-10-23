@@ -70,7 +70,7 @@ dependencies = [
   # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet;
   # 0.18.0 (noise) and 0.16.0 (pop) read and write HDF5 without it.
   # 0.18.1 (noise) and 0.16.1 (pop) import lazily, so importing them loads no SciPy or NetworkX.
-  "gwmock-noise>=0.18.1",
+  "gwmock-noise>=0.18.2",
   "gwmock-pop>=0.18.0",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
@@ -123,7 +123,7 @@ cuda = ["gwmock-signal[jax]>=0.21.2", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.18.1"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.18.2"]
 # The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
@@ -133,7 +133,7 @@ pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
 # publishes no wheel for Python 3.15 yet.
 hdf5 = [
   "h5py>=3.13.0",
-  "gwmock-noise[hdf5]>=0.18.1",
+  "gwmock-noise[hdf5]>=0.18.2",
   "gwmock-pop[hdf5]>=0.18.0",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
