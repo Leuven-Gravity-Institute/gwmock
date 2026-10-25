@@ -153,7 +153,7 @@ dev = [
   "pytest-github-actions-annotate-failures>=0.4.2",
   "mutmut>=3.8.0",
   # Pinned to the `ruff-pre-commit` rev in `.pre-commit-config.yaml`; bump the two together.
-  "ruff==0.17.1",
+  "ruff==0.17.2",
 ]
 docs = ["zensical>=0.0.71", "mkdocstrings-python>=2.0.10"]
 build = ["hatch>=1.18.1"]
