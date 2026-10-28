@@ -29,11 +29,21 @@ jobs:
               with:
                   fetch-depth: 0
 
-            - name: Check for new commits
+            # Release only when something that reaches the built package changed
+            # since the latest tag: its sources, packaging config, readme, license
+            # or dynamic metadata files. Dev-dependency bumps, lock-file
+            # maintenance, CI, tests and docs do not count. The build hook
+            # (hatch_build.py) copies the example configurations and catalogues
+            # into the wheel, so those count too.
+            - name: Check for package changes
               id: check_commits
-              uses: isaac-cf-wong/detect-git-changes-action@7a2a8da1d825e42f95f1f088760332b18604e781 # v0.0.23
+              uses: isaac-cf-wong/detect-git-changes-action@fd41a9c5553a9148e8f78399855fd19e04801501 # v0.2.0
               with:
                   use-latest-tag: true
+                  preset: python
+                  paths: |
+                      :(glob)examples/**/*.yaml
+                      :(glob)examples/**/*.csv
 
     ci:
         needs: check_new_commits

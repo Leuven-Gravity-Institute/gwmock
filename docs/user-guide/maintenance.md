@@ -92,9 +92,12 @@ issue tracks all pending and blocked updates.
 
 Releases are scheduled and automated rather than ad hoc:
 
-- **Cadence** — a release is cut **every Tuesday at 00:00 UTC** whenever new
-  commits have landed since the previous release (`scheduled_release.yml`).
-  Emergency bugfix releases can be triggered manually.
+- **Cadence** — a release is cut **every Tuesday at 00:00 UTC** whenever
+  something that reaches the built package has changed since the previous
+  release (`scheduled_release.yml`): the sources, the packaging configuration,
+  the readme, the license, or the example configurations and catalogues that
+  ship in the wheel. CI, tests, docs and dev-dependency bumps alone do not cut a
+  release. Emergency bugfix releases can be triggered manually.
 - **Versioning** — versions are derived from git tags via
   `uv-dynamic-versioning`; there is no hand-edited version string. Pull request
   titles follow Conventional Commits (enforced by a PR-title check), which
