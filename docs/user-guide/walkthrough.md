@@ -132,7 +132,7 @@ Summarized here; full detail on [Maintenance & Quality](maintenance.md).
   [Renovate](https://docs.renovatebot.com/), with CI gating every automated
   merge. Major updates always require human review.
 - **Scheduled releases** — releases are cut automatically every Tuesday at 00:00
-  UTC when there are new commits, with changelogs generated from the
+  UTC when the package itself has changed, with changelogs generated from the
   conventional-commit history on the
   [GitHub Releases page](https://github.com/Leuven-Gravity-Institute/gwmock/releases).
   Every release is published to [PyPI](https://pypi.org/project/gwmock/) and
