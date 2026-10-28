@@ -621,10 +621,18 @@ class TestWhetherTheMoveHappenedIsDecidedByIdentity:
 
 
 class _NoInode:
-    """A stat result whose file system reports no inode."""
+    """A stat result whose file system reports no inode.
+
+    Every other field is the real one: the patched ``os.fstat`` is process-wide while the test runs,
+    so pytest's own output capture reads it too (``st_size``, from pytest 9.2).
+    """
 
     def __init__(self, status) -> None:
-        self.st_dev, self.st_mode, self.st_ino = status.st_dev, status.st_mode, 0
+        self._status = status
+        self.st_ino = 0
+
+    def __getattr__(self, name: str):
+        return getattr(self._status, name)
 
 
 class TestAnEntrySwappedJustBeforeTheMove:
