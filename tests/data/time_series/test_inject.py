@@ -771,7 +771,11 @@ class TestInjectInterpolationQuality:
 
         covered = np.arange(1001, 3048)
         positions = covered - shift
-        np.testing.assert_allclose(result[covered], resample_uniform_sinc(values, positions), rtol=0.0, atol=1e-15)
+        # The kernel's whole samples and fraction passed apart, as inject does: summed into one float64,
+        # the positions round at the 1e-13 of a sample this comparison would otherwise see.
+        whole = np.floor(shift)
+        expected = resample_uniform_sinc(values, covered - int(whole), fraction=whole - shift)
+        np.testing.assert_allclose(result[covered], expected, rtol=0.0, atol=1e-15)
         interior = (positions > 200) & (positions < length - 200)
         analytic = (0.5 - 0.5 * np.cos(2 * np.pi * positions / (length - 1))) * np.sin(
             2 * np.pi * frequency * positions / sampling_frequency
