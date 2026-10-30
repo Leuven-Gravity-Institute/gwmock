@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from gwmock_data.multichannel_series import TAPERED_METADATA_KEY
 from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
 
 from gwmock.data.time_series.time_series import TimeSeries
@@ -957,11 +958,18 @@ class SignalAdapter:
             background=background,
             earth_rotation=earth_rotation,
         )
-        return TimeSeries(
+        chunk = TimeSeries(
             data=strain_stack.data,
             start_time=strain_stack.t0,
             sampling_frequency=strain_stack.sample_rate,
         )
+        # A whole waveform tapered to zero at both ends, as the backend's conditioning guarantees, is
+        # marked so that injection off the segment grid oversamples it exactly and places it accurately
+        # up to Nyquist rather than to 0.8 of it. Not once it has been added into a background: the sum
+        # is no longer a tapered signal.
+        if background is None and getattr(self._backend, "polarizations_tapered", False) is True:
+            chunk.metadata[TAPERED_METADATA_KEY] = True
+        return chunk
 
     def set_seed(self, seed: int | None) -> None:
         """Set a backend seed attribute when the backend exposes one."""

@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from gwmock_signal.projection.resampling import resample_uniform_sinc
+from gwmock_data.resampling import OVERSAMPLING_FACTOR, oversample_fourier, resample_uniform_sinc
 
 from gwmock.cli.utils.config import Config
 from gwmock.signal.adapter import SignalAdapter
@@ -741,8 +741,11 @@ class TestAnOffGridCoalescenceTime:
 
         Shifting ``coa_time`` by a fraction of a sample shifts the waveform and nothing else of
         consequence, so the off-grid strain must be the on-grid strain evaluated
-        ``offset_samples`` earlier. The windowed-sinc kernel reproduces that to ~4e-7 of peak --
-        the residue of the waveform's own weak dependence on ``coa_time`` -- where linear
+        ``offset_samples`` earlier. The chunk is a whole tapered waveform, so it is oversampled
+        exactly before the windowed-sinc kernel reads it, and the reference is shifted the same
+        way. They agree to 3.7e-7..4.6e-7 of peak, the residue of the waveform's own weak dependence
+        on ``coa_time``. The kernel alone is accurate only to 0.8 x Nyquist, and at 1024 Hz this
+        waveform has content above that, where it is off the exact shift by 2.6e-4 of peak. Linear
         interpolation leaves ~0.27, and resampling segment by segment leaves the seam broken.
 
         The chunk's first and last kernel half-width are excluded: positions just outside a chunk
@@ -763,6 +766,8 @@ class TestAnOffGridCoalescenceTime:
         assert compared[seam - half_width : seam + half_width].all(), "the seam must lie inside the comparison"
 
         for channel in range(on_grid.shape[0]):
-            expected = resample_uniform_sinc(on_grid[channel], indices - self._OFFSET_SAMPLES)
+            expected = resample_uniform_sinc(
+                oversample_fourier(on_grid[channel]), OVERSAMPLING_FACTOR * (indices - self._OFFSET_SAMPLES)
+            )
             error = np.abs(off_grid[channel] - expected)[compared] / np.max(np.abs(on_grid[channel]))
             assert np.max(error) < 1e-5, f"channel {channel}: off-grid strain differs by {np.max(error):.3g} of peak"
