@@ -59,7 +59,7 @@ dependencies = [
   # 0.21.2 keeps the whole signal: the projection keeps the samples the detector delay moves past
   # either end, LAL waveforms no longer wrap around their buffer, and bursts answer the duration
   # queries, so a burst is no longer placed by `coa_time` alone and cropped at a segment boundary.
-  "gwmock-signal>=0.21.2",
+  "gwmock-signal>=0.21.3",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -70,8 +70,8 @@ dependencies = [
   # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet;
   # 0.18.0 (noise) and 0.16.0 (pop) read and write HDF5 without it.
   # 0.18.1 (noise) and 0.16.1 (pop) import lazily, so importing them loads no SciPy or NetworkX.
-  "gwmock-noise>=0.18.2",
-  "gwmock-pop>=0.18.0",
+  "gwmock-noise>=0.18.3",
+  "gwmock-pop>=0.18.1",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "pydantic>=2.10.0",
@@ -96,7 +96,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.21.2"]
+sgwb = ["gwmock-signal[sgwb]>=0.21.3"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -112,10 +112,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.21.2"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.21.2"]
+jax = ["gwmock-signal[jax]>=0.21.3"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.21.2", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.21.3", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -125,7 +125,7 @@ cuda = ["gwmock-signal[jax]>=0.21.2", "jax[cuda12]>=0.11.0"]
 #
 # Floored at the `gwmock-noise` runtime floor above rather than at a new number: 0.11.2 already
 # publishes this extra, so there is nothing below it that this declaration would rescue.
-deepextractor = ["gwmock-noise[deepextractor]>=0.18.2"]
+deepextractor = ["gwmock-noise[deepextractor]>=0.18.3"]
 # The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
@@ -135,11 +135,11 @@ pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
 # publishes no wheel for Python 3.15 yet.
 hdf5 = [
   "h5py>=3.13.0",
-  "gwmock-noise[hdf5]>=0.18.2",
-  "gwmock-pop[hdf5]>=0.18.0",
+  "gwmock-noise[hdf5]>=0.18.3",
+  "gwmock-pop[hdf5]>=0.18.1",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
-gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.21.2"]
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.21.3"]
 
 [dependency-groups]
 dev = [
@@ -151,13 +151,13 @@ dev = [
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.17.0",
   "pytest>=9.1.1",
-  "pytest-asyncio>=1.4.0",
+  "pytest-asyncio>=1.4.1",
   "pytest-github-actions-annotate-failures>=0.4.2",
   "mutmut>=3.8.0",
   # Pinned to the `ruff-pre-commit` rev in `.pre-commit-config.yaml`; bump the two together.
   "ruff==0.17.3",
 ]
-docs = ["zensical>=0.0.72", "mkdocstrings-python>=2.0.10"]
+docs = ["zensical>=0.0.73", "mkdocstrings-python>=2.0.10"]
 build = ["hatch>=1.18.1"]
 release = ["git-cliff>=2.14.2"]
 
