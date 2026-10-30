@@ -69,9 +69,9 @@ class TestTaperedMark:
         backend = FakeBackend(waveform_model="IMRPhenomXPHM")
         if tapered is not None:
 
-            def declared(params):
+            def declared(params, sampling_frequency):
                 if seen is not None:
-                    seen.append(dict(params))
+                    seen.append({**params, "sampling_frequency": sampling_frequency})
                 return tapered
 
             backend.polarizations_tapered = declared
@@ -84,7 +84,7 @@ class TestTaperedMark:
         chunk = self._adapter(tapered).simulate({"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0)
         assert (chunk.metadata.get(TAPERED_METADATA_KEY) is True) is marked
 
-    def test_the_backend_is_asked_with_the_events_own_waveform_options(self):
+    def test_the_backend_is_asked_with_the_events_own_waveform_options_and_rate(self):
         """The declaration depends on the model's options, so it is asked with what the stack was generated with."""
         seen = []
         options = {"PhenomXPHMThresholdMband": 0.0}
@@ -93,6 +93,7 @@ class TestTaperedMark:
         )
         assert seen
         assert seen[0]["waveform_arguments"] == options
+        assert seen[0]["sampling_frequency"] == 4.0
 
     def test_a_chunk_injected_into_a_background_is_not_marked(self):
         """The sum of a signal and a background is no longer a tapered signal."""
