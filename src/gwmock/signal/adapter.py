@@ -963,11 +963,17 @@ class SignalAdapter:
             start_time=strain_stack.t0,
             sampling_frequency=strain_stack.sample_rate,
         )
-        # A whole waveform tapered to zero at both ends, as the backend's conditioning guarantees, is
-        # marked so that injection off the segment grid oversamples it exactly and places it accurately
-        # up to Nyquist rather than to 0.8 of it. Not once it has been added into a background: the sum
-        # is no longer a tapered signal.
-        if background is None and getattr(self._backend, "polarizations_tapered", False) is True:
+        # A whole waveform tapered to zero at both ends, as the backend's conditioning guarantees for this
+        # model and these options, is marked so that injection off the segment grid oversamples it exactly
+        # and places it accurately up to Nyquist rather than to 0.8 of it. Not once it has been added into
+        # a background: the sum is no longer a tapered signal.
+        declared = getattr(self._backend, "polarizations_tapered", None)
+        if (
+            background is None
+            and callable(declared)
+            and declared(self._backend_parameters(parameters, waveform_arguments, waveform_options, minimum_frequency))
+            is True
+        ):
             chunk.metadata[TAPERED_METADATA_KEY] = True
         return chunk
 

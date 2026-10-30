@@ -65,10 +65,16 @@ class TestTaperedMark:
     """A chunk from a backend that tapers its waveforms is marked, so off-grid injection places it exactly."""
 
     @staticmethod
-    def _adapter(tapered):
+    def _adapter(tapered, seen=None):
         backend = FakeBackend(waveform_model="IMRPhenomXPHM")
         if tapered is not None:
-            backend.polarizations_tapered = tapered
+
+            def declared(params):
+                if seen is not None:
+                    seen.append(dict(params))
+                return tapered
+
+            backend.polarizations_tapered = declared
         network = SimpleNamespace(detector_names=("E1",))
         return SignalAdapter(source_type="cbc", backend=backend, network=network)
 
@@ -77,6 +83,16 @@ class TestTaperedMark:
         """Only ``True`` itself counts; a backend that says nothing is not taken as tapering."""
         chunk = self._adapter(tapered).simulate({"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0)
         assert (chunk.metadata.get(TAPERED_METADATA_KEY) is True) is marked
+
+    def test_the_backend_is_asked_with_the_events_own_waveform_options(self):
+        """The declaration depends on the model's options, so it is asked with what the stack was generated with."""
+        seen = []
+        options = {"PhenomXPHMThresholdMband": 0.0}
+        self._adapter(True, seen).simulate(
+            {"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0, waveform_options=options
+        )
+        assert seen
+        assert seen[0]["waveform_arguments"] == options
 
     def test_a_chunk_injected_into_a_background_is_not_marked(self):
         """The sum of a signal and a background is no longer a tapered signal."""
