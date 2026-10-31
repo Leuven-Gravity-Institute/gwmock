@@ -150,7 +150,7 @@ dev = [
   "prek>=0.5.7",
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.17.0",
-  "pytest>=9.1.1",
+  "pytest>=9.2.0",
   "pytest-asyncio>=1.4.1",
   "pytest-github-actions-annotate-failures>=0.4.2",
   "mutmut>=3.8.0",
@@ -158,7 +158,7 @@ dev = [
   "ruff==0.17.3",
 ]
 docs = ["zensical>=0.0.73", "mkdocstrings-python>=2.0.10"]
-build = ["hatch>=1.18.1"]
+build = ["hatch>=1.18.2"]
 release = ["git-cliff>=2.14.2"]
 
 [project.scripts]
