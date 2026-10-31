@@ -31,6 +31,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from gwmock_data.multichannel_series import ON_GRID_EPOCH_METADATA_KEY, ON_GRID_METADATA_KEY
 
 from gwmock.data.time_series.inject import alignment_tolerance, is_aligned
 from gwmock.data.time_series.time_series import TimeSeries
@@ -251,8 +252,8 @@ def batched_strain_to_chunks(
 
     # Checked against *both* predicates, because agreeing with the producer is not the same as
     # agreeing with the consumer. gwmock-signal's `is_on_lattice` says the buffer sits on the grid it
-    # was generated for; `is_aligned` is what `TimeSeries.inject` will actually apply when placing
-    # it. Those can disagree -- at GPS 1577491296, 4000 Hz, sample 10, the representation error is
+    # was generated for; `is_aligned` is the resolution `TimeSeries.inject` holds a chunk declared on
+    # the grid to, as each chunk below is. Those can disagree -- at GPS 1577491296, 4000 Hz, sample 10, the representation error is
     # 2.29e-4 samples, which `is_on_lattice` accepts and a relative-tolerance `inject` rejected,
     # silently interpolating a chunk this module promised would be placed verbatim. Asserting only
     # the producer's view is how that went unnoticed.
@@ -273,14 +274,18 @@ def batched_strain_to_chunks(
             f"resample the chunk instead of placing it exactly."
         )
 
+    # Declared on the output grid, and on no other: built there, a chunk's start rounds off it by up to
+    # 2.29e-4 samples at 4000 Hz, beyond the 1e-4 within which an undeclared chunk is placed by whole
+    # samples. Undeclared, it would be resampled at the time that rounding gave it.
     sampling_frequency = float(batch.sampling_frequency)
-    return TimeSeriesList(
-        [
-            TimeSeries(
-                data=np.ascontiguousarray(strain[event]),
-                start_time=float(start_times[event]),
-                sampling_frequency=sampling_frequency,
-            )
-            for event in range(strain.shape[0])
-        ]
-    )
+    chunks = []
+    for event in range(strain.shape[0]):
+        chunk = TimeSeries(
+            data=np.ascontiguousarray(strain[event]),
+            start_time=float(start_times[event]),
+            sampling_frequency=sampling_frequency,
+        )
+        chunk.metadata[ON_GRID_METADATA_KEY] = True
+        chunk.metadata[ON_GRID_EPOCH_METADATA_KEY] = float(grid.epoch)
+        chunks.append(chunk)
+    return TimeSeriesList(chunks)

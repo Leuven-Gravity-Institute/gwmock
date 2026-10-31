@@ -84,8 +84,10 @@ dependencies = [
   # place, and 0.4.1 the first that writes a string attribute of any length without h5py (a run
   # record carrying an environment freeze outgrows the 64 KiB a fixed-length one can hold). 0.4.5 is
   # the first whose resampler takes a position's whole samples and fraction apart, so an injection
-  # far into a long series is placed as precisely as one near its start.
-  "gwmock-data>=0.4.5",
+  # far into a long series is placed as precisely as one near its start. 0.4.6 is the first that
+  # oversamples a chunk marked tapered exactly, and 0.4.7 the first that places an undeclared chunk at
+  # the time it carries and takes a chunk's declaration that it was built on the grid.
+  "gwmock-data>=0.4.7",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
   # all install them, so they are declared here.
   "numpy>=2.2",

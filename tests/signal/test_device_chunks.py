@@ -124,6 +124,33 @@ class TestConversion:
             "the second event's second detector was not placed verbatim at its grid index"
         )
 
+    def test_each_chunk_is_declared_on_the_output_grid(self):
+        """Built there, so the injection places it by whole samples; the grid it names is the output grid."""
+        from gwmock_data.multichannel_series import ON_GRID_EPOCH_METADATA_KEY, ON_GRID_METADATA_KEY
+
+        for chunk in batched_strain_to_chunks(_batch()):
+            assert chunk.metadata[ON_GRID_METADATA_KEY] is True
+            assert chunk.metadata[ON_GRID_EPOCH_METADATA_KEY] == _EPOCH
+
+    def test_a_chunk_whose_start_rounds_off_the_grid_is_placed_verbatim(self):
+        """At GPS 1577491296 and 4000 Hz, sample 10's time is 2.29e-4 samples off the grid: beyond LAL's 1e-4
+        no-op shift, so undeclared the chunk would be resampled at the time that rounding gave it."""
+        from gwmock.data.time_series.time_series import TimeSeries
+
+        rate = 4000.0
+        batch = _batch(n_events=1, start_indices=(10,))
+        batch.grid = _Grid(sampling_frequency=rate)
+        batch.sampling_frequency = rate
+        ramp = np.arange(1.0, 65.0)
+        batch.strain = np.stack([np.stack([ramp, 2 * ramp, 3 * ramp])])
+        offset = (batch.grid.time_of(10) - _EPOCH) * rate
+        assert abs(offset - 10) > 1e-4
+
+        segment = TimeSeries(data=np.zeros((3, 1024)), start_time=_EPOCH, sampling_frequency=rate)
+        segment.inject_from_list(batched_strain_to_chunks(batch))
+
+        np.testing.assert_array_equal(np.asarray(segment)[:, 10:74], batch.strain[0])
+
     def test_a_scalar_start_index_is_accepted(self):
         """A one-event batch may carry a scalar rather than a length-one array."""
         batch = _batch(n_events=1, start_indices=(7,))

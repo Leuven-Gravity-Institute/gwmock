@@ -854,7 +854,7 @@ release = [
 requires-dist = [
     { name = "astropy", specifier = ">=7.0" },
     { name = "filelock", specifier = ">=3.17.0" },
-    { name = "gwmock-data", specifier = ">=0.4.5" },
+    { name = "gwmock-data", specifier = ">=0.4.7" },
     { name = "gwmock-noise", specifier = ">=0.18.3" },
     { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.18.3" },
     { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.3" },
@@ -906,16 +906,16 @@ release = [{ name = "git-cliff", specifier = ">=2.14.2" }]
 
 [[package]]
 name = "gwmock-data"
-version = "0.4.5"
+version = "0.4.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
     { name = "numpy" },
     { name = "pyfive" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/b3/5623ffed236d4638eb02914dcd272ad873b19c66f685968d9668eaef0d3c/gwmock_data-0.4.5.tar.gz", hash = "sha256:c66ea15724af20c523cde071b58966a2f92dd208de0980c581c24ba833dd3ab3", size = 292407, upload-time = "2026-10-28T12:38:39.373Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/1a/23107ad79fc04c62fdee0037027273990db4a83c3213dff19cbf271318ca/gwmock_data-0.4.7.tar.gz", hash = "sha256:4b1a38bc8ebd64f577ff445f37ea382d61afcf103b2c09df3b9f3ffc0112d542", size = 303091, upload-time = "2026-10-31T09:49:48.821Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/41/1261e68200acc08f3e5f28268d478619b500c16a6c68bc4fa407d376a07a/gwmock_data-0.4.5-py3-none-any.whl", hash = "sha256:b5315fee229db821e6502af2878926c5bed803a4da71f00443b98212b0101fc3", size = 53103, upload-time = "2026-10-28T12:38:38.355Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/ba/00af3030eb0635b50d381018c02fe2a2fc3d92eeaa2a4feb0185b9fbf48f/gwmock_data-0.4.7-py3-none-any.whl", hash = "sha256:2c9e73fdd6243038ca3d14f0fb4288b0198fe22c1b936494e1dbf55d9641c866", size = 57472, upload-time = "2026-10-31T09:49:47.863Z" },
 ]
 
 [[package]]
