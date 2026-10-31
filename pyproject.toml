@@ -59,7 +59,9 @@ dependencies = [
   # 0.21.2 keeps the whole signal: the projection keeps the samples the detector delay moves past
   # either end, LAL waveforms no longer wrap around their buffer, and bursts answer the duration
   # queries, so a burst is no longer placed by `coa_time` alone and cropped at a segment boundary.
-  "gwmock-signal>=0.21.3",
+  # 0.21.5 says whether a waveform it generates is tapered (`polarizations_tapered`), so a tapered
+  # chunk is placed accurately up to Nyquist, and places an injection at the time it carries.
+  "gwmock-signal>=0.21.5",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -84,8 +86,10 @@ dependencies = [
   # place, and 0.4.1 the first that writes a string attribute of any length without h5py (a run
   # record carrying an environment freeze outgrows the 64 KiB a fixed-length one can hold). 0.4.5 is
   # the first whose resampler takes a position's whole samples and fraction apart, so an injection
-  # far into a long series is placed as precisely as one near its start.
-  "gwmock-data>=0.4.5",
+  # far into a long series is placed as precisely as one near its start. 0.4.6 is the first that
+  # oversamples a chunk marked tapered exactly, and 0.4.7 the first that places an undeclared chunk at
+  # the time it carries and takes a chunk's declaration that it was built on the grid.
+  "gwmock-data>=0.4.7",
   # Imported directly. They used to arrive only through the sibling packages, which no longer
   # all install them, so they are declared here.
   "numpy>=2.2",
@@ -96,7 +100,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.21.3"]
+sgwb = ["gwmock-signal[sgwb]>=0.21.5"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -112,10 +116,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.21.3"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.21.3"]
+jax = ["gwmock-signal[jax]>=0.21.5"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.21.3", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.21.5", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -139,7 +143,7 @@ hdf5 = [
   "gwmock-pop[hdf5]>=0.18.1",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
-gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.21.3"]
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.21.5"]
 
 [dependency-groups]
 dev = [

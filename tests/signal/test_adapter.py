@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 from gwmock_data import TimeSeries as ChannelSeries
+from gwmock_data.multichannel_series import TAPERED_METADATA_KEY
 from gwmock_signal import DetectorStrainStack
 
 from gwmock.signal.adapter import SignalAdapter
@@ -58,6 +59,48 @@ class FakeBackend:
                 for index, name in enumerate(names)
             },
         )
+
+
+class TestTaperedMark:
+    """A chunk from a backend that tapers its waveforms is marked, so off-grid injection places it exactly."""
+
+    @staticmethod
+    def _adapter(tapered, seen=None):
+        backend = FakeBackend(waveform_model="IMRPhenomXPHM")
+        if tapered is not None:
+
+            def declared(params, sampling_frequency):
+                if seen is not None:
+                    seen.append({**params, "sampling_frequency": sampling_frequency})
+                return tapered
+
+            backend.polarizations_tapered = declared
+        network = SimpleNamespace(detector_names=("E1",))
+        return SignalAdapter(source_type="cbc", backend=backend, network=network)
+
+    @pytest.mark.parametrize(("tapered", "marked"), [(True, True), (False, False), (None, False), ("yes", False)])
+    def test_only_a_backend_declaring_tapered_waveforms_marks_its_chunks(self, tapered, marked):
+        """Only ``True`` itself counts; a backend that says nothing is not taken as tapering."""
+        chunk = self._adapter(tapered).simulate({"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0)
+        assert (chunk.metadata.get(TAPERED_METADATA_KEY) is True) is marked
+
+    def test_the_backend_is_asked_with_the_events_own_waveform_options_and_rate(self):
+        """The declaration depends on the model's options, so it is asked with what the stack was generated with."""
+        seen = []
+        options = {"PhenomXPHMThresholdMband": 0.0}
+        self._adapter(True, seen).simulate(
+            {"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0, waveform_options=options
+        )
+        assert seen
+        assert seen[0]["waveform_arguments"] == options
+        assert seen[0]["sampling_frequency"] == 4.0
+
+    def test_a_chunk_injected_into_a_background_is_not_marked(self):
+        """The sum of a signal and a background is no longer a tapered signal."""
+        chunk = self._adapter(True).simulate(
+            {"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0, background={"E1": np.zeros(4)}
+        )
+        assert TAPERED_METADATA_KEY not in chunk.metadata
 
 
 class NoRegistrationBackend:
