@@ -965,18 +965,18 @@ class TestAlignmentTolerance:
 
     @pytest.mark.parametrize("sampling_frequency", [1000.0, 2000.0, 3000.0, 4000.0, 4096.0, 8192.0])
     @pytest.mark.parametrize("offset_samples", [1_000, 1_000_000])
-    def test_a_genuinely_aligned_chunk_is_not_interpolated(self, sampling_frequency: float, offset_samples: int):
-        """Tightening the tolerance must not push real alignments onto the interpolation path.
+    def test_a_chunk_declared_on_the_grid_is_not_interpolated(self, sampling_frequency: float, offset_samples: int):
+        """A chunk its producer built on the grid is placed by whole samples, at any rate.
 
-        ``offset`` comes from a GPS-scale subtraction, so an exactly-aligned chunk still carries
-        cancellation error -- zero at power-of-two rates, up to 4.0e-4 samples at 4000 Hz. The
-        non-power-of-two rates here are the cases that error appears in, and they are the reason
-        the tolerance is 1e-3 rather than something tighter.
+        Its start time ``1e9 + k / f_s`` is rounded to float64, so the offset carries representation
+        error -- zero at power-of-two rates, up to 4.0e-4 samples at 4000 Hz, more than LAL's no-op
+        shift. The non-power-of-two rates here are the cases that error appears in; the declaration,
+        not the size of the fraction, is what places them verbatim.
         """
         target = self._target(offset_samples + 64, sampling_frequency=sampling_frequency)
         other = self._series(offset_samples, sampling_frequency=sampling_frequency, amplitude=2.0)
 
-        result = inject(target, other, interpolate_if_offset=False)
+        result = inject(target, other, interpolate_if_offset=False, on_grid=True)
 
         occupied = np.flatnonzero(np.asarray(result.value))
         assert occupied.size, (
