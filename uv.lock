@@ -860,11 +860,11 @@ requires-dist = [
     { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.3" },
     { name = "gwmock-pop", specifier = ">=0.18.1" },
     { name = "gwmock-pop", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.1" },
-    { name = "gwmock-signal", specifier = ">=0.21.3" },
-    { name = "gwmock-signal", extras = ["gwpy"], marker = "extra == 'gwpy'", specifier = ">=0.21.3" },
-    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.21.3" },
-    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'jax'", specifier = ">=0.21.3" },
-    { name = "gwmock-signal", extras = ["sgwb"], marker = "extra == 'sgwb'", specifier = ">=0.21.3" },
+    { name = "gwmock-signal", specifier = ">=0.21.5" },
+    { name = "gwmock-signal", extras = ["gwpy"], marker = "extra == 'gwpy'", specifier = ">=0.21.5" },
+    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'cuda'", specifier = ">=0.21.5" },
+    { name = "gwmock-signal", extras = ["jax"], marker = "extra == 'jax'", specifier = ">=0.21.5" },
+    { name = "gwmock-signal", extras = ["sgwb"], marker = "extra == 'sgwb'", specifier = ">=0.21.5" },
     { name = "gwpy", marker = "extra == 'gwpy'", specifier = ">=4.0.0" },
     { name = "h5py", marker = "extra == 'hdf5'", specifier = ">=3.13.0" },
     { name = "h5py", marker = "extra == 'pycbc'", specifier = ">=3.13.0" },
@@ -968,7 +968,7 @@ hdf5 = [
 
 [[package]]
 name = "gwmock-signal"
-version = "0.21.4"
+version = "0.21.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -978,9 +978,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/06/61744d31478d4203de34e9921df80faba34ffdb55de66499870103101dea/gwmock_signal-0.21.4.tar.gz", hash = "sha256:c898dba56103369535909c2fc04d1bfaeb0814d8fcb5941bae25a4004e62caad", size = 657575, upload-time = "2026-10-28T17:09:46.088Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/e0/082ae65bda6eb12af338570211678d9484bd24813a387d75f6ae19c840a9/gwmock_signal-0.21.5.tar.gz", hash = "sha256:767edb0554bbc8e5c56663febb55ecca28868af6c2ead05c5ad945abefe1528d", size = 667412, upload-time = "2026-10-31T11:24:55.815Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/c6/658032f31b20bf2c72e6562348387287387d2a9cb246a0a600c9322e89e5/gwmock_signal-0.21.4-py3-none-any.whl", hash = "sha256:33816af90b461546583bf6349ba24d556b3f6f7d164ee5f2fadc85405db08e59", size = 217001, upload-time = "2026-10-28T17:09:44.634Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/17/6f0a7816c1708d8e24624cf646f68b2a69b30e8c1afa4406e3e48a0d86f5/gwmock_signal-0.21.5-py3-none-any.whl", hash = "sha256:a92800ccc5258b93344d64585e3dcf5d3bcf55080665c7b1657b9ffe850c0d1f", size = 222009, upload-time = "2026-10-31T11:24:54.651Z" },
 ]
 
 [package.optional-dependencies]
