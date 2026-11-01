@@ -78,7 +78,7 @@ dependencies = [
   "tqdm>=4.67.0",
   "pydantic>=2.10.0",
   "pymap3d>=3.2.0",
-  "psutil>=6.1.0",
+  "psutil>=7.0.0",
   "filelock>=3.17.0",
   "textual>=2.0.0",       # Content.from_markup; the SPEC 0 floor (0.73) predates it
   # The time series, multichannel series and injection the gwmock packages share, and HDF5 without
@@ -95,8 +95,8 @@ dependencies = [
   "numpy>=2.2",
   "astropy>=7.0",
   "pyyaml>=6.0",
-  "rich>=13.7",
-  "requests>=2.32",
+  "rich>=14.0.0",
+  "requests>=2.33.0",
 ]
 
 [project.optional-dependencies]
@@ -133,7 +133,7 @@ deepextractor = ["gwmock-noise[deepextractor]>=0.18.3"]
 # The PyCBC helpers in `gwmock.utils`: reading a PyCBC population file (`utils.population`, which
 # returns a pandas DataFrame) and the ET geometry scripts (`utils.et_2l_geometry`,
 # `utils.triangular_et_geometry`). Nothing else in the package imports them.
-pycbc = ["pycbc>=2.6.0", "pandas>=2.2", "h5py>=3.13.0"]
+pycbc = ["pycbc>=2.8.0", "pandas>=2.3.0", "h5py>=3.13.0"]
 # Faster HDF5 through h5py, which also compresses what it writes. HDF5 output and catalogues, and
 # hashing or validating HDF5 artifacts, work without it through gwmock-data's own HDF5 support; h5py
 # publishes no wheel for Python 3.15 yet.
