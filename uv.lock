@@ -905,7 +905,7 @@ dev = [
 ]
 docs = [
     { name = "mkdocstrings-python", specifier = ">=2.0.10" },
-    { name = "zensical", specifier = ">=0.0.73" },
+    { name = "zensical", specifier = ">=0.0.74" },
 ]
 release = [{ name = "git-cliff", specifier = ">=2.14.2" }]
 
