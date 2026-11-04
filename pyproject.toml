@@ -155,7 +155,7 @@ dev = [
   "pytest-cov>=7.1.0",
   "pytest-mock>=3.17.0",
   "pytest>=9.2.0",
-  "pytest-asyncio>=1.4.1",
+  "pytest-asyncio>=1.4.1.post1",
   "pytest-github-actions-annotate-failures>=0.4.2",
   "mutmut>=3.8.1",
   # Pinned to the `ruff-pre-commit` rev in `.pre-commit-config.yaml`; bump the two together.
