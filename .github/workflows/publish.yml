@@ -55,5 +55,10 @@ jobs:
                   uv run --isolated --no-project --with dist/*.tar.gz
                   tests/smoke_test.py
 
+            # uv publish uploads PEP 740 attestations but does not make them: without this step PyPI
+            # shows no provenance for the release. Uses the trusted-publishing token of this job.
+            - name: Generate PEP 740 attestations
+              uses: astral-sh/attest-action@39b6ce43875c196a579e31635b11aa2a2036384a # v0.0.7
+
             - name: Publish to PyPI
               run: uv publish
