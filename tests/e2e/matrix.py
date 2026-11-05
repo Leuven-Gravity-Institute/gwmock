@@ -67,7 +67,7 @@ E2E_MATRIX: tuple[MatrixEntry, ...] = (
     ),
     MatrixEntry(
         label="signal/bbh/et_triangle_sardinia",
-        covers="Signal-only CBC; Earth rotation; population loaded from file",
+        covers="Signal-only CBC; every projection effect; population loaded from file",
         lal_waveform=True,
     ),
     MatrixEntry(

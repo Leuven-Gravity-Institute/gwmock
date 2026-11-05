@@ -222,20 +222,28 @@ Requirements and limits:
   with `GWMOCK_ENV_CACHE`) and keyed by the version set, so repeated
   reproductions of the same run skip reinstalling.
 - **Earth-orientation data has a shelf life, and it is not pinned by a package
-  version.** Anything using sidereal time — every projection with
-  `earth-rotation: true` — depends on the IERS table Astropy loads. Pinning
-  `astropy-iers-data` recreates the table _bundled_ with that release, but
-  Astropy's `iers.conf.auto_download` is `True` by default and its
-  `auto_max_age` is 30 days: once the pinned release is older than that, Astropy
-  fetches the current table from the IERS server instead, and no recorded
-  package version captures which one it got. A run reproduced within a month of
-  its dependencies' release matches; reproduced a year later, the sidereal time
-  can differ.
+  version.** Anything using sidereal time — every projection — depends on the
+  IERS table Astropy loads. Pinning `astropy-iers-data` recreates the table
+  _bundled_ with that release, but Astropy's `iers.conf.auto_download` is `True`
+  by default and its `auto_max_age` is 30 days: once the pinned release is older
+  than that, Astropy fetches the current table from the IERS server instead, and
+  no recorded package version captures which one it got. A run reproduced within
+  a month of its dependencies' release matches; reproduced a year later, the
+  sidereal time can differ.
 
     To pin it properly, set `iers.conf.auto_download = False` before simulating,
     so the packaged table is used regardless of age — at the cost of using
     Earth-orientation data as old as the pinned release. Measured scale: one
     weekly table release moved a strain peak by 1.6e-06 relative.
+
+- **The solar-system ephemeris is pinned by its content.** The projection's
+  solar-system delays (`effects.roemer-delay`, `einstein-delay`,
+  `shapiro-delay`) read LALPulsar's DE405 Earth and Sun tables, downloaded once
+  into gwmock-signal's cache (`GWMOCK_SIGNAL_CACHE_DIR` moves it). gwmock-signal
+  checks each table against its recorded SHA-256, so a reproduction uses the
+  same tables or stops; on a machine without network access, copy them into the
+  cache first. See
+  [Choosing the projection effects](configuration.md#choosing-the-projection-effects).
 
 - **Dates past the tables are extrapolated, and the `gwmock` command does not
   warn about it.** For a date beyond the leap-second table, or beyond the
