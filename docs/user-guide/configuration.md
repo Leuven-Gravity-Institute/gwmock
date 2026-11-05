@@ -603,9 +603,16 @@ orchestration:
 An analysis in that convention recovers a right ascension offset from an
 injection made with `source-precession` on (about 0.43 degrees in 2030), and a
 slightly different waveform for a long or loud signal; turn the effects off to
-match it exactly. The block above is also what compact-binary and burst signals
-got from gwmock before `effects` existed, when gwmock-signal projected them
-without the other five effects.
+match it. One difference remains: gwmock-signal evaluates sidereal time from
+UT1, the Earth's measured rotation, while LAL's `GreenwichMeanSiderealTime`,
+which PyCBC and Bilby use, evaluates it from UTC. Such an analysis therefore
+recovers the right ascension offset by −(UT1 − UTC) × 7.29e-5 rad/s, about 5
+arcsec at GPS 1e9 and at most 6.6e-5 rad, with the waveform and the SNR
+unchanged (gwmock-signal's
+[scientific notes](https://leuven-gravity-institute.github.io/gwmock-signal/user_guide/detector-projection/#scientific-notes)).
+The block above is also what compact-binary and burst signals got from gwmock
+before `effects` existed, when gwmock-signal projected them without the other
+five effects.
 
 For a transient, the three solar-system delays enter only through how they
 change across the signal: their value and rate at the signal's reference time (a

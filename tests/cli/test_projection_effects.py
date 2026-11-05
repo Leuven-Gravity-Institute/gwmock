@@ -99,11 +99,13 @@ class TestReadingTheBlock:
         assert _signal(effects=dumped["effects"]).effects == _signal(effects={"einstein-delay": False}).effects
 
 
-def _config(working_directory: Path, execution: str, effects: dict[str, bool] | None) -> dict[str, Any]:
+def _config(
+    working_directory: Path, execution: str, effects: dict[str, bool] | None, backend: str = "ripple"
+) -> dict[str, Any]:
     signal: dict[str, Any] = {
         "source-type": "bbh",
         "waveform-model": "IMRPhenomD",
-        "waveform-backend": "ripple",
+        "waveform-backend": backend,
         "execution": execution,
         "minimum-frequency": 30,
         "detectors": ["ET-Triangle-Sardinia"],
@@ -136,11 +138,11 @@ def _config(working_directory: Path, execution: str, effects: dict[str, bool] | 
     }
 
 
-def _orchestrator(working_directory: Path, execution: str, effects: dict[str, bool] | None):
+def _orchestrator(working_directory: Path, execution: str, effects: dict[str, bool] | None, backend: str = "ripple"):
     from gwmock.cli.adapter_orchestration import AdapterOrchestrator
 
     working_directory.mkdir(parents=True, exist_ok=True)
-    config = Config.model_validate(_config(working_directory, execution, effects))
+    config = Config.model_validate(_config(working_directory, execution, effects, backend))
     return AdapterOrchestrator.from_config(
         config.orchestration, global_simulator_arguments=dict(config.globals.simulator_arguments)
     )
@@ -214,11 +216,16 @@ class TestTheEffectsReachGwmockSignal:
         assert not [call for call in calls if "earth_rotation" in call]
 
     @pytest.mark.parametrize(("configured", "expected"), _THREADED)
+    @pytest.mark.requires_lalsuite
     def test_the_metadata_records_every_effect(self, tmp_path, configured, expected):
-        """All six, defaults included: the defaults are gwmock-signal's and have changed before."""
+        """All six, defaults included: the defaults are gwmock-signal's and have changed before.
+
+        With the LAL backend, a core dependency, so it runs without the ``[jax]`` extra: the metadata
+        does not depend on the backend that generates.
+        """
         from dataclasses import asdict
 
-        orchestrator = _orchestrator(tmp_path, "per-event", configured)
+        orchestrator = _orchestrator(tmp_path, "per-event", configured, backend="lal")
 
         recorded = orchestrator.metadata["orchestration"]["signal"]
 

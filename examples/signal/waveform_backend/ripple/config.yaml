@@ -34,7 +34,9 @@ orchestration:
         arguments:
             # The small population that ships with gwmock, not the sandbox Zenodo deposit the
             # other signal examples use: sandbox records are purged, so that URL has a built-in
-            # expiry, and so that a run needs no network access.
+            # expiry, and so that the population needs no network access. (The solar-system
+            # delays below need LALPulsar's ephemeris tables: a first run downloads them into
+            # gwmock-signal's cache unless they are there already.)
             # Paths in a configuration are read from the directory gwmock runs in, not from this
             # file's. This one is written from this file's own directory, so run the example from
             # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the

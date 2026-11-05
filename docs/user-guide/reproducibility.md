@@ -240,9 +240,12 @@ Requirements and limits:
   solar-system delays (`effects.roemer-delay`, `einstein-delay`,
   `shapiro-delay`) read LALPulsar's DE405 Earth and Sun tables, downloaded once
   into gwmock-signal's cache (`GWMOCK_SIGNAL_CACHE_DIR` moves it). gwmock-signal
-  checks each table against its recorded SHA-256, so a reproduction uses the
-  same tables or stops; on a machine without network access, copy them into the
-  cache first. See
+  checks each default table, looked up by its standard name, against its
+  recorded SHA-256, so a reproduction uses the same tables or stops; on a
+  machine without network access, copy them into the cache first. A table given
+  by a path with a directory (for instance a continuous wave's `earth_ephemeris`
+  or `sun_ephemeris`) is used as it is, without that check: keep and verify such
+  a table yourself. See
   [Choosing the projection effects](configuration.md#choosing-the-projection-effects).
 
 - **Dates past the tables are extrapolated, and the `gwmock` command does not
