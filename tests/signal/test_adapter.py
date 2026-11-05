@@ -10,6 +10,7 @@ import pytest
 from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_data.multichannel_series import TAPERED_METADATA_KEY
 from gwmock_signal import DetectorStrainStack
+from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.signal.adapter import SignalAdapter
 
@@ -34,7 +35,7 @@ class FakeBackend:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: ProjectionEffects | None = None,
         interpolate_if_offset: bool = True,
     ) -> DetectorStrainStack:
         """Record the call and return simple per-detector strains."""
@@ -46,7 +47,7 @@ class FakeBackend:
                 "background": background,
                 "sampling_frequency": sampling_frequency,
                 "minimum_frequency": minimum_frequency,
-                "earth_rotation": earth_rotation,
+                "effects": effects,
                 "interpolate_if_offset": interpolate_if_offset,
             }
         )
@@ -155,7 +156,8 @@ class TestSignalAdapter:
         assert backend.simulate_calls[0]["background"] is None
         assert backend.simulate_calls[0]["sampling_frequency"] == 4.0
         assert backend.simulate_calls[0]["minimum_frequency"] == 5.0
-        assert backend.simulate_calls[0]["earth_rotation"] is True
+        # Every effect on, gwmock-signal's default, and said explicitly rather than left to it.
+        assert backend.simulate_calls[0]["effects"] == ProjectionEffects()
         assert strain.shape == (2, 4)
         np.testing.assert_allclose(strain[0].value, expected["H1"])
 
@@ -276,6 +278,9 @@ class TestSignalAdapter:
             sampling_frequency=4.0,
             minimum_frequency=5.0,
             waveform_arguments={"reference_frequency": 50.0},
+            # The solar-system delays off: they need an epoch inside the ephemeris tables, 2000 to
+            # 2040, and this signal sits a few seconds after GPS zero, in 1980.
+            effects=ProjectionEffects(roemer_delay=False, einstein_delay=False, shapiro_delay=False),
         )
 
         # The projected strain is the waveform plus, where gwmock-signal pads the projection, the
@@ -315,7 +320,7 @@ class FailingBackend:
         *,
         sampling_frequency,
         minimum_frequency,
-        earth_rotation=True,
+        effects=None,
         interpolate_if_offset=True,
     ):
         self.call_count += 1
@@ -559,7 +564,7 @@ class RecordingBackend:
         *,
         sampling_frequency,
         minimum_frequency,
-        earth_rotation=True,
+        effects=None,
         interpolate_if_offset=True,
     ):
         self.received_params.append(dict(params))
@@ -709,3 +714,81 @@ class TestPostCoalescenceDurationThroughTheAdapter:
         received = backend.query_calls[0]
         assert received["reference_frequency"] == 50.0
         assert "waveform_arguments" in received
+
+
+class TestProjectionEffectsReachTheBackend:
+    """The projection effects the adapter is given are the ones gwmock-signal is told to use."""
+
+    @staticmethod
+    def _adapter() -> SignalAdapter:
+        with patch("gwmock.signal.adapter.resolve_simulator_backend", return_value=FakeBackend):
+            return SignalAdapter.from_source_type(source_type="bbh", waveform_model="IMRPhenomD", detectors=["H1"])
+
+    @pytest.mark.parametrize(
+        "effects",
+        [
+            ProjectionEffects.long_wavelength(),
+            ProjectionEffects.long_wavelength(earth_rotation=True),
+            ProjectionEffects(finite_arm_length=False),
+            ProjectionEffects(shapiro_delay=False),
+        ],
+        ids=["long-wavelength", "long-wavelength-rotating", "point-detector", "no-shapiro"],
+    )
+    @pytest.mark.parametrize("method", ["simulate", "simulate_stack"])
+    def test_the_given_effects_are_passed_as_effects(self, method, effects):
+        """Each effect reaches the backend's ``effects`` argument unchanged, through either entry point."""
+        adapter = self._adapter()
+
+        getattr(adapter, method)({"coa_time": 12.0}, sampling_frequency=4.0, minimum_frequency=5.0, effects=effects)
+
+        assert adapter._backend.simulate_calls[0]["effects"] == effects
+
+    def test_the_deprecated_keyword_warns_and_sets_earth_rotation_only(self):
+        """``earth_rotation=`` still works, says it is deprecated, and leaves the other effects alone."""
+        adapter = self._adapter()
+
+        with pytest.warns(DeprecationWarning, match=r"SignalAdapter\.simulate\(earth_rotation=\.\.\.\) is deprecated"):
+            adapter.simulate(
+                {"coa_time": 12.0},
+                sampling_frequency=4.0,
+                minimum_frequency=5.0,
+                effects=ProjectionEffects(shapiro_delay=False),
+                earth_rotation=False,
+            )
+
+        assert adapter._backend.simulate_calls[0]["effects"] == ProjectionEffects(
+            earth_rotation=False, shapiro_delay=False
+        )
+
+    def test_gwmock_signal_is_not_called_with_its_deprecated_keyword(self, recwarn):
+        """A real gwmock-signal simulator raises no deprecation warning for how the adapter calls it."""
+        from gwmock_data import TimeSeries
+
+        n = 32
+
+        def custom_waveform(*, waveform_model, tc, sampling_frequency, minimum_frequency, **params):
+            t0 = float(tc) - (n / 2) / sampling_frequency
+            return {
+                "plus": TimeSeries(np.linspace(0, 1, n), t0=t0, sample_rate=sampling_frequency),
+                "cross": TimeSeries(np.linspace(1, 0, n), t0=t0, sample_rate=sampling_frequency),
+            }
+
+        adapter = SignalAdapter.from_source_type(source_type="bbh", waveform_model=custom_waveform, detectors=["H1"])
+        adapter.simulate(
+            {
+                "detector_frame_mass_1": 30.0,
+                "detector_frame_mass_2": 25.0,
+                "coa_time": 1_000_000_000.0,
+                "distance": 800.0,
+                "inclination": 0.3,
+                "right_ascension": 1.1,
+                "declination": -0.8,
+                "polarization_angle": 0.2,
+            },
+            sampling_frequency=4.0,
+            minimum_frequency=5.0,
+            effects=ProjectionEffects.long_wavelength(earth_rotation=True),
+        )
+
+        deprecations = [str(w.message) for w in recwarn if issubclass(w.category, DeprecationWarning)]
+        assert not [message for message in deprecations if "earth_rotation" in message], deprecations

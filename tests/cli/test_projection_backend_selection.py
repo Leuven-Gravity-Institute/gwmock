@@ -175,7 +175,18 @@ class TestWhatIsRefusedWhileParsing:
 
     def test_the_device_path_needs_earth_rotation(self):
         """The constant-pattern branch has no device implementation, so the pair cannot be served."""
-        with pytest.raises(ValidationError, match="earth-rotation"):
+        with pytest.raises(ValidationError, match=r"effects\.earth-rotation: true"):
+            SignalConfig(
+                detectors=["H1"],
+                **{"projection-backend": "jax", "effects": {"earth-rotation": False}},
+            )
+
+    def test_the_device_path_reads_the_deprecated_key_too(self):
+        """The top-level key it replaces still means the same thing, so the refusal still follows it."""
+        with (
+            pytest.warns(FutureWarning, match="deprecated"),
+            pytest.raises(ValidationError, match=r"effects\.earth-rotation: true"),
+        ):
             SignalConfig(
                 detectors=["H1"],
                 **{"projection-backend": "jax", "earth-rotation": False},

@@ -46,6 +46,21 @@ and should not need backend-specific helpers such as `generate_polarizations()`.
 `register_waveform_model(...)` is only relevant for backends that accept
 callable waveform overrides.
 
+`gwmock` calls `simulate(params, detector_names, ...)` with the keyword
+arguments `background`, `sampling_frequency`, `minimum_frequency` and `effects`.
+`effects` is a `gwmock_signal.projection.ProjectionEffects`: the projection
+effects the run's configuration chooses (`orchestration.signal.effects`, see
+[Configuration](configuration.md)). gwmock-signal's own simulators accept it
+from 0.22.0. A third-party backend must accept it in its own `simulate`
+signature, whether or not it subclasses `GWSimulator`: `simulate` is abstract
+there, so upgrading gwmock-signal does not change a subclass's override.
+`gwmock` no longer passes the `earth_rotation` keyword that releases before
+`gwmock-signal` 0.22.0 took, and a backend that does not accept `effects` fails
+with a `TypeError`, which `gwmock` reports as a refusal. To migrate such a
+backend, accept `effects` and read `effects.earth_rotation` where
+`earth_rotation` was read; apply the other effects, or refuse the ones it does
+not implement.
+
 ## Noise protocol: `NoiseSimulator`
 
 Upstream definitions:

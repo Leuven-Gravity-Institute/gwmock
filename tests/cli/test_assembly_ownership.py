@@ -149,7 +149,7 @@ def _scattered_segments(orchestrator, events: list[dict[str, Any]] | None = None
         minimum_frequency=20.0,
         parameters=canonicalise_parameters(SignalAdapter.events_to_struct_of_arrays(events)),
         backend=orchestrator._batched_waveform_backend(),
-        earth_rotation=orchestrator.earth_rotation,
+        effects=orchestrator.effects,
         output_grid=SamplingGrid(_START, _FS),
     )
     stacks = assemble_segments(
@@ -188,7 +188,7 @@ def _generated_energy_in_run(orchestrator, events: list[dict[str, Any]] | None =
         minimum_frequency=20.0,
         parameters=canonicalise_parameters(SignalAdapter.events_to_struct_of_arrays(events)),
         backend=orchestrator._batched_waveform_backend(),
-        earth_rotation=orchestrator.earth_rotation,
+        effects=orchestrator.effects,
         output_grid=grid,
     )
     strain = np.asarray(batch.strain, dtype=float)
@@ -361,7 +361,7 @@ def test_a_segment_duration_off_the_sample_grid_is_a_known_boundary(assembled, t
         minimum_frequency=20.0,
         parameters=canonicalise_parameters(SignalAdapter.events_to_struct_of_arrays(_EVENTS[:1])),
         backend=orchestrator._batched_waveform_backend(),
-        earth_rotation=orchestrator.earth_rotation,
+        effects=orchestrator.effects,
         output_grid=SamplingGrid(_START, _FS),
     )
 

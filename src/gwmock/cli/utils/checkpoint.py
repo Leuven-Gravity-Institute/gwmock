@@ -22,6 +22,7 @@ def run_fingerprint(
     output_directory: Path,
     metadata_directory: Path,
     referenced_inputs: Iterable[Path | str] = (),
+    resolved_settings: Iterable[str] = (),
 ) -> str:
     """Identify a run by everything that decides where its outputs go, not just its config file.
 
@@ -78,6 +79,12 @@ def run_fingerprint(
             the identity. A path that cannot be read contributes a marker naming it, which still
             differs from the same path read successfully -- so a run that could not hash its input is
             never mistaken for one that did.
+        resolved_settings: Settings as the run resolved them, in plan order, for those whose value a
+            configuration can leave to a default that lives outside it. The config hash covers what
+            the file says, not what an omitted key meant: the projection effects default to every
+            effect on, which is not what an older gwmock projected with, so a checkpoint written under
+            one default must not be resumed under another with the same file. Empty adds nothing, which keeps
+            the identity of a run without such settings what it was.
 
     Returns:
         A hex digest identifying the run.
@@ -89,6 +96,7 @@ def run_fingerprint(
     # batches happen to name them.
     for reference in sorted({str(reference) for reference in referenced_inputs}):
         parts.append(f"{reference}={_input_digest(reference)}")
+    parts.extend(f"setting:{setting}" for setting in resolved_settings)
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 

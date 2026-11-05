@@ -80,8 +80,10 @@ BBH signals are injected into zero noise. The population is loaded with the
 `FilePopulationLoader` from the MDC1 BBH catalogue hosted on Zenodo
 (`mdc1_bbh.h5`); because `n-samples` is omitted, the full catalogue is used. The
 [IMRPhenomXPHM](https://journals.aps.org/prd/abstract/10.1103/PhysRevD.103.104056)
-waveform model is used, with a low-frequency cutoff of 10 Hz and the
-time-dependent detector response enabled (`earth-rotation: true`).
+waveform model is used, with a low-frequency cutoff of 10 Hz and every
+projection effect on: the Earth's rotation, the finite-arm response, the
+precession of the source direction and the solar-system delays (`effects`; see
+[Choosing the projection effects](configuration.md#choosing-the-projection-effects)).
 
 To generate the ET data with BBH signals, run:
 

@@ -1,25 +1,23 @@
-# SHA-256 of the LALPulsar ephemeris tables the continuous-wave tests generate against.
+# SHA-256 of the LALPulsar ephemeris tables gwmock-signal reads: the solar-system delays of every
+# projection, on by default, and the continuous-wave barycentring.
 #
-# These are physics inputs, not build artefacts: they define the Earth and Sun trajectories the
-# barycentring uses, so a change to their content changes generated strain. ripple fetches them
-# from lalsuite `master` -- an unpinned moving target -- and caches them by name only, so without
-# this file a changed upstream table, or a corrupted cached copy, would be used silently and show
-# up as a numerical difference nobody could attribute.
+# These are physics inputs, not build artefacts: they define the Earth and Sun trajectories, so a
+# change to their content changes generated strain. gwmock-signal fetches them by name from the
+# LALSuite repository into its cache, and refuses a table under such a name whose SHA-256 is not the
+# one it records (`RECORDED_SHA256` in `gwmock_signal.projection.solar_system`). The lines below are
+# those values, and must stay equal to them.
 #
-# Two things use it. CI derives its cache identifier from this file, so editing it invalidates
-# the cache; and a verification step rejects tables that do not match, rather than letting a bad
-# copy reach a test as a confusing parse error.
+# CI derives its ephemeris cache identifier from this file, so editing it invalidates the cache.
+# Only the compressed tables are listed because they are the ones read by name; gwmock-signal also
+# records the uncompressed `.dat` digests.
 #
-# Recorded 2026-08-03 from ripplegw's own download of
-# https://git.ligo.org/lscsoft/lalsuite/-/raw/master/lalpulsar/lib/<name>.
-#
-# If verification fails: either the cache is corrupt (clear it and refetch) or upstream changed
-# the tables. The second case is worth understanding before updating these lines, because it
+# If gwmock-signal refuses a table: either the cache is corrupt (clear it and refetch) or upstream
+# changed the tables. The second case is worth understanding before updating these lines, because it
 # means the reference trajectories moved.
 #
-# **Updating these hashes changes generated strain, so regenerate the continuous-wave e2e
-# reference in the same commit** -- `tests/e2e/references/signal__cw__et_triangle_sardinia.json`
-# was produced against the tables below. Nothing enforces that pairing: split across two commits,
-# the reference comparison fails on the second one and looks like a code regression.
+# **Updating these hashes changes generated strain, so regenerate the e2e references in the same
+# commit** -- every signal reference under `tests/e2e/references/` was produced against the tables
+# below. Nothing enforces that pairing: split across two commits, the reference comparison fails on
+# the second one and looks like a code regression.
 4995647b2c47617c90804ad0bc814ce42b426f1e5015a90cf939bcdd0c20ea67  earth00-40-DE405.dat.gz
 0b132dc5a712ebc16661a10cb88409e2577c16723c64f98e9b9b4d265510700f  sun00-40-DE405.dat.gz

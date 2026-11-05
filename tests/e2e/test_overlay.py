@@ -33,9 +33,9 @@ from .overlay import (
 #: Settings that select a code path or the physics. An overlay may shorten a run or repoint an
 #: input; changing any of these would make the entry stop covering what it claims to.
 #:
-#: ``minimum-frequency``, ``earth-rotation`` and ``waveform-backend-arguments`` are here because
-#: each selects behaviour rather than scale: the cutoff taper, the rotating-versus-static
-#: projection, and the waveform backend's own configuration.
+#: ``minimum-frequency``, ``effects`` and ``waveform-backend-arguments`` are here because each
+#: selects behaviour rather than scale: the cutoff taper, the physical effects the projection
+#: includes, and the waveform backend's own configuration.
 _PATH_DEFINING_KEYS = (
     "waveform-model",
     "waveform-backend",
@@ -44,6 +44,8 @@ _PATH_DEFINING_KEYS = (
     "source-type",
     "backend",
     "minimum-frequency",
+    "effects",
+    # The deprecated spelling of `effects.earth-rotation`, kept so an overlay cannot change it either.
     "earth-rotation",
 )
 

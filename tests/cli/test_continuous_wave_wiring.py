@@ -63,7 +63,7 @@ class FakeContinuousWaveBackend:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: Any = None,
         interpolate_if_offset: bool = True,
     ) -> DetectorStrainStack:
         _ = minimum_frequency, interpolate_if_offset
@@ -72,7 +72,7 @@ class FakeContinuousWaveBackend:
             {
                 "parameters": dict(parameters),
                 "reference_time_ssb": self.reference_time_ssb,
-                "earth_rotation": earth_rotation,
+                "effects": effects,
                 "background_peak": None if background is None else float(np.max(np.abs(background[names[0]].value))),
             }
         )
@@ -128,7 +128,7 @@ def _config(tmp_path: Path, *, duration: float, total: float, n_pulsars: int = 2
                 "source-type": "cw",
                 "detectors": list(_DETECTORS),
                 "minimum-frequency": 5,
-                "earth-rotation": True,
+                "effects": {"earth-rotation": True},
                 "arguments": {"reference_time_ssb": _EPOCH},
                 "output": {
                     "output_directory": "signal",
@@ -378,8 +378,14 @@ class TestWhatTheBackendIsGiven:
         epochs = {call["reference_time_ssb"] for call in FakeContinuousWaveBackend.calls}
         assert epochs == {_EPOCH}, f"the reference epoch varied across the run: {sorted(epochs)}"
 
-    def test_earth_rotation_reaches_the_backend(self, tmp_path):
-        """The simulator refuses a constant antenna pattern, which needs the flag to arrive."""
+    def test_the_effects_reach_the_backend(self, tmp_path):
+        """The simulator refuses a constant antenna pattern, which needs the effects to arrive.
+
+        All of them, as one ``ProjectionEffects``: the configuration sets only the Earth's rotation, so
+        the rest are gwmock-signal's defaults, all on, and are passed as such rather than left out.
+        """
+        from gwmock_signal.projection import ProjectionEffects
+
         _segment(_orchestrator(tmp_path, duration=8, total=8, n_pulsars=1))
 
-        assert [call["earth_rotation"] for call in FakeContinuousWaveBackend.calls] == [True]
+        assert [call["effects"] for call in FakeContinuousWaveBackend.calls] == [ProjectionEffects()]

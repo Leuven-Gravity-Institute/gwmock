@@ -58,7 +58,7 @@ class FakeStationaryBackend:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: Any = None,
         **_kwargs: Any,
     ) -> DetectorStrainStack:
         _ = minimum_frequency
@@ -69,7 +69,7 @@ class FakeStationaryBackend:
             {
                 "parameters": dict(parameters),
                 "seed": self.seed,
-                "earth_rotation": earth_rotation,
+                "effects": effects,
                 "detectors": list(names),
                 "background": {
                     name: {
@@ -256,3 +256,22 @@ class TestTheParametersHandedToTheBackend:
         recorded = chunks[0].metadata["signal_parameters"]
         recorded["omega_ref"] = 0.0
         assert orchestrator.signal_parameters["omega_ref"] == 1e-9
+
+    def test_the_configured_effects_are_passed(self, tmp_path):
+        """The stationary path is told the configured effects too, as every signal path is.
+
+        gwmock-signal's background simulator projects nothing and ignores them; a backend that does
+        project still has to receive them.
+        """
+        from gwmock_signal.projection import ProjectionEffects
+
+        config = _config(tmp_path)
+        config["orchestration"]["signal"]["effects"] = {"finite-arm-length": False, "roemer-delay": False}
+        parsed = Config.model_validate(config)
+        orchestrator = AdapterOrchestrator.from_config(
+            parsed.orchestration, global_simulator_arguments=dict(parsed.globals.simulator_arguments)
+        )
+
+        call = _first_call(orchestrator)
+
+        assert call["effects"] == ProjectionEffects(finite_arm_length=False, roemer_delay=False)

@@ -384,7 +384,8 @@ orchestration:
     signal:
         waveform-model: IMRPhenomXPHM
         minimum-frequency: 30
-        earth-rotation: true
+        effects:
+            earth-rotation: true
         detectors:
             - ET-Triangle-Sardinia
         output:

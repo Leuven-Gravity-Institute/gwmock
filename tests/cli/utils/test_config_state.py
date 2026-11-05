@@ -53,6 +53,27 @@ class TestConfigStateSet:
         state.set("signal", "earth-rotation", "false")
         assert state.get("signal", "earth-rotation") is False
 
+    @pytest.mark.parametrize(
+        "key",
+        ["earth-rotation", "finite-arm-length", "source-precession", "roemer-delay", "einstein-delay", "shapiro-delay"],
+    )
+    def test_each_projection_effect_is_written_under_effects(self, key):
+        """Every effect is a key of `effects`, where the configuration reads it; none is top-level."""
+        state = ConfigState()
+        state.set("signal", key, "false")
+        assert _get(state._data, ["orchestration", "signal"]) == {"effects": {key: False}}
+
+    def test_setting_an_effect_moves_the_deprecated_top_level_key_into_effects(self):
+        """The configuration refuses both together, so the editor must not write one beside the other."""
+        state = ConfigState({"orchestration": {"signal": {"earth-rotation": False}}})
+        assert state.get("signal", "earth-rotation") is False
+
+        state.set("signal", "shapiro-delay", "false")
+
+        assert _get(state._data, ["orchestration", "signal"]) == {
+            "effects": {"earth-rotation": False, "shapiro-delay": False}
+        }
+
     def test_set_globals_sampling_frequency(self):
         state = ConfigState()
         state.set("globals", "sampling-frequency", "4096")

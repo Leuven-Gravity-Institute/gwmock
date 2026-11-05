@@ -88,9 +88,20 @@ SIGNAL_KEYS: dict[str, list[str]] = {
     "waveform-model": ["orchestration", "signal", "waveform-model"],
     "detectors": ["orchestration", "signal", "detectors"],
     "minimum-frequency": ["orchestration", "signal", "minimum-frequency"],
-    "earth-rotation": ["orchestration", "signal", "earth-rotation"],
+    # The projection effects, under `effects`. The top-level `earth-rotation` key they replace is
+    # deprecated, so the editor writes the first of these where the configuration now reads it.
+    "earth-rotation": ["orchestration", "signal", "effects", "earth-rotation"],
+    "finite-arm-length": ["orchestration", "signal", "effects", "finite-arm-length"],
+    "source-precession": ["orchestration", "signal", "effects", "source-precession"],
+    "roemer-delay": ["orchestration", "signal", "effects", "roemer-delay"],
+    "einstein-delay": ["orchestration", "signal", "effects", "einstein-delay"],
+    "shapiro-delay": ["orchestration", "signal", "effects", "shapiro-delay"],
     "backend": ["orchestration", "signal", "backend"],
 }
+
+#: Where the deprecated top-level `earth-rotation` key sits in a configuration written before
+#: `effects` existed.
+_DEPRECATED_EARTH_ROTATION_PATH = ["orchestration", "signal", "earth-rotation"]
 
 POPULATION_KEYS: dict[str, list[str]] = {
     "backend": ["orchestration", "population", "backend"],
@@ -142,6 +153,11 @@ SIGNAL_TYPES: dict[str, type | str] = {
     "detectors": "list",
     "minimum-frequency": float,
     "earth-rotation": bool,
+    "finite-arm-length": bool,
+    "source-precession": bool,
+    "roemer-delay": bool,
+    "einstein-delay": bool,
+    "shapiro-delay": bool,
     "backend": str,
 }
 
@@ -194,7 +210,12 @@ SIGNAL_DESC: dict[str, str] = {
     "waveform-model": "Waveform model name (use /waveforms to see available)",
     "detectors": "Detector names, space-separated (use /geometries for network detectors)",
     "minimum-frequency": "Minimum frequency in Hz (float)",
-    "earth-rotation": "Use time-dependent detector response (true/false)",
+    "earth-rotation": "Projection follows the Earth's rotation (true/false; default true)",
+    "finite-arm-length": "Finite-arm detector response; needs every arm length (true/false; default true)",
+    "source-precession": "Precess the J2000 source direction to the epoch of date (true/false; default true)",
+    "roemer-delay": "Include the Roemer (solar-system light-travel) delay (true/false; default true)",
+    "einstein-delay": "Include the Einstein (TDB minus TT) delay (true/false; default true)",
+    "shapiro-delay": "Include the Sun's Shapiro delay (true/false; default true)",
     "backend": "Signal backend name or class path",
 }
 
@@ -321,6 +342,8 @@ class ConfigState:
         target = types_map.get(key, str)
         value = _coerce(raw_value, target)
         _validate_value(key, value)
+        if path[:-1] == ["orchestration", "signal", "effects"]:
+            self._move_deprecated_earth_rotation()
         _set(self._data, path, value)
 
     def get(self, section: str, key: str) -> Any:
@@ -329,7 +352,25 @@ class ConfigState:
         path = keys_map.get(key)
         if path is None:
             return None
-        return _get(self._data, path)
+        value = _get(self._data, path)
+        if value is None and path == SIGNAL_KEYS["earth-rotation"]:
+            # A configuration written before `effects` sets it at the top level, which still means it.
+            return _get(self._data, _DEPRECATED_EARTH_ROTATION_PATH)
+        return value
+
+    def _move_deprecated_earth_rotation(self) -> None:
+        """Move a top-level `earth-rotation` into `effects`, before the editor writes an effect.
+
+        The configuration refuses the two together, so writing any effect beside the deprecated key
+        would turn a loadable file into one that is not.
+        """
+        value = _get(self._data, _DEPRECATED_EARTH_ROTATION_PATH)
+        if value is None:
+            return
+        _delete(self._data, _DEPRECATED_EARTH_ROTATION_PATH)
+        effects_path = SIGNAL_KEYS["earth-rotation"]
+        if _get(self._data, effects_path) is None:
+            _set(self._data, effects_path, value)
 
     def get_section(self, section: str) -> dict[str, Any] | None:
         """Return the raw dict for *section*, or ``None`` if empty."""

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,7 @@ from typing import Any
 import numpy as np
 from gwmock_data.multichannel_series import TAPERED_METADATA_KEY
 from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
+from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.signal.population_columns import require_population_columns_read, require_redundant_columns_agree
@@ -60,6 +63,35 @@ DetectorSpec = str | CustomDetector
 #: The device path tests for it to reject callables with an explanation, so the prefix has one
 #: definition rather than being spelled out at both the producing and the consuming end.
 _CALLABLE_WAVEFORM_PREFIX = "__gwmock_custom__"
+
+
+def resolve_projection_effects(
+    effects: ProjectionEffects | None, *, earth_rotation: bool | None = None, caller: str = "simulate"
+) -> ProjectionEffects:
+    """Return the projection effects to hand to gwmock-signal: ``effects``, or every effect on.
+
+    Always an explicit :class:`~gwmock_signal.projection.ProjectionEffects`, so a backend is told
+    which effects to include rather than left to its own default, and never through gwmock-signal's
+    deprecated ``earth_rotation`` keyword.
+
+    Args:
+        effects: The effects to use; ``None`` means gwmock-signal's default, all of them on.
+        earth_rotation: Deprecated; overrides ``effects.earth_rotation`` and warns.
+        caller: The method named in the deprecation warning.
+
+    Returns:
+        The resolved effects.
+    """
+    resolved = ProjectionEffects() if effects is None else effects
+    if earth_rotation is not None:
+        warnings.warn(
+            f"SignalAdapter.{caller}(earth_rotation=...) is deprecated; pass "
+            "effects=ProjectionEffects(earth_rotation=...) instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        resolved = replace(resolved, earth_rotation=bool(earth_rotation))
+    return resolved
 
 
 def _callable_waveform_registry_key(func: Callable[..., Any]) -> str:
@@ -459,7 +491,7 @@ class SignalAdapter:
                 )
         return {key: [event[key] for event in events] for key in sorted(expected)}
 
-    def simulate_segments(
+    def simulate_segments(  # noqa: PLR0913
         self,
         parameters: Mapping[str, Any],
         *,
@@ -469,9 +501,10 @@ class SignalAdapter:
         start_time: float,
         end_time: float,
         waveform_arguments: Mapping[str, Any] | None = None,
-        earth_rotation: bool = True,
+        effects: ProjectionEffects | None = None,
         n_chirp_mass_bins: int = 1,
         chunk_size: int | None = None,
+        earth_rotation: bool | None = None,
     ) -> list[DetectorStrainStack]:
         """Generate a whole catalogue on device and return it as fixed-duration segments.
 
@@ -502,11 +535,12 @@ class SignalAdapter:
             start_time: GPS start of the first segment.
             end_time: GPS end of the span to tile.
             waveform_arguments: Fixed parameters merged into the catalogue; per-event values win.
-            earth_rotation: Whether to include earth rotation, as on :meth:`simulate_stack`.
+            effects: Which physical effects the projection includes, as on :meth:`simulate_stack`.
             n_chirp_mass_bins: Generate heavier events on shorter grids. Bounds buffer length at the
                 cost of exact reproducibility against a single grid.
             chunk_size: Events per batched call. ``None`` lets gwmock-signal size it from device
                 memory, which is the safer default.
+            earth_rotation: Deprecated; ``effects=ProjectionEffects(earth_rotation=...)``.
 
         Returns:
             One :class:`~gwmock_signal.DetectorStrainStack` per segment, in time order.
@@ -556,6 +590,7 @@ class SignalAdapter:
         if len(set(lengths.values())) > 1:
             raise DeterministicRefusalError(f"catalogue parameters disagree in length: {lengths}")
 
+        effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate_segments")
         return simulate_cbc_catalogue(
             self._device_approximant(),
             list(self._network.detector_names),
@@ -565,7 +600,7 @@ class SignalAdapter:
             segment_duration=segment_duration,
             start_time=start_time,
             end_time=end_time,
-            earth_rotation=earth_rotation,
+            effects=effects,
             n_chirp_mass_bins=n_chirp_mass_bins,
             chunk_size=chunk_size,
         )
@@ -865,7 +900,8 @@ class SignalAdapter:
         waveform_arguments: Mapping[str, Any] | None = None,
         waveform_options: Mapping[str, Any] | None = None,
         background: Mapping[str, Any] | None = None,
-        earth_rotation: bool = True,
+        effects: ProjectionEffects | None = None,
+        earth_rotation: bool | None = None,
     ) -> DetectorStrainStack:
         """Generate one detector strain stack via the public ``gwmock_signal`` API.
 
@@ -879,11 +915,14 @@ class SignalAdapter:
                 entries) forwarded to the backend as its ``waveform_arguments``
                 parameter, without flattening.
             background: Optional background mapping forwarded to the signal backend.
-            earth_rotation: Whether to include earth rotation in the simulation.
+            effects: Which physical effects the projection includes. ``None`` means gwmock-signal's
+                default, every effect on; see :class:`gwmock_signal.projection.ProjectionEffects`.
+            earth_rotation: Deprecated; ``effects=ProjectionEffects(earth_rotation=...)``.
 
         Returns:
             A DetectorStrainStack instance.
         """
+        effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate_stack")
         backend_parameters = self._backend_parameters(
             parameters, waveform_arguments, waveform_options, minimum_frequency
         )
@@ -895,7 +934,7 @@ class SignalAdapter:
                     background=background,
                     sampling_frequency=sampling_frequency,
                     minimum_frequency=minimum_frequency,
-                    earth_rotation=earth_rotation,
+                    effects=effects,
                 )
             except ValueError as exc:
                 filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
@@ -907,7 +946,7 @@ class SignalAdapter:
                     background=background,
                     sampling_frequency=sampling_frequency,
                     minimum_frequency=minimum_frequency,
-                    earth_rotation=earth_rotation,
+                    effects=effects,
                 )
         except DeterministicRefusalError:
             raise
@@ -930,7 +969,8 @@ class SignalAdapter:
         waveform_arguments: Mapping[str, Any] | None = None,
         waveform_options: Mapping[str, Any] | None = None,
         background: Mapping[str, Any] | None = None,
-        earth_rotation: bool = True,
+        effects: ProjectionEffects | None = None,
+        earth_rotation: bool | None = None,
     ) -> TimeSeries:
         """Generate one signal chunk via the public gwmock-signal ``simulate`` API.
 
@@ -944,11 +984,14 @@ class SignalAdapter:
                 entries) forwarded to the backend as its ``waveform_arguments``
                 parameter, without flattening.
             background: Optional background mapping forwarded to the signal backend.
-            earth_rotation: Whether to include earth rotation in the simulation.
+            effects: Which physical effects the projection includes. ``None`` means gwmock-signal's
+                default, every effect on; see :class:`gwmock_signal.projection.ProjectionEffects`.
+            earth_rotation: Deprecated; ``effects=ProjectionEffects(earth_rotation=...)``.
 
         Returns:
             A TimeSeries instance.
         """
+        effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate")
         strain_stack = self.simulate_stack(
             parameters,
             sampling_frequency=sampling_frequency,
@@ -956,7 +999,7 @@ class SignalAdapter:
             waveform_arguments=waveform_arguments,
             waveform_options=waveform_options,
             background=background,
-            earth_rotation=earth_rotation,
+            effects=effects,
         )
         chunk = TimeSeries(
             data=strain_stack.data,

@@ -34,7 +34,9 @@ orchestration:
         arguments:
             # The small population that ships with gwmock, not the sandbox Zenodo deposit the
             # other signal examples use: sandbox records are purged, so that URL has a built-in
-            # expiry, and so that a run needs no network access.
+            # expiry, and so that the population needs no network access. (The solar-system
+            # delays below need LALPulsar's ephemeris tables: a first run downloads them into
+            # gwmock-signal's cache unless they are there already.)
             # Paths in a configuration are read from the directory gwmock runs in, not from this
             # file's. This one is written from this file's own directory, so run the example from
             # there -- or copy it with `gwmock config --get`, which puts the catalogue next to the
@@ -51,7 +53,15 @@ orchestration:
             # hard spectral cutoff would leave. Set 0.0 for an untapered cutoff.
             taper_fraction: 0.05
         minimum-frequency: 20
-        earth-rotation: true
+        # Which physical effects the detector projection includes. All six are on by default;
+        # they are written out so the example says which physics produced its data.
+        effects:
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
         detectors:
             - ET-Triangle-Sardinia
         output:

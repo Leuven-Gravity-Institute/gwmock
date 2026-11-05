@@ -19,22 +19,15 @@
 #
 # Requires the `jax` extra:  pip install 'gwmock[jax]'
 #
-# That is enough to resolve the continuous-wave source type -- gwmock-signal 0.13.0 registers it --
-# but not enough to *run* it. The simulator generates at the geocentre so one projection route
-# serves every source type, and released ripplegw returns NaN for every sample there
-# (`arccos(lz / rd)` is 0/0 at the Earth centre). It is refused rather than written, so a run fails
-# with a message naming the cause. Until GW-JAX-Team/ripple#141 reaches a ripplegw release, this
-# example needs a checkout of gwmock, where the pin in pyproject.toml supplies the fixed revision:
-#
-#     uv sync --extra jax
+# The continuous-wave simulator projects on the device path by default, which needs JAX.
 #
 # THE EPHEMERIS PATHS ARE BARE NAMES BELOW, AND THAT MEANS THEY ARE DOWNLOADED.
 #
-# ripple resolves a bare LALPulsar name by fetching it and caching it under
-# ~/.cache/ripplegw/ephemeris. That is convenient for trying the example and wrong for a run whose
-# provenance matters: nothing records which tables produced the data, and a fresh machine silently
-# fetches its own copy. For anything you intend to keep, replace these with absolute paths to
-# tables you chose -- LALSuite ships them, or copy the cached files somewhere durable.
+# gwmock-signal resolves a bare LALPulsar name by fetching it from the LALSuite repository once and
+# caching it under ~/.cache/gwmock-signal/ephemeris (GWMOCK_SIGNAL_CACHE_DIR moves it), and it refuses
+# a table under such a name whose SHA-256 is not the one it records, so the tables are pinned by
+# content. A path with a directory is your own table and is used as it is, unverified. On a machine
+# without network access, copy the two files into the cache before the run.
 globals:
     simulator-arguments:
         sampling-frequency: 512
@@ -69,9 +62,16 @@ orchestration:
         # low-frequency cutoff to apply. Left at a plausible value rather than removed, because the
         # schema expects it.
         minimum-frequency: 10
-        # Required, not optional: a signal lasting months cannot use a constant antenna pattern,
-        # and the simulator refuses `false` outright rather than producing plausible-looking data.
-        earth-rotation: true
+        # Which physical effects the detector projection includes, all of them here.
+        effects:
+            # Required, not optional: a signal lasting months cannot use a constant antenna pattern,
+            # and the simulator refuses `false` outright rather than producing plausible-looking data.
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
         arguments:
             # Constructor arguments for the continuous-wave backend.
             earth_ephemeris: earth00-40-DE405.dat.gz

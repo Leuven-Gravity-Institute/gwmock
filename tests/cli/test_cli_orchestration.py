@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
@@ -82,10 +82,10 @@ class FakeSignalAdapter:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: Any = None,
         interpolate_if_offset: bool = True,
     ) -> DetectorStrainStack:
-        _ = background, minimum_frequency, earth_rotation, interpolate_if_offset
+        _ = background, minimum_frequency, effects, interpolate_if_offset
         return DetectorStrainStack.from_mapping(
             detector_names,
             {
@@ -117,11 +117,11 @@ class FakeSgwbSignalAdapter:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: Any = None,
         interpolate_if_offset: bool = True,
     ) -> DetectorStrainStack:
         """Return one segment-length stationary signal stack."""
-        _ = minimum_frequency, earth_rotation, interpolate_if_offset
+        _ = minimum_frequency, effects, interpolate_if_offset
         names = tuple(detector if isinstance(detector, str) else detector.name for detector in detector_names)
         n_samples = round(self.duration * sampling_frequency)
         self.simulate_calls.append(

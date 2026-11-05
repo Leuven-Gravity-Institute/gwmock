@@ -548,6 +548,112 @@ each waveform model on first use — measured on a single 8-second segment,
 `IMRPhenomXPHM` ~72 s. The cost is paid once per process, so it amortises over a
 long run.
 
+### Choosing the projection effects
+
+`signal.effects` says which physical effects the projection of the polarizations
+onto the detectors includes. It is gwmock-signal's
+[`ProjectionEffects`](https://leuven-gravity-institute.github.io/gwmock-signal/user_guide/detector-projection/#projection-effects),
+one key per effect. **Every effect is on by default**, and each can be turned
+off on its own:
+
+| Key                 | Default | What it is                                                                                                                                                    |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `earth-rotation`    | `true`  | The antenna pattern and delays follow the Earth's rotation sample by sample. Off, they are held at the span's midpoint, which suits only a signal of seconds. |
+| `finite-arm-length` | `true`  | Each arm responds to the strain averaged along the light's round trip to its end mirror and back, rather than to the strain at the vertex.                    |
+| `source-precession` | `true`  | The J2000 source direction is precessed to the epoch of date before the Earth's orientation is applied, as LALPulsar's barycentring does.                     |
+| `roemer-delay`      | `true`  | The light-travel time between the geocentre and the solar-system barycentre, from the Earth's orbit.                                                          |
+| `einstein-delay`    | `true`  | The relativistic time dilation of the Earth's clock, TDB minus TT.                                                                                            |
+| `shapiro-delay`     | `true`  | The Sun's gravitational delay.                                                                                                                                |
+
+```yaml
+orchestration:
+    signal:
+        effects:
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
+```
+
+A key left out keeps its default, so the block above is what an omitted
+`effects` means. A key that is not one of the six is refused when the
+configuration is loaded: a misspelled effect would otherwise stay on while the
+file reads as if it were off.
+
+**Matching LAL, Bilby and PyCBC.** Their default projection is the
+long-wavelength one: a point detector at its vertex, a geocentre at rest and a
+J2000 direction with sidereal time of date. To produce data in that convention,
+turn every effect off — or every effect but `earth-rotation`, for a signal long
+enough to need it:
+
+```yaml
+orchestration:
+    signal:
+        effects:
+            earth-rotation: true
+            finite-arm-length: false
+            source-precession: false
+            roemer-delay: false
+            einstein-delay: false
+            shapiro-delay: false
+```
+
+An analysis in that convention recovers a right ascension offset from an
+injection made with `source-precession` on (about 0.43 degrees in 2030), and a
+slightly different waveform for a long or loud signal; turn the effects off to
+match it. One difference remains: gwmock-signal evaluates sidereal time from
+UT1, the Earth's measured rotation, while LAL's `GreenwichMeanSiderealTime`,
+which PyCBC and Bilby use, evaluates it from UTC. Such an analysis therefore
+recovers the right ascension offset by −(UT1 − UTC) × 7.29e-5 rad/s, about 5
+arcsec at GPS 1e9 and at most 6.6e-5 rad, with the waveform and the SNR
+unchanged (gwmock-signal's
+[scientific notes](https://leuven-gravity-institute.github.io/gwmock-signal/user_guide/detector-projection/#scientific-notes)).
+The block above is also what compact-binary and burst signals got from gwmock
+before `effects` existed, when gwmock-signal projected them without the other
+five effects.
+
+For a transient, the three solar-system delays enter only through how they
+change across the signal: their value and rate at the signal's reference time (a
+compact binary's coalescence, a burst's peak) are absorbed, so `coa_time` keeps
+its meaning at the geocentre and the detector-frame masses theirs. A continuous
+wave, whose parameters are defined at the barycentre, takes them in full. A
+continuous wave also needs `earth-rotation`: the simulator refuses `false` for a
+signal lasting months. The stochastic background projects nothing and ignores
+the effects; its detector response is its overlap reduction function.
+
+**What the defaults need.**
+
+- **An arm length for every detector**, for `finite-arm-length`. The built-in
+  LIGO and Virgo codes and the Einstein Telescope presets carry one; a custom
+  detector needs `arm_length_m`. A detector without one stops the run with a
+  message naming it — give it its arm length, or turn `finite-arm-length` off.
+- **An epoch between 2000 and 2040**, for the solar-system delays, which read
+  LALPulsar's JPL DE405 tables (`earth00-40-DE405.dat.gz`,
+  `sun00-40-DE405.dat.gz`) covering those years. A signal outside them stops the
+  run; turn `roemer-delay`, `einstein-delay` and `shapiro-delay` off to place
+  one there.
+- **The ephemeris tables, downloaded once.** The first run that needs them
+  downloads the two tables from the LALSuite repository and caches them in
+  `~/.cache/gwmock-signal/ephemeris` (`$XDG_CACHE_HOME/gwmock-signal/ephemeris`
+  when that is set; `~/Library/Caches/gwmock-signal/ephemeris` on macOS). Set
+  `GWMOCK_SIGNAL_CACHE_DIR` to cache them elsewhere, in
+  `$GWMOCK_SIGNAL_CACHE_DIR/ephemeris`. On a machine without network access,
+  such as a cluster's compute nodes, copy the two files there before the run.
+  gwmock-signal checks both against their recorded SHA-256 and refuses a corrupt
+  copy; deleting it lets it download again.
+
+**The top-level `earth-rotation` key is deprecated.** It chose the Earth's
+rotation before the other effects existed. It is still read: alone, it sets
+`effects.earth-rotation`, leaves the other five at their defaults, and warns.
+Given together with `effects`, it is refused; move its value into `effects`.
+
+The effects are recorded, all six, in the run metadata as
+`orchestration.signal.effects`, and they are part of the run's identity for
+[checkpointing](#checkpointing): a checkpoint written with different effects is
+not resumed, including one written before `effects` existed.
+
 ### Choosing the projection implementation
 
 `signal.projection-backend` selects **which implementation projects** the
@@ -563,7 +669,8 @@ polarizations onto the detectors, independently of which library generated them:
 orchestration:
     signal:
         projection-backend: jax
-        earth-rotation: true
+        effects:
+            earth-rotation: true
 ```
 
 **Omitting the key is not the same as writing `numpy`.** Omitted, each
@@ -602,9 +709,10 @@ reassociation, so this is a substitution rather than a change of model.
 Three things are refused when the configuration is loaded rather than part-way
 through a run:
 
-- `projection-backend: jax` with `earth-rotation: false`. The constant-pattern
-  branch is a single frequency-domain phase shift with no device implementation
-  — and it is already the cheap branch, being the one that skips the resampler.
+- `projection-backend: jax` with `effects.earth-rotation: false`. The
+  constant-pattern branch is a single frequency-domain phase shift with no
+  device implementation — and it is already the cheap branch, being the one that
+  skips the resampler.
 - `projection-backend: jax` without JAX installed, or with JAX unable to run in
   64-bit mode. In 32-bit mode the GPS times and sidereal angles lose the
   precision the delays depend on, and the projection is wrong by of order a

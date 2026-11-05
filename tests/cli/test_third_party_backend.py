@@ -81,10 +81,10 @@ def _install_third_party_backend_package(tmp_path: Path, monkeypatch: pytest.Mon
                     *,
                     sampling_frequency: float,
                     minimum_frequency: float,
-                    earth_rotation: bool = True,
+                    effects=None,
                     interpolate_if_offset: bool = True,
                 ):
-                    _ = background, minimum_frequency, earth_rotation, interpolate_if_offset
+                    _ = background, minimum_frequency, effects, interpolate_if_offset
                     return DetectorStrainStack.from_mapping(
                         detector_names,
                         {
