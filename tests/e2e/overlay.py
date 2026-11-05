@@ -209,8 +209,8 @@ _OVERLAYS: dict[str, dict[str, Any]] = {
     # every source contributes to every segment, and one segment could not distinguish that from
     # the per-event path.
     #
-    # The ephemeris the example names is fetched by ripple on first use; CI caches it and verifies
-    # it against `tests/data/ephemeris.sha256`. That is why this entry is no longer in
+    # The ephemeris the example names is fetched by gwmock-signal on first use; CI caches it, and
+    # gwmock-signal verifies it against the digests `tests/data/ephemeris.sha256` also lists. That is why this entry is no longer in
     # NOT_HERMETIC: the tables are obtained once and their content is pinned, rather than being
     # re-downloaded per run or trusted unchecked.
     "signal/cw/et_triangle_sardinia": {

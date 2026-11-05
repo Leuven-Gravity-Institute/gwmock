@@ -105,11 +105,11 @@ E2E_MATRIX: tuple[MatrixEntry, ...] = (
         covers=(
             "The continuous-wave branch of `_simulate` -- the one path where a population is never "
             "consumed and every source contributes to every segment. Multi-segment on purpose: a "
-            "single segment cannot distinguish that from the per-event path. Needs `ripplegw` and "
-            "the LALPulsar ephemeris tables, which CI caches and verifies against "
-            "`tests/data/ephemeris.sha256`"
+            "single segment cannot distinguish that from the per-event path. Needs JAX, on which "
+            "the simulator projects, and the LALPulsar ephemeris tables, which CI caches and "
+            "gwmock-signal verifies against the digests `tests/data/ephemeris.sha256` lists"
         ),
-        requires=("ripplegw",),
+        requires=("jax",),
     ),
     MatrixEntry(
         label="noise/glitches/deepextractor/et_triangle_sardinia",
