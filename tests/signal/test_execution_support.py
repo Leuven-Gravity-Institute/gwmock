@@ -41,7 +41,7 @@ class TestBatchedRefusesWhatItIgnores:
                     "waveform-backend-arguments": {"taper_fraction": 0.05},
                     "waveform-arguments": {"f_ref": 20.0},
                     "minimum-frequency": 30,
-                    "earth-rotation": False,
+                    "effects": {"earth-rotation": False, "finite-arm-length": False},
                     "execution": "batched",
                 }
             ),

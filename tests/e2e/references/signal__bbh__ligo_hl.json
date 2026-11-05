@@ -1,17 +1,17 @@
 {
   "environment": {
     "astropy": "8.0.2",
-    "astropy-iers-data": "0.2026.10.19.0.52.1",
-    "gwmock": "0.20.1-post.16+b5299c0",
-    "gwmock-noise": "0.18.3",
+    "astropy-iers-data": "0.2026.11.2.0.34.55",
+    "gwmock": "0.20.3-post.5+8051699",
+    "gwmock-noise": "0.20.0",
     "gwmock-pop": "0.18.1",
-    "gwmock-signal": "0.21.5",
+    "gwmock-signal": "0.22.0",
     "jax": "0.12.0.1",
     "jaxlib": "0.12.0.1",
-    "lalsuite": "7.26.16",
+    "lalsuite": "8.0.0",
     "numpy": "2.5.4",
     "pyerfa": "2.0.1.5",
-    "ripplegw": "0.4.1",
+    "ripplegw": "0.5.0",
     "scipy": "1.18.1"
   },
   "fingerprint": {
@@ -44,23 +44,23 @@
     },
     "output/signal/H1_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4084,
-      "content_hash": "sha256:3acc66a5b8b4186f94f5e74e02110697eab62530106592f77493ac40fa623ebb",
-      "mean": 1.1280533548743625e-29,
+      "content_hash": "sha256:9bbcd62a629e6fd4440e88893785fdd6a8891b01a1d2ac6d0d7ef879b45f08ab",
+      "mean": 1.1265759044592718e-29,
       "n": 16384,
       "nonzero": 6479,
-      "peak": 5.3126333277401395e-22,
-      "rms": 3.4797017955027795e-23,
-      "signed_peak": -5.3126333277401395e-22
+      "peak": 5.289457165867744e-22,
+      "rms": 3.480770790648424e-23,
+      "signed_peak": -5.289457165867744e-22
     },
     "output/signal/L1_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4079,
-      "content_hash": "sha256:67809db4f1bc172f66bc94e3fa2c752260b091ff1bf32362a575f9ec25685844",
-      "mean": -6.394304999247582e-30,
+      "content_hash": "sha256:836fc1803613f24cbb6b8a82b9a0c98ffcb7d099001641700abc88ee1b93f271",
+      "mean": -6.681421451502505e-30,
       "n": 16384,
       "nonzero": 6479,
-      "peak": 9.349796896379474e-22,
-      "rms": 6.170535138808836e-23,
-      "signed_peak": -9.349796896379474e-22
+      "peak": 9.628648105995472e-22,
+      "rms": 6.150732406454556e-23,
+      "signed_peak": -9.628648105995472e-22
     }
   }
 }

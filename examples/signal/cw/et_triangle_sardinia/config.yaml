@@ -69,9 +69,16 @@ orchestration:
         # low-frequency cutoff to apply. Left at a plausible value rather than removed, because the
         # schema expects it.
         minimum-frequency: 10
-        # Required, not optional: a signal lasting months cannot use a constant antenna pattern,
-        # and the simulator refuses `false` outright rather than producing plausible-looking data.
-        earth-rotation: true
+        # Which physical effects the detector projection includes, all of them here.
+        effects:
+            # Required, not optional: a signal lasting months cannot use a constant antenna pattern,
+            # and the simulator refuses `false` outright rather than producing plausible-looking data.
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
         arguments:
             # Constructor arguments for the continuous-wave backend.
             earth_ephemeris: earth00-40-DE405.dat.gz

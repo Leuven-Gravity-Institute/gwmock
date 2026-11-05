@@ -2722,6 +2722,26 @@ def _referenced_population_files(plan: SimulationPlan) -> list[str]:
     return references
 
 
+def _resolved_projection_effects(plan: SimulationPlan) -> list[str]:
+    """Every batch's projection effects as the run resolves them, for the run's identity.
+
+    One entry per batch in plan order, ``-`` for a batch with no signal block, and nothing at all for
+    a plan none of whose batches has one, so a noise-only run keeps the identity it had. Each entry
+    names every effect with its value, defaults included: the config hash already covers an effect
+    the file sets, and this is what covers one it leaves to the default.
+    """
+    entries: list[str] = []
+    for batch in plan.batches:
+        signal = getattr(batch.simulator_config, "signal", None)
+        effects = getattr(signal, "effects", None)
+        if effects is None:
+            entries.append("-")
+            continue
+        values = effects.model_dump(by_alias=True)
+        entries.append("effects:" + ",".join(f"{name}={str(values[name]).lower()}" for name in sorted(values)))
+    return entries if any(entry != "-" for entry in entries) else []
+
+
 def _batch_outputs_present(batch: SimulationBatch, metadata_directory: Path) -> bool | None:
     """Return whether the outputs recorded for ``batch`` all exist on disk.
 
@@ -2872,11 +2892,14 @@ def execute_plan(  # noqa: PLR0915
     # run -- measured at batch 0 holding the old catalogue's event while batches 1 and 2 held the new
     # one's, exit code 0.
     referenced_populations = _referenced_population_files(plan)
+    # The projection effects as resolved, not only as written: a configuration that omits them gets
+    # the defaults, which are not in the config hash and are not what an older gwmock projected with.
     plan_sha256 = run_fingerprint(
         [batch.config_sha256 for batch in plan.batches],
         output_directory,
         metadata_directory,
         referenced_populations,
+        _resolved_projection_effects(plan),
     )
     if checkpoint:
         require_matching_config(checkpoint.get("config_sha256"), plan_sha256, checkpoint_manager.checkpoint_file)

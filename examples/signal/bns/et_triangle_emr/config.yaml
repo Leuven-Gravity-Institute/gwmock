@@ -34,7 +34,15 @@ orchestration:
     signal:
         waveform-model: IMRPhenomPv2_NRTidalv2
         minimum-frequency: 20
-        earth-rotation: true
+        # Which physical effects the detector projection includes. All six are on by default;
+        # they are written out so the example says which physics produced its data.
+        effects:
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
         detectors:
             - ET-Triangle-EMR
         output:

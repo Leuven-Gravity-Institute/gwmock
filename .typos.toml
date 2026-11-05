@@ -25,6 +25,9 @@ arange = "arange"
 # a binary whose orbital plane precesses; read as "processing" otherwise
 precessing = "precessing"
 precession = "precession"
+# the source direction precessed from J2000 to the epoch of date
+precess = "precess"
+precessed = "precessed"
 aer = "aer"
 BA = "BA"
 # GWOSC's term for the time a detector was observing, not a misspelling of "lifetime"

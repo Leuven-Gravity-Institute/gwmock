@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -13,6 +13,7 @@ from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_noise import SimulationResult
 from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network
+from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
 from gwmock.cli.utils.config import OrchestrationConfig, check_default_noise_arguments
@@ -176,7 +177,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         start_time: float,
         max_samples: int,
         minimum_frequency: float,
-        earth_rotation: bool,
+        effects: ProjectionEffects,
         noise_arguments: dict[str, Any],
         orchestration_config: OrchestrationConfig,
         segment_gap: float = 0.0,
@@ -198,7 +199,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         self.waveform_options = waveform_options
         self.signal_parameters = signal_parameters
         self.minimum_frequency = minimum_frequency
-        self.earth_rotation = earth_rotation
+        self.effects = effects
         self.orchestration_config = orchestration_config
         if signal_adapter is not None:
             self.signal_adapter = signal_adapter
@@ -306,7 +307,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         waveform_options: dict[str, Any] = {}
         signal_parameters: dict[str, Any] = {}
         minimum_frequency = 5.0
-        earth_rotation = True
+        # gwmock-signal's default, every effect on; replaced by the configured ones when there is a
+        # signal block, and unused when there is not.
+        effects = ProjectionEffects()
         signal_adapter: SignalAdapter | None = None
         noise_adapter: NoiseAdapter | None = None
 
@@ -332,7 +335,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             waveform_options = orchestration_config.signal.waveform_options  # type: ignore[union-attr]
             signal_parameters = orchestration_config.signal.parameters  # type: ignore[union-attr]
             minimum_frequency = orchestration_config.signal.minimum_frequency  # type: ignore[union-attr]
-            earth_rotation = orchestration_config.signal.earth_rotation  # type: ignore[union-attr]
+            effects = orchestration_config.signal.effects.to_projection_effects()  # type: ignore[union-attr]
             if orchestration_config.noise is None:
                 noise_arguments["detectors"] = resolved_detectors
 
@@ -357,7 +360,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             max_samples=max_samples,
             minimum_frequency=minimum_frequency,
             segment_gap=segment_gap,
-            earth_rotation=earth_rotation,
+            effects=effects,
             noise_arguments=noise_arguments,
             orchestration_config=orchestration_config,
             population_seed=population_seed,
@@ -615,7 +618,10 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                     "waveform_options": self.waveform_options,
                     "parameters": self.signal_parameters,
                     "minimum_frequency": self.minimum_frequency,
-                    "earth_rotation": self.earth_rotation,
+                    # Every projection effect, resolved, rather than only the configured ones: the
+                    # defaults are gwmock-signal's and have changed before, so a record that left
+                    # them implicit would not say which physics produced the data.
+                    "effects": asdict(self.effects),
                     "detector_specs": list(self._source_detector_specs),
                     "detectors": self.detectors,
                     "network_resolution": self._detector_resolution,
@@ -818,7 +824,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 minimum_frequency=self.minimum_frequency,
                 waveform_arguments=self.waveform_arguments,
                 waveform_options=self.waveform_options,
-                earth_rotation=self.earth_rotation,
+                effects=self.effects,
             )
             # `event_id` alongside the parameters, and both survive onto a tail, so a chunk that
             # crosses a segment boundary can still be attributed to its event in the next segment.
@@ -1585,7 +1591,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             minimum_frequency=self.minimum_frequency,
             parameters=parameters,
             backend=waveform_backend,
-            earth_rotation=self.earth_rotation,
+            effects=self.effects,
             output_grid=grid,
         )
 
@@ -1641,7 +1647,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 minimum_frequency=self.minimum_frequency,
                 waveform_options=self.waveform_options,
                 background=total,
-                earth_rotation=self.earth_rotation,
+                effects=self.effects,
             )
             # Feed the running total back in, so the next pulsar adds to it rather than to zeros.
             total = {
@@ -1692,7 +1698,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             minimum_frequency=self.minimum_frequency,
             waveform_options=self.waveform_options,
             background=background,
-            earth_rotation=self.earth_rotation,
+            effects=self.effects,
         )
         strain.metadata.update({"signal_parameters": dict(parameters), "segment_seed": segment_seed})
         return TimeSeriesList([strain])

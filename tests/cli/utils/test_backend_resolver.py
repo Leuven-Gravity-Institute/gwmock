@@ -9,6 +9,7 @@ import sys
 import textwrap
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -51,10 +52,10 @@ class DuckSignalBackend:
         *,
         sampling_frequency: float,
         minimum_frequency: float,
-        earth_rotation: bool = True,
+        effects: Any = None,
         interpolate_if_offset: bool = True,
     ) -> DetectorStrainStack:
-        _ = background, minimum_frequency, earth_rotation, interpolate_if_offset
+        _ = background, minimum_frequency, effects, interpolate_if_offset
         return DetectorStrainStack.from_mapping(
             detector_names,
             {detector: np.zeros(int(sampling_frequency)) + float(params["coa_time"]) for detector in detector_names},
@@ -219,10 +220,10 @@ def test_validate_signal_backend_accepts_gwsimulator_subclass():
             *,
             sampling_frequency,
             minimum_frequency,
-            earth_rotation=True,
+            effects=None,
             interpolate_if_offset=True,
         ):
-            _ = params, background, sampling_frequency, minimum_frequency, earth_rotation, interpolate_if_offset
+            _ = params, background, sampling_frequency, minimum_frequency, effects, interpolate_if_offset
             return DetectorStrainStack.from_mapping(
                 detector_names, {detector: np.zeros(4) for detector in detector_names}
             )

@@ -51,7 +51,15 @@ orchestration:
             # hard spectral cutoff would leave. Set 0.0 for an untapered cutoff.
             taper_fraction: 0.05
         minimum-frequency: 20
-        earth-rotation: true
+        # Which physical effects the detector projection includes. All six are on by default;
+        # they are written out so the example says which physics produced its data.
+        effects:
+            earth-rotation: true
+            finite-arm-length: true
+            source-precession: true
+            roemer-delay: true
+            einstein-delay: true
+            shapiro-delay: true
         detectors:
             - ET-Triangle-Sardinia
         output:

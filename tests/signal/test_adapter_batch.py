@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.signal.adapter import SignalAdapter
 
@@ -255,11 +256,22 @@ class TestForwardingToTheBatchedCall:
         assert merged["detector_frame_mass_1"] == [1.4, 1.4], "the catalogue must win over a fixed value"
         assert merged["f_ref"] == 20.0, "a fixed key absent from the catalogue must still be passed"
 
-    def test_earth_rotation_reaches_the_batched_call(self, monkeypatch):
-        """The flag must be forwarded, not silently left at the gwmock-signal default.
+    @pytest.mark.parametrize(
+        "effects",
+        [
+            ProjectionEffects(),
+            ProjectionEffects.long_wavelength(earth_rotation=True),
+            ProjectionEffects(earth_rotation=False),
+            ProjectionEffects(finite_arm_length=False, einstein_delay=False),
+        ],
+        ids=["default", "long-wavelength-rotating", "static", "mixed"],
+    )
+    def test_the_effects_reach_the_batched_call(self, monkeypatch, effects):
+        """The effects must be forwarded, not silently left at the gwmock-signal default.
 
         Without this the setting would be honoured on the per-event path and ignored here, so the
-        two paths would disagree for anyone who turns it off.
+        two paths would disagree for anyone who turns one off. Passed as ``effects``, never as
+        gwmock-signal's deprecated ``earth_rotation``.
         """
         captured = {}
         monkeypatch.setattr("gwmock_signal.simulate_cbc_catalogue", lambda *a, **k: captured.update(k) or [])
@@ -271,9 +283,25 @@ class TestForwardingToTheBatchedCall:
             segment_duration=_SEGMENT,
             start_time=_START,
             end_time=_START + _SPAN,
-            earth_rotation=False,
+            effects=effects,
         )
-        assert captured["earth_rotation"] is False
+        assert captured["effects"] == effects
+        assert "earth_rotation" not in captured
+
+    def test_no_effects_means_every_effect_on(self, monkeypatch):
+        """Left out, the effects are gwmock-signal's default, passed explicitly."""
+        captured = {}
+        monkeypatch.setattr("gwmock_signal.simulate_cbc_catalogue", lambda *a, **k: captured.update(k) or [])
+
+        _adapter().simulate_segments(
+            SignalAdapter.events_to_struct_of_arrays(_events(2)),
+            sampling_frequency=_FS,
+            minimum_frequency=30.0,
+            segment_duration=_SEGMENT,
+            start_time=_START,
+            end_time=_START + _SPAN,
+        )
+        assert captured["effects"] == ProjectionEffects()
 
 
 class TestDeviceApproximantWithoutTheExtra:

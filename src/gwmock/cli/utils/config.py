@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +153,72 @@ class PopulationConfig(BaseModel):
         return v
 
 
+class ProjectionEffectsConfig(BaseModel):
+    """Which physical effects the detector projection includes: ``orchestration.signal.effects``.
+
+    The configuration form of gwmock-signal's ``ProjectionEffects``, one key per field, with its
+    defaults: every effect on. A misspelled key is refused rather than ignored, because an effect
+    left on by a typo changes the data while the run looks normal.
+    """
+
+    earth_rotation: bool = Field(
+        default=True,
+        alias="earth-rotation",
+        description=(
+            "The antenna pattern and the geocentre-to-detector delay follow the Earth's rotation sample "
+            "by sample. Off, both are held at the span's midpoint, which suits only a signal of seconds."
+        ),
+    )
+    finite_arm_length: bool = Field(
+        default=True,
+        alias="finite-arm-length",
+        description=(
+            "Each arm responds to the strain averaged along the light's round trip to its end mirror and "
+            "back, rather than to the strain at the vertex. Needs every detector's arm length."
+        ),
+    )
+    source_precession: bool = Field(
+        default=True,
+        alias="source-precession",
+        description=(
+            "The J2000 source direction is precessed to the epoch of date before the Earth's orientation "
+            "is applied, as LALPulsar's barycentring does."
+        ),
+    )
+    roemer_delay: bool = Field(
+        default=True,
+        alias="roemer-delay",
+        description="The light-travel time between the geocentre and the solar-system barycentre.",
+    )
+    einstein_delay: bool = Field(
+        default=True,
+        alias="einstein-delay",
+        description="The relativistic time dilation of the Earth's clock, TDB minus TT.",
+    )
+    shapiro_delay: bool = Field(
+        default=True,
+        alias="shapiro-delay",
+        description="The Sun's gravitational delay.",
+    )
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, frozen=True)
+
+    def to_projection_effects(self) -> Any:
+        """Return these settings as the ``gwmock_signal`` ``ProjectionEffects`` they describe.
+
+        Imported here rather than at module scope, so loading a configuration does not import the
+        signal package.
+        """
+        from gwmock_signal.projection import ProjectionEffects  # noqa: PLC0415
+
+        return ProjectionEffects(**self.model_dump(by_alias=False))
+
+
+#: The top-level key that chose the Earth's rotation before ``effects`` existed, in both spellings the
+#: model accepts.
+_DEPRECATED_EARTH_ROTATION_KEYS = ("earth-rotation", "earth_rotation")
+
+
 class SignalConfig(BaseModel):
     """Adapter-backed signal configuration."""
 
@@ -235,10 +302,15 @@ class SignalConfig(BaseModel):
     )
     detectors: list[str] = Field(..., description="Detector names or detector config paths")
     minimum_frequency: float = Field(default=5.0, alias="minimum-frequency", description="Minimum waveform frequency")
-    earth_rotation: bool = Field(
-        default=True,
-        alias="earth-rotation",
-        description="Whether to project using time-dependent detector response",
+    effects: ProjectionEffectsConfig = Field(
+        default_factory=ProjectionEffectsConfig,
+        description=(
+            "Which physical effects the detector projection includes: 'earth-rotation', "
+            "'finite-arm-length', 'source-precession', 'roemer-delay', 'einstein-delay' and "
+            "'shapiro-delay', each true by default. Set all six false for the long-wavelength "
+            "convention of LAL's, Bilby's and PyCBC's default projection. The top-level "
+            "'earth-rotation' key this replaces is still read, with a deprecation warning."
+        ),
     )
     execution: str = Field(
         default="per-event",
@@ -289,6 +361,43 @@ class SignalConfig(BaseModel):
 
         return validate_projection_backend_name(v)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read_deprecated_earth_rotation(cls, data: Any) -> Any:
+        """Read the top-level ``earth-rotation`` key into ``effects``, warning that it is deprecated.
+
+        It chose the one projection effect gwmock-signal had before ``ProjectionEffects``. Given
+        alone it still means what it did, and sets ``effects.earth-rotation``. Given alongside
+        ``effects`` it is refused rather than merged: which of the two wins would be a rule the
+        reader has to know, and the configuration would say the same thing in two places.
+
+        The warning is a ``FutureWarning`` rather than a ``DeprecationWarning`` because the reader
+        is whoever wrote the configuration, and Python hides a ``DeprecationWarning`` raised inside
+        a library from everyone but that library's developers.
+        """
+        if not isinstance(data, dict):
+            return data
+        given = [key for key in _DEPRECATED_EARTH_ROTATION_KEYS if key in data]
+        if not given:
+            return data
+        if len(given) > 1:
+            raise ValueError("'earth-rotation' is given twice, as 'earth-rotation' and 'earth_rotation'")
+        key = given[0]
+        if "effects" in data:
+            raise ValueError(
+                f"'{key}' and 'effects' are both given. The top-level '{key}' is a deprecated "
+                "spelling of 'effects.earth-rotation'; move its value there and remove it."
+            )
+        warnings.warn(
+            f"orchestration.signal.{key} is deprecated; write it as 'effects: {{earth-rotation: ...}}' "
+            "instead. The other projection effects are not set by it, and are all on unless 'effects' "
+            "turns them off.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        remaining = {name: value for name, value in data.items() if name != key}
+        return {**remaining, "effects": {"earth-rotation": data[key]}}
+
     @model_validator(mode="after")
     def _validate_projection_backend_is_usable(self) -> SignalConfig:
         """Refuse a device projection this run could not perform, while parsing rather than later.
@@ -300,12 +409,12 @@ class SignalConfig(BaseModel):
         """
         if self.projection_backend != "jax":
             return self
-        if not self.earth_rotation:
+        if not self.effects.earth_rotation:
             raise ValueError(
-                "'projection-backend: jax' is only available with 'earth-rotation: true'. The "
+                "'projection-backend: jax' is only available with 'effects.earth-rotation: true'. The "
                 "constant-pattern branch applies one frequency-domain phase shift for the whole "
                 "span and has no device implementation; it is also the cheap branch, being the "
-                "one that skips the resampler. Set 'earth-rotation: true', or use "
+                "one that skips the resampler. Set 'effects.earth-rotation: true', or use "
                 "'projection-backend: numpy'."
             )
 

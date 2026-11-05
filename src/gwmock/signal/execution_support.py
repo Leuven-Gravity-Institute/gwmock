@@ -41,7 +41,7 @@ _BATCHED_HONOURED_FIELDS: frozenset[str] = frozenset(
         "waveform_arguments",
         "detectors",
         "minimum_frequency",
-        "earth_rotation",
+        "effects",
         "execution",
         "output",
     }

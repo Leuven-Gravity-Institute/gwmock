@@ -97,7 +97,7 @@ def _config(tmp_path: Path, *, duration: float, total: float, n_pulsars: int = 2
                 "source-type": "cw",
                 "detectors": list(_DETECTORS),
                 "minimum-frequency": 5,
-                "earth-rotation": True,
+                "effects": {"earth-rotation": True},
                 "arguments": {
                     "earth_ephemeris": str(_EPHEMERIS / "earth00-40-DE405.dat.gz"),
                     "sun_ephemeris": str(_EPHEMERIS / "sun00-40-DE405.dat.gz"),
