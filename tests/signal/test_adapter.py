@@ -792,3 +792,112 @@ class TestProjectionEffectsReachTheBackend:
 
         deprecations = [str(w.message) for w in recwarn if issubclass(w.category, DeprecationWarning)]
         assert not [message for message in deprecations if "earth_rotation" in message], deprecations
+
+
+class TestOutputGrid:
+    """A per-event chunk projected onto its segment's lattice is declared there and added by whole samples."""
+
+    EPOCH = 1577491296.0
+    RATE = 4000.0
+
+    class GridBackend(FakeBackend):
+        """Returns a ramp that starts on the lattice it is given, or 0.4 samples off it when told to ignore it."""
+
+        def __init__(self, *, honour_grid: bool) -> None:
+            super().__init__(waveform_model="IMRPhenomD")
+            self.honour_grid = honour_grid
+            self.grids = []
+
+        def simulate(self, params, detector_names, background=None, *, output_grid=None, **kwargs):
+            self.grids.append(output_grid)
+            rate = TestOutputGrid.RATE
+            if output_grid is not None and self.honour_grid:
+                t0 = float(output_grid.time_of(10))
+            else:
+                t0 = TestOutputGrid.EPOCH + 10.4 / rate
+            ramp = np.arange(1.0, 65.0)
+            names = tuple(detector_names)
+            return DetectorStrainStack.from_mapping(
+                names, {name: ChannelSeries((k + 1) * ramp, t0=t0, sample_rate=rate) for k, name in enumerate(names)}
+            )
+
+    def _adapter(self, *, honour_grid: bool = True) -> SignalAdapter:
+        backend = self.GridBackend(honour_grid=honour_grid)
+        return SignalAdapter(source_type="cbc", backend=backend, network=SimpleNamespace(detector_names=("E1", "E2")))
+
+    def _grid(self):
+        from gwmock_signal import SamplingGrid
+
+        return SamplingGrid(self.EPOCH, self.RATE)
+
+    def test_the_grid_is_forwarded_and_the_chunk_declared_on_it(self):
+        """The backend is asked for the lattice, and the chunk it returns is declared on that lattice."""
+        from gwmock_data.multichannel_series import ON_GRID_EPOCH_METADATA_KEY, ON_GRID_METADATA_KEY
+
+        adapter = self._adapter()
+        grid = self._grid()
+        chunk = adapter.simulate(
+            {"coa_time": 10.0}, sampling_frequency=self.RATE, minimum_frequency=1.0, output_grid=grid
+        )
+        assert adapter._backend.grids == [grid]
+        assert chunk.metadata[ON_GRID_METADATA_KEY] is True
+        assert chunk.metadata[ON_GRID_EPOCH_METADATA_KEY] == self.EPOCH
+
+    def test_a_declared_chunk_is_added_verbatim(self):
+        """At 4000 Hz, sample 10 is 2.29e-4 samples off the lattice in float64: declared, it is still placed exactly."""
+        from gwmock.data.time_series.time_series import TimeSeries
+
+        chunk = self._adapter().simulate(
+            {"coa_time": 10.0}, sampling_frequency=self.RATE, minimum_frequency=1.0, output_grid=self._grid()
+        )
+        segment = TimeSeries(data=np.zeros((2, 1024)), start_time=self.EPOCH, sampling_frequency=self.RATE)
+        segment.inject_from_list([chunk])
+        np.testing.assert_array_equal(
+            np.asarray(segment)[:, 10:74], np.stack([np.arange(1.0, 65.0), 2 * np.arange(1.0, 65.0)])
+        )
+
+    def test_a_backend_that_ignores_the_grid_is_refused(self):
+        """Declaring an off-lattice chunk on the lattice would place it by whole samples at the wrong time."""
+        from gwmock.utils.errors import DeterministicRefusalError
+
+        with pytest.raises(DeterministicRefusalError, match="off the output grid"):
+            self._adapter(honour_grid=False).simulate(
+                {"coa_time": 10.0}, sampling_frequency=self.RATE, minimum_frequency=1.0, output_grid=self._grid()
+            )
+
+    def test_without_a_grid_the_backend_is_called_as_before(self):
+        """No ``output_grid`` keyword reaches a backend unless one is given, so older backends keep working."""
+        backend = FakeBackend(waveform_model="IMRPhenomD")
+        adapter = SignalAdapter(source_type="cbc", backend=backend, network=SimpleNamespace(detector_names=("E1",)))
+        chunk = adapter.simulate({"coa_time": 10.0}, sampling_frequency=4.0, minimum_frequency=1.0)
+        from gwmock_data.multichannel_series import ON_GRID_METADATA_KEY
+
+        assert ON_GRID_METADATA_KEY not in chunk.metadata
+
+    def test_a_grid_with_a_background_is_refused(self):
+        """The background's lattice decides where a sum lies, so a second lattice cannot be asked for."""
+        with pytest.raises(ValueError, match="background"):
+            self._adapter().simulate(
+                {"coa_time": 10.0},
+                sampling_frequency=self.RATE,
+                minimum_frequency=1.0,
+                output_grid=self._grid(),
+                background={"E1": np.zeros(4), "E2": np.zeros(4)},
+            )
+
+    def test_a_backend_without_the_option_is_called_as_before(self):
+        """A backend that does not name ``output_grid`` is not passed it, and its chunk is left undeclared.
+
+        A third-party backend, or a gwmock-signal older than the option, would otherwise fail on an
+        unexpected keyword. Its chunk is resampled onto the segment when it is injected, as before.
+        """
+        from gwmock_data.multichannel_series import ON_GRID_METADATA_KEY
+
+        backend = FakeBackend(waveform_model="IMRPhenomD")
+        adapter = SignalAdapter(source_type="cbc", backend=backend, network=SimpleNamespace(detector_names=("E1",)))
+        assert not adapter.places_on_grid()
+        chunk = adapter.simulate(
+            {"coa_time": 10.0}, sampling_frequency=self.RATE, minimum_frequency=1.0, output_grid=self._grid()
+        )
+        assert "output_grid" not in backend.simulate_calls[0]
+        assert ON_GRID_METADATA_KEY not in chunk.metadata

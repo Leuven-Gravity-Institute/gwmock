@@ -741,11 +741,12 @@ class TestAnOffGridCoalescenceTime:
 
         Shifting ``coa_time`` by a fraction of a sample shifts the waveform and nothing else of
         consequence, so the off-grid strain must be the on-grid strain evaluated
-        ``offset_samples`` earlier. The chunk is a whole tapered waveform, so it is oversampled
-        exactly before the windowed-sinc kernel reads it, and the reference is shifted the same
-        way. They agree to 3.7e-7..4.6e-7 of peak, the residue of the waveform's own weak dependence
-        on ``coa_time``. The kernel alone is accurate only to 0.8 x Nyquist, and at 1024 Hz this
-        waveform has content above that, where it is off the exact shift by 2.6e-4 of peak. Linear
+        ``offset_samples`` earlier. The off-grid chunk is projected onto the segment's lattice, so
+        it is assembled without being resampled. The reference is the on-grid run shifted after it
+        was projected, which is not the same construction: they differ by 1.1e-6..1.5e-6 of peak,
+        all of it above 0.8 x Nyquist and away from the merger, which is what shifting a finished,
+        cut buffer cannot reproduce of the polarizations' band-limited interpolant (the lattice
+        projection itself is checked against analytic strain in gwmock-signal). Linear
         interpolation leaves ~0.27, and resampling segment by segment leaves the seam broken.
 
         The chunk's first and last kernel half-width are excluded: positions just outside a chunk
@@ -755,8 +756,8 @@ class TestAnOffGridCoalescenceTime:
         with caplog.at_level(logging.WARNING, logger="gwmock"):
             off_grid = self._assemble(tmp_path / "off", self._OFFSET_SAMPLES)
 
-        # Resampled once, as a whole, in the first segment; the second receives an on-grid tail.
-        assert caplog.text.count("Chunk time grid does not align") == 1
+        # Projected onto the segment's lattice, so no chunk is resampled when it is assembled.
+        assert caplog.text.count("Chunk time grid does not align") == 0
 
         indices = np.arange(on_grid.shape[1])
         support = np.flatnonzero(np.any(on_grid != 0.0, axis=0))

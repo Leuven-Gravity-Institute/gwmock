@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import warnings
@@ -12,11 +13,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from gwmock_data.multichannel_series import TAPERED_METADATA_KEY
-from gwmock_signal import CustomDetector, DetectorStrainStack, Network, resolve_simulator_backend
+from gwmock_data.multichannel_series import ON_GRID_EPOCH_METADATA_KEY, ON_GRID_METADATA_KEY, TAPERED_METADATA_KEY
+from gwmock_signal import CustomDetector, DetectorStrainStack, Network, SamplingGrid, resolve_simulator_backend
 from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.data.time_series.time_series import TimeSeries
+from gwmock.signal.device_chunks import require_placeable_on_grid
 from gwmock.signal.population_columns import require_population_columns_read, require_redundant_columns_agree
 from gwmock.utils.errors import DeterministicRefusalError, wraps_transient_failure
 
@@ -902,6 +904,7 @@ class SignalAdapter:
         background: Mapping[str, Any] | None = None,
         effects: ProjectionEffects | None = None,
         earth_rotation: bool | None = None,
+        output_grid: SamplingGrid | None = None,
     ) -> DetectorStrainStack:
         """Generate one detector strain stack via the public ``gwmock_signal`` API.
 
@@ -918,6 +921,11 @@ class SignalAdapter:
             effects: Which physical effects the projection includes. ``None`` means gwmock-signal's
                 default, every effect on; see :class:`gwmock_signal.projection.ProjectionEffects`.
             earth_rotation: Deprecated; ``effects=ProjectionEffects(earth_rotation=...)``.
+            output_grid: A lattice for the strain, forwarded to a backend whose ``simulate`` names an
+                ``output_grid`` parameter, which then returns it starting on that lattice. Not forwarded
+                when ``None`` or to a backend that does not name it, such as a third-party backend or a
+                gwmock-signal older than the option, which is then called as before
+                (:meth:`places_on_grid`).
 
         Returns:
             A DetectorStrainStack instance.
@@ -926,6 +934,7 @@ class SignalAdapter:
         backend_parameters = self._backend_parameters(
             parameters, waveform_arguments, waveform_options, minimum_frequency
         )
+        placement = {"output_grid": output_grid} if output_grid is not None and self.places_on_grid() else {}
         try:
             try:
                 return self._backend.simulate(
@@ -935,6 +944,7 @@ class SignalAdapter:
                     sampling_frequency=sampling_frequency,
                     minimum_frequency=minimum_frequency,
                     effects=effects,
+                    **placement,
                 )
             except ValueError as exc:
                 filtered = self._without_unsupported(exc, backend_parameters, waveform_arguments, minimum_frequency)
@@ -947,6 +957,7 @@ class SignalAdapter:
                     sampling_frequency=sampling_frequency,
                     minimum_frequency=minimum_frequency,
                     effects=effects,
+                    **placement,
                 )
         except DeterministicRefusalError:
             raise
@@ -971,6 +982,7 @@ class SignalAdapter:
         background: Mapping[str, Any] | None = None,
         effects: ProjectionEffects | None = None,
         earth_rotation: bool | None = None,
+        output_grid: SamplingGrid | None = None,
     ) -> TimeSeries:
         """Generate one signal chunk via the public gwmock-signal ``simulate`` API.
 
@@ -987,10 +999,23 @@ class SignalAdapter:
             effects: Which physical effects the projection includes. ``None`` means gwmock-signal's
                 default, every effect on; see :class:`gwmock_signal.projection.ProjectionEffects`.
             earth_rotation: Deprecated; ``effects=ProjectionEffects(earth_rotation=...)``.
+            output_grid: The lattice of the segment the chunk will be added to. A backend that takes
+                it (:meth:`places_on_grid`) projects onto it, and the chunk is declared on it, so
+                injection adds it by whole samples instead of resampling it a second time. Another
+                backend is called as before and its chunk resampled when injected. Refused with
+                ``background``, whose own lattice decides where the sum lies.
 
         Returns:
             A TimeSeries instance.
+
+        Raises:
+            ValueError: If ``output_grid`` is given with ``background``.
+            DeterministicRefusalError: If the chunk the backend returns is not placeable on ``output_grid``.
         """
+        if output_grid is not None and background is not None:
+            raise ValueError(
+                "output_grid places a signal-only chunk; with a background, the background's lattice does."
+            )
         effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate")
         strain_stack = self.simulate_stack(
             parameters,
@@ -1000,6 +1025,7 @@ class SignalAdapter:
             waveform_options=waveform_options,
             background=background,
             effects=effects,
+            output_grid=output_grid,
         )
         chunk = TimeSeries(
             data=strain_stack.data,
@@ -1021,7 +1047,28 @@ class SignalAdapter:
             is True
         ):
             chunk.metadata[TAPERED_METADATA_KEY] = True
+        if output_grid is not None and self.places_on_grid():
+            # Checked, not assumed: a backend that ignored the grid would otherwise have its chunk
+            # declared on a lattice it is not on, and placed by whole samples at the wrong time. A
+            # backend that cannot take the grid is left undeclared, and its chunk is resampled onto the
+            # segment when it is injected, as before.
+            require_placeable_on_grid(np.array([float(strain_stack.t0)]), output_grid)
+            chunk.metadata[ON_GRID_METADATA_KEY] = True
+            chunk.metadata[ON_GRID_EPOCH_METADATA_KEY] = float(output_grid.epoch)
         return chunk
+
+    def places_on_grid(self) -> bool:
+        """Return whether the backend's ``simulate`` names an ``output_grid`` parameter.
+
+        Named, not merely accepted through ``**kwargs``: a backend that took the keyword without using it
+        would return a chunk off the lattice, which :meth:`simulate` would then refuse. A signature that
+        cannot be read counts as not naming it, so the backend is called as before.
+        """
+        try:
+            parameter = inspect.signature(self._backend.simulate).parameters.get("output_grid")
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return parameter is not None and parameter.kind is not inspect.Parameter.VAR_KEYWORD
 
     def set_seed(self, seed: int | None) -> None:
         """Set a backend seed attribute when the backend exposes one."""
