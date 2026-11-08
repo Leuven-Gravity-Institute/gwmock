@@ -728,6 +728,7 @@ class TestAnOffGridCoalescenceTime:
 
     def _assemble(self, working_directory: Path, offset_samples: float) -> np.ndarray:
         orchestrator = _orchestrator(working_directory, total_duration=2 * _SEGMENT_DURATION)
+        self.places_on_grid = orchestrator.signal_adapter.places_on_grid()
         coa_time = _START + _SEGMENT_DURATION + 1.0 + offset_samples / _SAMPLING_FREQUENCY
         orchestrator._population_events = ({**_COMPLETE_EVENT, "coa_time": coa_time},)
         first = orchestrator.simulate().signal_segment
@@ -741,12 +742,17 @@ class TestAnOffGridCoalescenceTime:
 
         Shifting ``coa_time`` by a fraction of a sample shifts the waveform and nothing else of
         consequence, so the off-grid strain must be the on-grid strain evaluated
-        ``offset_samples`` earlier. The chunk is a whole tapered waveform, so it is oversampled
-        exactly before the windowed-sinc kernel reads it, and the reference is shifted the same
-        way. They agree to 3.7e-7..4.6e-7 of peak, the residue of the waveform's own weak dependence
-        on ``coa_time``. The kernel alone is accurate only to 0.8 x Nyquist, and at 1024 Hz this
-        waveform has content above that, where it is off the exact shift by 2.6e-4 of peak. Linear
-        interpolation leaves ~0.27, and resampling segment by segment leaves the seam broken.
+        ``offset_samples`` earlier. With a gwmock-signal that takes ``output_grid``, the off-grid
+        chunk is projected onto the segment's lattice and assembled without being resampled; with
+        one that does not, it is resampled once, as a whole, when injected. The reference is the
+        on-grid run shifted after it was projected. Both agree with it to the level of the
+        waveform's own weak dependence on ``coa_time``, about 4e-7 of peak. On the lattice path
+        the agreement is up to 1.5e-6 at the first compared samples, decaying to about 5e-7 within
+        a few hundred: almost all of that excess is at the band edge, where shifting a finished,
+        cut buffer cannot reproduce the polarizations' band-limited interpolant (the lattice
+        projection itself is checked against analytic strain in gwmock-signal). At 2048 Hz and
+        above the two paths agree to three digits. Linear interpolation leaves ~0.27, and
+        resampling segment by segment leaves the seam broken.
 
         The chunk's first and last kernel half-width are excluded: positions just outside a chunk
         evaluate to zero there by contract, while the reference resamples across them.
@@ -755,8 +761,10 @@ class TestAnOffGridCoalescenceTime:
         with caplog.at_level(logging.WARNING, logger="gwmock"):
             off_grid = self._assemble(tmp_path / "off", self._OFFSET_SAMPLES)
 
-        # Resampled once, as a whole, in the first segment; the second receives an on-grid tail.
-        assert caplog.text.count("Chunk time grid does not align") == 1
+        # Projected onto the segment's lattice when the installed gwmock-signal can, so no chunk is
+        # resampled at assembly; otherwise resampled once, as a whole, in the first segment, and the
+        # second receives an on-grid tail.
+        assert caplog.text.count("Chunk time grid does not align") == (0 if self.places_on_grid else 1)
 
         indices = np.arange(on_grid.shape[1])
         support = np.flatnonzero(np.any(on_grid != 0.0, axis=0))

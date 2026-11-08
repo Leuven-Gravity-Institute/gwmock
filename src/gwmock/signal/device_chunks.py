@@ -167,7 +167,43 @@ def canonicalise_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from gwmock_signal import BatchedDetectorStrain
+    from gwmock_signal import BatchedDetectorStrain, SamplingGrid
+
+
+def require_placeable_on_grid(start_times: np.ndarray, grid: SamplingGrid) -> None:
+    """Refuse a chunk start that gwmock-signal or gwmock's injection would not place on *grid* by whole samples.
+
+    Args:
+        start_times: GPS start times of the chunks, one per event.
+        grid: The lattice the chunks were generated on.
+
+    Raises:
+        DeterministicRefusalError: If any start time is off the lattice by either predicate.
+    """
+    start_times = np.atleast_1d(np.asarray(start_times, dtype=float))
+    # Checked against *both* predicates, because agreeing with the producer is not the same as
+    # agreeing with the consumer. gwmock-signal's `is_on_lattice` says the buffer sits on the grid it
+    # was generated for; `is_aligned` is the resolution `TimeSeries.inject` holds a chunk declared on
+    # the grid to, as each chunk declared on it is. Those can disagree -- at GPS 1577491296, 4000 Hz, sample 10, the representation error is
+    # 2.29e-4 samples, which `is_on_lattice` accepts and a relative-tolerance `inject` rejected,
+    # silently interpolating a chunk this module promised would be placed verbatim. Asserting only
+    # the producer's view is how that went unnoticed.
+    grid_offsets = (start_times - float(grid.epoch)) * float(grid.sampling_frequency)
+    on_lattice = np.atleast_1d(grid.is_on_lattice(start_times))
+    tolerance = alignment_tolerance(float(grid.epoch), float(grid.sampling_frequency), gps_times=start_times)
+    placeable = np.array([is_aligned(float(offset), tolerance) for offset in grid_offsets], dtype=bool)
+
+    rejected = ~(on_lattice & placeable)
+    if np.any(rejected):
+        first = int(np.argmax(rejected))
+        offset = float(grid_offsets[first])
+        raise DeterministicRefusalError(
+            f"Event {first}'s buffer starts at GPS {start_times[first]!r}, which is {offset - round(offset):+.3e} "
+            f"samples off the output grid (epoch {grid.epoch!r}, {grid.sampling_frequency!r} Hz). "
+            f"gwmock-signal considers it on-lattice: {bool(on_lattice[first])}; gwmock considers it "
+            f"placeable within {tolerance:.3e} samples: {bool(placeable[first])}. Injecting it would "
+            f"resample the chunk instead of placing it exactly."
+        )
 
 
 def batched_strain_to_chunks(
@@ -249,30 +285,7 @@ def batched_strain_to_chunks(
         )
 
     start_times = np.array([float(grid.time_of(int(index))) for index in start_indices], dtype=float)
-
-    # Checked against *both* predicates, because agreeing with the producer is not the same as
-    # agreeing with the consumer. gwmock-signal's `is_on_lattice` says the buffer sits on the grid it
-    # was generated for; `is_aligned` is the resolution `TimeSeries.inject` holds a chunk declared on
-    # the grid to, as each chunk below is. Those can disagree -- at GPS 1577491296, 4000 Hz, sample 10, the representation error is
-    # 2.29e-4 samples, which `is_on_lattice` accepts and a relative-tolerance `inject` rejected,
-    # silently interpolating a chunk this module promised would be placed verbatim. Asserting only
-    # the producer's view is how that went unnoticed.
-    grid_offsets = (start_times - float(grid.epoch)) * float(grid.sampling_frequency)
-    on_lattice = np.atleast_1d(grid.is_on_lattice(start_times))
-    tolerance = alignment_tolerance(float(grid.epoch), float(grid.sampling_frequency), gps_times=start_times)
-    placeable = np.array([is_aligned(float(offset), tolerance) for offset in grid_offsets], dtype=bool)
-
-    rejected = ~(on_lattice & placeable)
-    if np.any(rejected):
-        first = int(np.argmax(rejected))
-        offset = float(grid_offsets[first])
-        raise DeterministicRefusalError(
-            f"Event {first}'s buffer starts at GPS {start_times[first]!r}, which is {offset - round(offset):+.3e} "
-            f"samples off the output grid (epoch {grid.epoch!r}, {grid.sampling_frequency!r} Hz). "
-            f"gwmock-signal considers it on-lattice: {bool(on_lattice[first])}; gwmock considers it "
-            f"placeable within {tolerance:.3e} samples: {bool(placeable[first])}. Injecting it would "
-            f"resample the chunk instead of placing it exactly."
-        )
+    require_placeable_on_grid(start_times, grid)
 
     # Declared on the output grid, and on no other: built there, a chunk's start rounds off it by up to
     # 2.29e-4 samples at 4000 Hz, beyond the 1e-4 within which an undeclared chunk is placed by whole

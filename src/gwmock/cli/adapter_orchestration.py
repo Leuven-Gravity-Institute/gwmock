@@ -12,7 +12,7 @@ import numpy as np
 from gwmock_data import TimeSeries as ChannelSeries
 from gwmock_noise import SimulationResult
 from gwmock_pop import GWPopSimulator
-from gwmock_signal import DetectorStrainStack, Network
+from gwmock_signal import DetectorStrainStack, Network, SamplingGrid
 from gwmock_signal.projection import ProjectionEffects
 
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
@@ -797,6 +797,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         chunks = TimeSeriesList()
         self._batch_injections = []
         order = self._placement_order()
+        grid = SamplingGrid(
+            float(getattr(self.start_time, "value", self.start_time)), float(self.sampling_frequency.value)
+        )
         while self.population_index < len(order):
             # `population_index` counts events consumed, and `order` turns that into the catalogue
             # position -- which is also the event id, so provenance keeps naming events by their
@@ -825,6 +828,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 waveform_arguments=self.waveform_arguments,
                 waveform_options=self.waveform_options,
                 effects=self.effects,
+                # Projected onto this segment's lattice, as the batched path's `output_grid` is, so the
+                # chunk is added by whole samples. Placed off it, a chunk is resampled a second time,
+                # and that cannot reproduce what the polarizations' band-limited interpolant puts past
+                # the ends of the projected buffer.
+                output_grid=grid,
             )
             # `event_id` alongside the parameters, and both survive onto a tail, so a chunk that
             # crosses a segment boundary can still be attributed to its event in the next segment.

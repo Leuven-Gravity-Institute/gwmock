@@ -17,7 +17,19 @@ and re-exported here under the name gwmock has always used; it is documented fro
 ## Injecting a chunk that is off the segment grid
 
 `TimeSeries.inject` adds a chunk to a segment by GPS time. When the chunk's samples fall a
-fraction of a sample off the segment's grid, the chunk is resampled before it is added:
+fraction of a sample off the segment's grid, the chunk is resampled before it is added.
+
+A simulated signal usually does not take this path. When the signal backend's `simulate` takes an
+`output_grid` parameter by keyword, as gwmock-signal's does from the release that added it, each per-event
+chunk is projected onto the segment's grid and declared there, so it is added by whole samples; the
+batched path does the same. That one-step projection is the more accurate: resampling a finished,
+cut buffer cannot reproduce what the polarizations' band-limited interpolant puts past its ends. The
+error is largest at the buffer's ends, of the order of the strain's own value there, decays within a few
+hundred samples, and lies almost all near Nyquist: at 8192 Hz, 2e-10 of the peak for a binary black hole
+whose strain starts at 1.6e-10, and 1.6e-5 for a binary neutron star whose 256 s buffer starts at 4.3e-6.
+It grows as the signal's content approaches Nyquist, to about 4e-6 for a binary black hole at 1024 Hz.
+The path below is what a chunk from a backend without that
+option falls back to when it is off the grid, and what any chunk built off the grid takes.
 
 - **Kernel.** The band-limited windowed-sinc kernel `gwmock_data.resampling.resample_uniform_sinc`,
   shared by the gwmock packages: gwmock-signal's projection and its `inject_strain` resample with
@@ -38,13 +50,15 @@ fraction of a sample off the segment's grid, the chunk is resampled before it is
 ### Agreement with `inject_strain`
 
 `gwmock_signal.injection.core.inject_strain` resamples off-grid injections with the same kernel
-(from gwmock-signal 0.17.4; this package requires 0.18.0), so off-grid injection through gwmock
+(from gwmock-signal 0.17.4; this package requires 0.22.0), so off-grid injection through gwmock
 and through `inject_strain` produces the same samples.
 
 ### Test coverage
 
 The end-to-end reference matrix does not exercise this path: its fixture event coalesces on a
 whole second and its runs start on a 16-second boundary, so every chunk reaches injection on the
-segment grid. The off-grid path is covered by unit tests against the analytic signal and by an
-integration test that generates a real waveform with an off-grid coalescence time across a
-segment boundary and checks it against the on-grid run shifted by the same sub-sample offset.
+segment grid. The off-grid path is covered by unit tests against the analytic signal. An
+integration test generates a real waveform with an off-grid coalescence time across a segment
+boundary and checks it against the on-grid run shifted by the same sub-sample offset; with a
+gwmock-signal that takes `output_grid` the chunk is projected onto the grid instead, and the test
+checks that no chunk is resampled at assembly.
