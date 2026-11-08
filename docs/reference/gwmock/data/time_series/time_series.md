@@ -24,9 +24,11 @@ A simulated signal usually does not take this path. When the signal backend's `s
 chunk is projected onto the segment's grid and declared there, so it is added by whole samples; the
 batched path does the same. That one-step projection is the more accurate: resampling a finished,
 cut buffer cannot reproduce what the polarizations' band-limited interpolant puts past its ends, which
-costs up to 1.5e-8 of the signal's peak at the buffer's first samples at 8192 Hz, decaying within a
-few hundred samples, almost all of it near Nyquist. It grows as the signal's content approaches
-Nyquist: the same binary black hole at 1024 Hz differs by up to about 4e-6 of its peak. The path below is what a chunk from a backend without that
+is largest at the buffer's ends, of the order of the strain's own value there, and decays within a few
+hundred samples, almost all of it near Nyquist. Measured at 8192 Hz, it is 1.5e-8 of the peak at the
+first samples of a 30 + 25 solar-mass binary black hole, and 1.6e-5 for a binary neutron star whose
+256 s buffer starts at 4.3e-6 of its peak. It grows as the signal's content approaches Nyquist: the
+same binary black hole at 1024 Hz differs by up to about 4e-6. The path below is what a chunk from a backend without that
 option falls back to when it is off the grid, and what any chunk built off the grid takes.
 
 - **Kernel.** The band-limited windowed-sinc kernel `gwmock_data.resampling.resample_uniform_sinc`,
