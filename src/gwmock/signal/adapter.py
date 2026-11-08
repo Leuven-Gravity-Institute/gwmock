@@ -929,7 +929,15 @@ class SignalAdapter:
 
         Returns:
             A DetectorStrainStack instance.
+
+        Raises:
+            ValueError: If ``output_grid`` is given with ``background``, whose own lattice decides where
+                the sum lies.
         """
+        if output_grid is not None and background is not None:
+            raise ValueError(
+                "output_grid places a signal-only chunk; with a background, the background's lattice does."
+            )
         effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate_stack")
         backend_parameters = self._backend_parameters(
             parameters, waveform_arguments, waveform_options, minimum_frequency
@@ -1012,10 +1020,6 @@ class SignalAdapter:
             ValueError: If ``output_grid`` is given with ``background``.
             DeterministicRefusalError: If the chunk the backend returns is not placeable on ``output_grid``.
         """
-        if output_grid is not None and background is not None:
-            raise ValueError(
-                "output_grid places a signal-only chunk; with a background, the background's lattice does."
-            )
         effects = resolve_projection_effects(effects, earth_rotation=earth_rotation, caller="simulate")
         strain_stack = self.simulate_stack(
             parameters,
@@ -1061,14 +1065,18 @@ class SignalAdapter:
         """Return whether the backend's ``simulate`` names an ``output_grid`` parameter.
 
         Named, not merely accepted through ``**kwargs``: a backend that took the keyword without using it
-        would return a chunk off the lattice, which :meth:`simulate` would then refuse. A signature that
-        cannot be read counts as not naming it, so the backend is called as before.
+        would return a chunk off the lattice, which :meth:`simulate` would then refuse. Named so it can be
+        passed by keyword, as it is: a positional-only parameter of that name does not count. A signature
+        that cannot be read counts as not naming it. In each of those cases the backend is called as before.
         """
         try:
             parameter = inspect.signature(self._backend.simulate).parameters.get("output_grid")
         except (AttributeError, TypeError, ValueError):
             return False
-        return parameter is not None and parameter.kind is not inspect.Parameter.VAR_KEYWORD
+        return parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
 
     def set_seed(self, seed: int | None) -> None:
         """Set a backend seed attribute when the backend exposes one."""

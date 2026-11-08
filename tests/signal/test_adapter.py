@@ -901,3 +901,43 @@ class TestOutputGrid:
         )
         assert "output_grid" not in backend.simulate_calls[0]
         assert ON_GRID_METADATA_KEY not in chunk.metadata
+
+    @pytest.mark.parametrize(
+        "signature",
+        ["positional_only", "var_keyword"],
+    )
+    def test_a_backend_that_cannot_take_the_grid_by_keyword_is_called_as_before(self, signature):
+        """A positional-only ``output_grid`` cannot be passed by keyword, and ``**kwargs`` does not name it."""
+        from gwmock_data.multichannel_series import ON_GRID_METADATA_KEY
+
+        backend = FakeBackend(waveform_model="IMRPhenomD")
+        plain = backend.simulate
+
+        if signature == "positional_only":
+
+            def simulate(params, detector_names, output_grid=None, /, background=None, **kwargs):
+                return plain(params, detector_names, background, **kwargs)
+
+        else:
+
+            def simulate(params, detector_names, background=None, **kwargs):
+                return plain(params, detector_names, background, **kwargs)
+
+        backend.simulate = simulate
+        adapter = SignalAdapter(source_type="cbc", backend=backend, network=SimpleNamespace(detector_names=("E1",)))
+        assert not adapter.places_on_grid()
+        chunk = adapter.simulate(
+            {"coa_time": 10.0}, sampling_frequency=self.RATE, minimum_frequency=1.0, output_grid=self._grid()
+        )
+        assert ON_GRID_METADATA_KEY not in chunk.metadata
+
+    def test_simulate_stack_refuses_a_grid_with_a_background(self):
+        """Both entry points agree that the combination is not placeable."""
+        with pytest.raises(ValueError, match="background"):
+            self._adapter().simulate_stack(
+                {"coa_time": 10.0},
+                sampling_frequency=self.RATE,
+                minimum_frequency=1.0,
+                output_grid=self._grid(),
+                background={"E1": np.zeros(4), "E2": np.zeros(4)},
+            )
