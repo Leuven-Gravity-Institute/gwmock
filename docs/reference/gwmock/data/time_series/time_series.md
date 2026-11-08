@@ -17,7 +17,15 @@ and re-exported here under the name gwmock has always used; it is documented fro
 ## Injecting a chunk that is off the segment grid
 
 `TimeSeries.inject` adds a chunk to a segment by GPS time. When the chunk's samples fall a
-fraction of a sample off the segment's grid, the chunk is resampled before it is added:
+fraction of a sample off the segment's grid, the chunk is resampled before it is added.
+
+A simulated signal usually does not take this path. When the signal backend's `simulate` names an
+`output_grid` parameter, as gwmock-signal's does from the release that added it, each per-event
+chunk is projected onto the segment's grid and declared there, so it is added by whole samples; the
+batched path does the same. That one-step projection is the more accurate: resampling a finished,
+cut buffer cannot reproduce what the polarizations' band-limited interpolant puts past its ends, which
+costs up to about 1e-8 of the signal's peak at the buffer's ends and near Nyquist. The path below is
+taken by a backend without that option, and by any chunk built off the grid.
 
 - **Kernel.** The band-limited windowed-sinc kernel `gwmock_data.resampling.resample_uniform_sinc`,
   shared by the gwmock packages: gwmock-signal's projection and its `inject_strain` resample with
@@ -45,6 +53,8 @@ and through `inject_strain` produces the same samples.
 
 The end-to-end reference matrix does not exercise this path: its fixture event coalesces on a
 whole second and its runs start on a 16-second boundary, so every chunk reaches injection on the
-segment grid. The off-grid path is covered by unit tests against the analytic signal and by an
-integration test that generates a real waveform with an off-grid coalescence time across a
-segment boundary and checks it against the on-grid run shifted by the same sub-sample offset.
+segment grid. The off-grid path is covered by unit tests against the analytic signal. An
+integration test generates a real waveform with an off-grid coalescence time across a segment
+boundary and checks it against the on-grid run shifted by the same sub-sample offset; with a
+gwmock-signal that takes `output_grid` the chunk is projected onto the grid instead, and the test
+checks that no chunk is resampled at assembly.
