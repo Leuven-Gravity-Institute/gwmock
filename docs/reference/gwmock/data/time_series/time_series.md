@@ -19,13 +19,14 @@ and re-exported here under the name gwmock has always used; it is documented fro
 `TimeSeries.inject` adds a chunk to a segment by GPS time. When the chunk's samples fall a
 fraction of a sample off the segment's grid, the chunk is resampled before it is added.
 
-A simulated signal usually does not take this path. When the signal backend's `simulate` names an
-`output_grid` parameter, as gwmock-signal's does from the release that added it, each per-event
+A simulated signal usually does not take this path. When the signal backend's `simulate` takes an
+`output_grid` parameter by keyword, as gwmock-signal's does from the release that added it, each per-event
 chunk is projected onto the segment's grid and declared there, so it is added by whole samples; the
 batched path does the same. That one-step projection is the more accurate: resampling a finished,
 cut buffer cannot reproduce what the polarizations' band-limited interpolant puts past its ends, which
-costs up to about 1e-8 of the signal's peak at the buffer's ends and near Nyquist. The path below is
-taken by a backend without that option, and by any chunk built off the grid.
+costs up to 1.5e-8 of the signal's peak at the buffer's first samples, decaying within a few hundred
+samples, almost all of it near Nyquist. The path below is what a chunk from a backend without that
+option falls back to when it is off the grid, and what any chunk built off the grid takes.
 
 - **Kernel.** The band-limited windowed-sinc kernel `gwmock_data.resampling.resample_uniform_sinc`,
   shared by the gwmock packages: gwmock-signal's projection and its `inject_strain` resample with
@@ -46,7 +47,7 @@ taken by a backend without that option, and by any chunk built off the grid.
 ### Agreement with `inject_strain`
 
 `gwmock_signal.injection.core.inject_strain` resamples off-grid injections with the same kernel
-(from gwmock-signal 0.17.4; this package requires 0.18.0), so off-grid injection through gwmock
+(from gwmock-signal 0.17.4; this package requires 0.22.0), so off-grid injection through gwmock
 and through `inject_strain` produces the same samples.
 
 ### Test coverage
