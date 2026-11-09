@@ -230,6 +230,8 @@ def test_unresolved_external_inputs_reports_a_remote_glitch_file() -> None:
     ]
     assert _unresolved_external_inputs(_fragment(psd_file="ET2026a_10km_psd")) == []
     assert _unresolved_external_inputs(_fragment(psd_file="/data/psd.txt")) == []
+    # A model instance rather than a mapping carries no URL to report.
+    assert _unresolved_external_inputs({"noise": {"arguments": {"glitches": [object()]}}}) == []
 
 
 # --- _build_resolved_config ------------------------------------------------- #
