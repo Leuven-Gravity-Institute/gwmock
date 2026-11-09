@@ -256,11 +256,21 @@ def _unresolved_external_inputs(fragment: dict[str, Any]) -> list[str]:
     means resolution failed (e.g. an offline Hub with no cache), and a symbolic
     ref such as a branch or tag (``"main"``) still moves upstream. Both are
     reported as unresolved so the run is marked non-replayable.
+
+    A glitch entry whose ``psd_file`` or ``population_file`` is still an ``http(s)`` URL is
+    unresolved too: a replay fetches the URL again, and nothing records the bytes the run read. A
+    population entry keeps its URL, because its pinned digest covers the URL as written.
     """
+    from gwmock.noise.adapter import _REMOTE_GLITCH_FILE_KEYS, _is_remote_url  # noqa: PLC0415
+
     unresolved: list[str] = []
     noise_arguments = fragment.get("noise", {}).get("arguments", {})
     for entry in noise_arguments.get("glitches", []) or []:
-        if isinstance(entry, dict) and "revision" in entry and not _is_pinned_revision(entry["revision"]):
+        if not isinstance(entry, dict):
+            continue
+        if ("revision" in entry and not _is_pinned_revision(entry["revision"])) or any(
+            _is_remote_url(entry.get(key)) for key in _REMOTE_GLITCH_FILE_KEYS
+        ):
             unresolved.append(f"glitch:{entry.get('kind', 'unknown')}")
     return unresolved
 

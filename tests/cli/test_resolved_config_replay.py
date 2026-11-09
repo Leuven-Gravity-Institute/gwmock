@@ -217,6 +217,21 @@ def test_unresolved_external_inputs_requires_a_full_commit_sha() -> None:
     assert _unresolved_external_inputs(parametric) == []
 
 
+def test_unresolved_external_inputs_reports_a_remote_glitch_file() -> None:
+    """A URL a replay would fetch again is not pinned, even beside a pinned dataset revision."""
+
+    def _fragment(**files: str) -> dict[str, Any]:
+        entry = {"kind": "deepextractor", "revision": COMMIT_SHA, **files}
+        return {"noise": {"arguments": {"glitches": [entry]}}}
+
+    assert _unresolved_external_inputs(_fragment(psd_file="https://example.org/psd.txt")) == ["glitch:deepextractor"]
+    assert _unresolved_external_inputs(_fragment(population_file="http://example.org/p.hdf5")) == [
+        "glitch:deepextractor"
+    ]
+    assert _unresolved_external_inputs(_fragment(psd_file="ET2026a_10km_psd")) == []
+    assert _unresolved_external_inputs(_fragment(psd_file="/data/psd.txt")) == []
+
+
 # --- _build_resolved_config ------------------------------------------------- #
 
 
