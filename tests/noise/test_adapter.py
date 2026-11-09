@@ -368,6 +368,17 @@ class TestGlitchPopulationUrlResolution:
     Named bundled assets and local paths must pass through untouched.
     """
 
+    def test_a_population_entry_keeps_its_url(self, monkeypatch):
+        """Its psd_file is part of the digest the config pins, so it reaches gwmock-noise as written."""
+
+        def fail_download(url, **kwargs):
+            raise AssertionError(f"downloaded {url}")
+
+        monkeypatch.setattr(noise_adapter, "download_file", fail_download)
+        entry = {"population": "deepextractor-o3-v1", "psd_file": "https://example.org/psd.txt", "digest": "x"}
+
+        assert noise_adapter._resolve_glitch_file_urls([entry]) == [entry]
+
     def test_resolve_downloads_remote_population_file(self, monkeypatch, tmp_path: Path):
         """A URL population_file is downloaded and replaced with the local path."""
         local = tmp_path / "blip.hdf5"
@@ -734,6 +745,26 @@ class TestDefaultStreamBackendSelection:
         assert isinstance(simulator, FakeInjectGlitches)
         assert isinstance(simulator.base, FakeColoredSimulator)
         assert len(simulator.models) == 1
+
+    def test_a_population_entry_is_injected_as_its_class_models(self):
+        """A registered population expands to one model per class, and the replay record lists them.
+
+        ``et-o3-anchored-v1`` is parametric, so this runs without the optional DeepExtractor extra.
+        """
+        from gwmock_noise.populations import get_glitch_population
+
+        population = get_glitch_population("et-o3-anchored-v1")
+        adapter = NoiseAdapter.from_backend()
+
+        simulator = _configure(adapter, glitches=[{"population": "et-o3-anchored-v1", "digest": population.digest()}])
+
+        assert isinstance(simulator, FakeInjectGlitches)
+        assert [model.serialize() for model in simulator.models] == [
+            glitch_class.model.serialize() for glitch_class in population.classes
+        ]
+        assert adapter.resolved_config()["glitches"] == [
+            glitch_class.model.serialize() for glitch_class in population.classes
+        ]
 
     def test_empty_glitches_are_rejected(self):
         """An empty list is a config mistake, not "no glitches"."""

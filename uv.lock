@@ -854,9 +854,9 @@ requires-dist = [
     { name = "astropy", specifier = ">=7.0" },
     { name = "filelock", specifier = ">=3.17.0" },
     { name = "gwmock-data", specifier = ">=0.4.7" },
-    { name = "gwmock-noise", specifier = ">=0.20.0" },
-    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.20.0" },
-    { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.20.0" },
+    { name = "gwmock-noise", specifier = ">=0.21.0" },
+    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.21.0" },
+    { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.21.0" },
     { name = "gwmock-pop", specifier = ">=0.18.3" },
     { name = "gwmock-pop", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.3" },
     { name = "gwmock-signal", specifier = ">=0.22.0" },
@@ -919,7 +919,7 @@ wheels = [
 
 [[package]]
 name = "gwmock-noise"
-version = "0.20.0"
+version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gwmock-data" },
@@ -929,9 +929,9 @@ dependencies = [
     { name = "scipy" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/dd/13f15ecc1b82beaab81ab583c4f17a05b2d64215f0430afa64865d4b8f9e/gwmock_noise-0.20.0.tar.gz", hash = "sha256:514b0e21d72d6c3b015fb1746d3a03637abc87b3b9f603d8092d1604b4e33b59", size = 1777254, upload-time = "2026-11-05T07:50:48.811Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/70/b126522041b5465b94513f817f4ec6d65389d09270da146a4b77c4950286/gwmock_noise-0.21.0.tar.gz", hash = "sha256:0c9517af3435461db24a0b853d825b9a226a92a029881ca4a46b681e4237dc95", size = 1925539, upload-time = "2026-11-09T12:48:24.609Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/0a/7d4f6d5270b6f46cb8d33d726b3eef205b0fc6537732eec5c270d45d01a1/gwmock_noise-0.20.0-py3-none-any.whl", hash = "sha256:41360bbc393d0b50e5df2213f1b66f15770529254eeb78149d3df5f4a70b99cf", size = 1336687, upload-time = "2026-11-05T07:50:47.172Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/bd/b5d04b1b80ff9ae7b4b9c1f14c7ca4362a94652141295ea7bdd8ed49a98e/gwmock_noise-0.21.0-py3-none-any.whl", hash = "sha256:3b033eaeada27a166926580e1b1f748dd84b42e3196633833cd1f8bb067d11f5", size = 1475511, upload-time = "2026-11-09T12:48:22.589Z" },
 ]
 
 [package.optional-dependencies]
@@ -2223,6 +2223,7 @@ dependencies = [
     { name = "nvidia-cublas-cu12" },
 ]
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/a2/22732bccd338398ced3d02cdee97c351f0ff62f2717d677fce519479ee0c/nvidia_cudnn_cu12-9.28.1.4-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:ef24078b4d2f45e80b5ce425f9e4a190bc48806e8c9ea1467496f85ed9b0a1fe", size = 723285364, upload-time = "2026-11-09T07:59:55.695Z" },
     { url = "https://files.pythonhosted.org/packages/2a/16/be895437624ae0400bda2b4bb69336cdb43346545e54edb15389d193a3b3/nvidia_cudnn_cu12-9.28.1.4-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:cbcf6f33c77fef3aa61d3fec36f2e89b07eb27d65b9f369c1adf3cfee08c2c21", size = 716579350, upload-time = "2026-11-06T21:51:22.24Z" },
 ]
 
