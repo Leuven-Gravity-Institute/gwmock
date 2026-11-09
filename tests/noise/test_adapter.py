@@ -5,12 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+import gwmock_noise.populations
 import numpy as np
 import pytest
 
 from gwmock.noise import NoiseAdapter
 from gwmock.noise import adapter as noise_adapter
 from gwmock.strain_schema import STRAIN_SCHEMA_VERSION, require_strain_schema
+
+#: gwmock-noise reads ``population`` glitch entries from 0.21.0. The dependency floor is lower, so the
+#: tests of the 0.21.0 behaviour skip where an older release is installed (the lowest-direct CI job).
+needs_population_entries = pytest.mark.skipif(
+    not hasattr(gwmock_noise.populations, "UnknownPopulationArgumentError"),
+    reason="population glitch entries need gwmock-noise 0.21.0 or later",
+)
 
 TEST_DURATION = 8.0
 TEST_SAMPLING_FREQUENCY = 256.0
@@ -746,6 +754,7 @@ class TestDefaultStreamBackendSelection:
         assert isinstance(simulator.base, FakeColoredSimulator)
         assert len(simulator.models) == 1
 
+    @needs_population_entries
     def test_a_population_entry_is_injected_as_its_class_models(self):
         """A registered population expands to one model per class, and the replay record lists them.
 

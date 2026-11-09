@@ -9,6 +9,7 @@ import tempfile
 import warnings
 from pathlib import Path
 
+import gwmock_noise.populations
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -29,6 +30,13 @@ from gwmock.cli.utils.config import (
     resolve_class_path,
     save_config,
     validate_config,
+)
+
+#: gwmock-noise reads ``population`` glitch entries from 0.21.0. The dependency floor is lower, so the
+#: tests of the 0.21.0 behaviour skip where an older release is installed (the lowest-direct CI job).
+needs_population_entries = pytest.mark.skipif(
+    not hasattr(gwmock_noise.populations, "UnknownPopulationArgumentError"),
+    reason="population glitch entries need gwmock-noise 0.21.0 or later",
 )
 
 # Constants for test assertions to avoid magic values
@@ -968,6 +976,7 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         with pytest.raises(ValueError, match=r"glitches\[0\] has kind 'blips'"):
             load_config(self._write(tmp_path, {"glitches": [{**self._glitch(), "kind": "blips"}]}))
 
+    @needs_population_entries
     def test_a_population_entry_with_its_digest_loads(self, tmp_path: Path) -> None:
         """A registered glitch population, pinned by digest and with a run setting, beside a model entry."""
         from gwmock_noise.populations import get_glitch_population
@@ -977,6 +986,7 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         config = load_config(self._write(tmp_path, {"glitches": [self._glitch(), entry]}))
         assert config.orchestration.noise.arguments["glitches"][1] == entry
 
+    @needs_population_entries
     @pytest.mark.parametrize(
         ("entry", "message"),
         [
@@ -996,12 +1006,14 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         with pytest.raises(ValueError, match=message):
             load_config(self._write(tmp_path, {"glitches": [self._glitch(), entry]}))
 
+    @needs_population_entries
     def test_a_population_entry_with_a_missing_noise_curve_names_the_entry(self, tmp_path: Path) -> None:
         """The models read their curve when built; a missing file is the documented ValueError."""
         entry = {"population": "deepextractor-o3-v1", "psd_file": str(tmp_path / "missing.txt")}
         with pytest.raises(ValueError, match=r"glitches\[0\] \(population 'deepextractor-o3-v1'\):.*missing\.txt"):
             load_config(self._write(tmp_path, {"glitches": [entry]}))
 
+    @needs_population_entries
     def test_a_url_pinned_population_entry_loads_and_runs_as_the_same_population(self, tmp_path: Path) -> None:
         """Load and run build the population from the same psd_file, so the pin holds for both."""
         import functools
@@ -1035,9 +1047,7 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Below the first release with population entries the message names the version to install."""
-        import gwmock_noise.populations
-
-        monkeypatch.delattr(gwmock_noise.populations, "UnknownPopulationArgumentError")
+        monkeypatch.delattr(gwmock_noise.populations, "UnknownPopulationArgumentError", raising=False)
         with pytest.raises(ValueError, match=r"glitches\[0\].*need gwmock-noise 0\.21\.0 or later"):
             load_config(self._write(tmp_path, {"glitches": [{"population": "deepextractor-o3-v1"}]}))
 
