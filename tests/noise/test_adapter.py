@@ -747,13 +747,16 @@ class TestDefaultStreamBackendSelection:
         assert len(simulator.models) == 1
 
     def test_a_population_entry_is_injected_as_its_class_models(self):
-        """A registered population expands to one model per class, and the replay record lists them."""
+        """A registered population expands to one model per class, and the replay record lists them.
+
+        ``et-o3-anchored-v1`` is parametric, so this runs without the optional DeepExtractor extra.
+        """
         from gwmock_noise.populations import get_glitch_population
 
-        population = get_glitch_population("deepextractor-o3-v1")
+        population = get_glitch_population("et-o3-anchored-v1")
         adapter = NoiseAdapter.from_backend()
 
-        simulator = _configure(adapter, glitches=[{"population": "deepextractor-o3-v1", "digest": population.digest()}])
+        simulator = _configure(adapter, glitches=[{"population": "et-o3-anchored-v1", "digest": population.digest()}])
 
         assert isinstance(simulator, FakeInjectGlitches)
         assert [model.serialize() for model in simulator.models] == [
