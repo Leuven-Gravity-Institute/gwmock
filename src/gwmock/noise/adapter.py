@@ -230,6 +230,11 @@ def _resolve_glitch_file_urls(glitches: list[Any] | None) -> list[Any] | None:
     transparently. Named bundled assets (e.g. ``ET_10_full_cryo_psd``) and local
     paths are returned unchanged. The input list and its entries are not mutated.
 
+    A ``population`` entry is returned unchanged too. Its ``psd_file`` is part of the population's
+    digest, which the configuration may pin, so rewriting a URL to a cache path here would build a
+    different population from the one the configuration was checked against. gwmock-noise reads a URL
+    ``psd_file`` itself.
+
     Args:
         glitches: The raw glitch-model configuration entries.
 
@@ -241,7 +246,7 @@ def _resolve_glitch_file_urls(glitches: list[Any] | None) -> list[Any] | None:
 
     resolved: list[Any] = []
     for entry in glitches:
-        if not isinstance(entry, Mapping):
+        if not isinstance(entry, Mapping) or "population" in entry:
             resolved.append(entry)
             continue
         updated = dict(entry)

@@ -491,14 +491,12 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
     top-level keys and the keys of each ``glitches`` entry, which gwmock-noise passes to the glitch
     model's constructor as keyword arguments: ``minimum_frequency`` there is a ``TypeError`` at run
     time, because the glitch models, like the noise itself, call their floor
-    ``low_frequency_cutoff``.
+    ``low_frequency_cutoff``. A glitch entry with a ``population`` key names a population
+    registered in gwmock-noise and expands to its class models; gwmock-noise checks it in full here,
+    including any pinned ``digest``, so a population that has changed is refused at load time.
 
     Args:
         arguments: ``orchestration.noise.arguments`` as written.
-
-    A glitch entry with a ``population`` key names a population registered in gwmock-noise and
-    expands to its class models; gwmock-noise checks it in full here, including any pinned
-    ``digest``, so a population that has changed is refused at load time.
 
     Raises:
         ValueError: If a top-level key is not one the default backend reads, a glitch entry names an
@@ -559,6 +557,8 @@ def _check_glitch_population_entry(index: int, entry: dict[str, Any]) -> None:
         ValueError: If the installed gwmock-noise predates population entries, or refuses this one.
     """
     try:
+        # This name is new in gwmock-noise 0.21.0, the first release that reads population entries;
+        # importing it is the version check.
         from gwmock_noise.populations import UnknownPopulationArgumentError  # noqa: F401, PLC0415
     except ImportError as error:
         raise ValueError(
@@ -569,7 +569,9 @@ def _check_glitch_population_entry(index: int, entry: dict[str, Any]) -> None:
 
     try:
         normalize_glitch_models([entry])
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OSError) as error:
+        # OSError: a population's models read their noise curve when built, so a missing file or an
+        # unreachable URL surfaces here.
         raise ValueError(f"noise.arguments.glitches[{index}] (population {entry['population']!r}): {error}") from error
 
 

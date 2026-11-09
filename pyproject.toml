@@ -75,6 +75,8 @@ dependencies = [
   # 0.17.0 (noise) and 0.15.0 (pop) no longer install h5py, which has no Python 3.15 wheel yet;
   # 0.18.0 (noise) and 0.16.0 (pop) read and write HDF5 without it.
   # 0.18.1 (noise) and 0.16.1 (pop) import lazily, so importing them loads no SciPy or NetworkX.
+  # 0.21.0 reads `population` glitch entries. The floor stays below it: only a config with such an
+  # entry needs it, and loading one under an older release names the version to install.
   "gwmock-noise>=0.20.0",
   "gwmock-pop>=0.18.3",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them

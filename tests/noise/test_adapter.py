@@ -368,6 +368,17 @@ class TestGlitchPopulationUrlResolution:
     Named bundled assets and local paths must pass through untouched.
     """
 
+    def test_a_population_entry_keeps_its_url(self, monkeypatch):
+        """Its psd_file is part of the digest the config pins, so it reaches gwmock-noise as written."""
+
+        def fail_download(url, **kwargs):
+            raise AssertionError(f"downloaded {url}")
+
+        monkeypatch.setattr(noise_adapter, "download_file", fail_download)
+        entry = {"population": "deepextractor-o3-v1", "psd_file": "https://example.org/psd.txt", "digest": "x"}
+
+        assert noise_adapter._resolve_glitch_file_urls([entry]) == [entry]
+
     def test_resolve_downloads_remote_population_file(self, monkeypatch, tmp_path: Path):
         """A URL population_file is downloaded and replaced with the local path."""
         local = tmp_path / "blip.hdf5"

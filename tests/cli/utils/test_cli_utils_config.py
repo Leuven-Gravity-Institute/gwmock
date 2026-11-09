@@ -996,6 +996,41 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         with pytest.raises(ValueError, match=message):
             load_config(self._write(tmp_path, {"glitches": [self._glitch(), entry]}))
 
+    def test_a_population_entry_with_a_missing_noise_curve_names_the_entry(self, tmp_path: Path) -> None:
+        """The models read their curve when built; a missing file is the documented ValueError."""
+        entry = {"population": "deepextractor-o3-v1", "psd_file": str(tmp_path / "missing.txt")}
+        with pytest.raises(ValueError, match=r"glitches\[0\] \(population 'deepextractor-o3-v1'\):.*missing\.txt"):
+            load_config(self._write(tmp_path, {"glitches": [entry]}))
+
+    def test_a_url_pinned_population_entry_loads_and_runs_as_the_same_population(self, tmp_path: Path) -> None:
+        """Load and run build the population from the same psd_file, so the pin holds for both."""
+        import functools
+        import http.server
+        import threading
+        from importlib import resources
+
+        from gwmock_noise.glitches import normalize_glitch_models
+        from gwmock_noise.populations import get_glitch_population
+
+        from gwmock.noise.adapter import _resolve_glitch_file_urls
+
+        directory = Path(str(resources.files("gwmock_noise.data.psd")))
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_address[1]}/ET2026a_10km_psd.txt"
+            digest = get_glitch_population("deepextractor-o3-v1", psd_file=url).digest()
+            entry = {"population": "deepextractor-o3-v1", "psd_file": url, "digest": digest}
+
+            load_config(self._write(tmp_path, {"glitches": [entry]}))
+            models = normalize_glitch_models(_resolve_glitch_file_urls([entry]))
+        finally:
+            server.shutdown()
+            thread.join()
+        assert [model.serialize()["psd_file"] for model in models] == [url] * 7
+
     def test_a_population_entry_needs_a_gwmock_noise_that_reads_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

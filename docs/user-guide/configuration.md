@@ -961,9 +961,13 @@ rates and SNR tails; `gwmock-noise`'s documentation describes it. When the
 rates, tails or settings no longer build the pinned digest, the configuration is
 refused when it is loaded. Print the digest to pin with
 `gwmock_noise.populations.get_glitch_population(name, **settings).digest()`.
-Name the noise curve by a bundled preset: a path or URL in `psd_file` is part of
-the digest, so it would differ between machines. A `population` entry takes no
-`kind`, and can sit beside ordinary model entries.
+Name the noise curve by a bundled preset. A path in `psd_file` is part of the
+digest, so the pin would differ between machines. A URL is passed to
+`gwmock-noise` as written, so the digest stays the same everywhere, but
+`gwmock-noise` downloads it for each class each time the configuration is loaded
+or run. A `population` entry takes no `kind`, and can sit beside ordinary model
+entries. A population of DeepExtractor classes needs the `deepextractor` extra,
+described above.
 
 ## Template Variables
 
