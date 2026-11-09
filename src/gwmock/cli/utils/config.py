@@ -500,8 +500,8 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
 
     Raises:
         ValueError: If a top-level key is not one the default backend reads, a glitch entry names an
-            unknown ``kind``, a glitch entry has a key its model does not accept, or a ``population``
-            entry is one gwmock-noise refuses or the installed gwmock-noise cannot read.
+            unknown ``kind``, a glitch entry has a key its model does not accept, or gwmock-noise
+            refuses a ``population`` entry.
     """
     unrecognised = sorted(key for key in arguments if key.replace("-", "_") not in DEFAULT_NOISE_ARGUMENT_KEYS)
     if unrecognised:
@@ -542,10 +542,6 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
             )
 
 
-#: The first gwmock-noise release that reads a ``population`` glitch entry.
-GLITCH_POPULATION_ENTRY_MINIMUM_NOISE_VERSION = "0.21.0"
-
-
 def _check_glitch_population_entry(index: int, entry: dict[str, Any]) -> None:
     """Expand one ``population`` glitch entry with gwmock-noise, as the run will, and report its refusal.
 
@@ -554,17 +550,8 @@ def _check_glitch_population_entry(index: int, entry: dict[str, Any]) -> None:
         entry: The entry as written.
 
     Raises:
-        ValueError: If the installed gwmock-noise predates population entries, or refuses this one.
+        ValueError: If gwmock-noise refuses the entry.
     """
-    try:
-        # This name is new in gwmock-noise 0.21.0, the first release that reads population entries;
-        # importing it is the version check.
-        from gwmock_noise.populations import UnknownPopulationArgumentError  # noqa: F401, PLC0415
-    except ImportError as error:
-        raise ValueError(
-            f"noise.arguments.glitches[{index}] names the glitch population {entry['population']!r}; "
-            f"population entries need gwmock-noise {GLITCH_POPULATION_ENTRY_MINIMUM_NOISE_VERSION} or later."
-        ) from error
     from gwmock_noise.glitches.models import normalize_glitch_models  # noqa: PLC0415
 
     try:

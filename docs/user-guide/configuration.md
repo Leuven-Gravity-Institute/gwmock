@@ -941,10 +941,9 @@ one file, with per-class power-law SNR tails.
 ### Registered glitch populations
 
 A `glitches` entry can name a glitch population registered in `gwmock-noise`
-instead of describing one model. It expands to the population's class models,
-and needs `gwmock-noise` 0.21.0 or later. Its other keys are the population's
-run settings, such as `psd_file`, and `digest` pins the population those
-settings build:
+instead of describing one model. It expands to the population's class models.
+Its other keys are the population's run settings, such as `psd_file`, and
+`digest` pins the population those settings build:
 
 ```yaml
 orchestration:
