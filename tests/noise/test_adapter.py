@@ -735,6 +735,23 @@ class TestDefaultStreamBackendSelection:
         assert isinstance(simulator.base, FakeColoredSimulator)
         assert len(simulator.models) == 1
 
+    def test_a_population_entry_is_injected_as_its_class_models(self):
+        """A registered population expands to one model per class, and the replay record lists them."""
+        from gwmock_noise.populations import get_glitch_population
+
+        population = get_glitch_population("deepextractor-o3-v1")
+        adapter = NoiseAdapter.from_backend()
+
+        simulator = _configure(adapter, glitches=[{"population": "deepextractor-o3-v1", "digest": population.digest()}])
+
+        assert isinstance(simulator, FakeInjectGlitches)
+        assert [model.serialize() for model in simulator.models] == [
+            glitch_class.model.serialize() for glitch_class in population.classes
+        ]
+        assert adapter.resolved_config()["glitches"] == [
+            glitch_class.model.serialize() for glitch_class in population.classes
+        ]
+
     def test_empty_glitches_are_rejected(self):
         """An empty list is a config mistake, not "no glitches"."""
         adapter = NoiseAdapter.from_backend()

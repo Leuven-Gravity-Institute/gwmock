@@ -496,9 +496,14 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
     Args:
         arguments: ``orchestration.noise.arguments`` as written.
 
+    A glitch entry with a ``population`` key names a population registered in gwmock-noise and
+    expands to its class models; gwmock-noise checks it in full here, including any pinned
+    ``digest``, so a population that has changed is refused at load time.
+
     Raises:
         ValueError: If a top-level key is not one the default backend reads, a glitch entry names an
-            unknown ``kind``, or a glitch entry has a key its model does not accept.
+            unknown ``kind``, a glitch entry has a key its model does not accept, or a ``population``
+            entry is one gwmock-noise refuses or the installed gwmock-noise cannot read.
     """
     unrecognised = sorted(key for key in arguments if key.replace("-", "_") not in DEFAULT_NOISE_ARGUMENT_KEYS)
     if unrecognised:
@@ -518,6 +523,9 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
     for index, entry in enumerate(glitches):
         if not isinstance(entry, dict):
             continue
+        if "population" in entry:
+            _check_glitch_population_entry(index, entry)
+            continue
         kind = entry.get("kind")
         if kind not in kinds:
             raise ValueError(
@@ -534,6 +542,35 @@ def check_default_noise_arguments(arguments: dict[str, Any]) -> None:
                 f"accept: {', '.join(rejected)}. Accepted keys: {', '.join(sorted(parameters))}. The "
                 "frequency floor is 'low_frequency_cutoff'."
             )
+
+
+#: The first gwmock-noise release that reads a ``population`` glitch entry.
+GLITCH_POPULATION_ENTRY_MINIMUM_NOISE_VERSION = "0.21.0"
+
+
+def _check_glitch_population_entry(index: int, entry: dict[str, Any]) -> None:
+    """Expand one ``population`` glitch entry with gwmock-noise, as the run will, and report its refusal.
+
+    Args:
+        index: The entry's position in ``glitches``, for the message.
+        entry: The entry as written.
+
+    Raises:
+        ValueError: If the installed gwmock-noise predates population entries, or refuses this one.
+    """
+    try:
+        from gwmock_noise.populations import UnknownPopulationArgumentError  # noqa: F401, PLC0415
+    except ImportError as error:
+        raise ValueError(
+            f"noise.arguments.glitches[{index}] names the glitch population {entry['population']!r}; "
+            f"population entries need gwmock-noise {GLITCH_POPULATION_ENTRY_MINIMUM_NOISE_VERSION} or later."
+        ) from error
+    from gwmock_noise.glitches.models import normalize_glitch_models  # noqa: PLC0415
+
+    try:
+        normalize_glitch_models([entry])
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"noise.arguments.glitches[{index}] (population {entry['population']!r}): {error}") from error
 
 
 class NoiseAdapterConfig(BaseModel):

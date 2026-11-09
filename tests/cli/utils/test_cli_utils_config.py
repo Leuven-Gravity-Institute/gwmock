@@ -968,6 +968,44 @@ class TestNoiseArgumentsAreCheckedAtLoadTime:
         with pytest.raises(ValueError, match=r"glitches\[0\] has kind 'blips'"):
             load_config(self._write(tmp_path, {"glitches": [{**self._glitch(), "kind": "blips"}]}))
 
+    def test_a_population_entry_with_its_digest_loads(self, tmp_path: Path) -> None:
+        """A registered glitch population, pinned by digest and with a run setting, beside a model entry."""
+        from gwmock_noise.populations import get_glitch_population
+
+        digest = get_glitch_population("deepextractor-o3-v1", psd_file="ET2026a_10km_psd").digest()
+        entry = {"population": "deepextractor-o3-v1", "psd_file": "ET2026a_10km_psd", "digest": digest}
+        config = load_config(self._write(tmp_path, {"glitches": [self._glitch(), entry]}))
+        assert config.orchestration.noise.arguments["glitches"][1] == entry
+
+    @pytest.mark.parametrize(
+        ("entry", "message"),
+        [
+            (
+                {"population": "deepextractor-o3-v1", "digest": "sha256:" + "0" * 64},
+                r"glitches\[1\] \(population 'deepextractor-o3-v1'\):.*not the pinned sha256:0{64}",
+            ),
+            ({"population": "deepextractor-o3-v9"}, r"glitches\[1\].*unknown glitch population 'deepextractor-o3-v9'"),
+            ({"population": "deepextractor-o3-v1", "kind": "deepextractor"}, r"glitches\[1\].*takes no 'kind'"),
+            ({"population": "deepextractor-o3-v1", "rate": 1.0}, r"glitches\[1\].*not \['rate'\]"),
+        ],
+    )
+    def test_a_population_entry_gwmock_noise_refuses_is_refused_at_load_time(
+        self, tmp_path: Path, entry: dict, message: str
+    ) -> None:
+        """The run would refuse it; the load refuses it first, naming the entry."""
+        with pytest.raises(ValueError, match=message):
+            load_config(self._write(tmp_path, {"glitches": [self._glitch(), entry]}))
+
+    def test_a_population_entry_needs_a_gwmock_noise_that_reads_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Below the first release with population entries the message names the version to install."""
+        import gwmock_noise.populations
+
+        monkeypatch.delattr(gwmock_noise.populations, "UnknownPopulationArgumentError")
+        with pytest.raises(ValueError, match=r"glitches\[0\].*need gwmock-noise 0\.21\.0 or later"):
+            load_config(self._write(tmp_path, {"glitches": [{"population": "deepextractor-o3-v1"}]}))
+
     def test_the_accepted_spellings_load(self, tmp_path: Path) -> None:
         config = load_config(
             self._write(

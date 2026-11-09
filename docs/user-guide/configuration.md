@@ -368,11 +368,12 @@ misspelled or misplaced setting would otherwise leave the run on the default
 while looking entirely normal. In particular the noise floor is
 `low_frequency_cutoff`, not `minimum-frequency`, which belongs to `signal`. The
 keys of each `glitches` entry are checked the same way against the glitch model
-its `kind` names, which also calls its floor `low_frequency_cutoff`. Both checks
-run when the configuration is loaded, so `gwmock simulate` stops before anything
-is generated. A custom `noise.backend` receives `noise.arguments` as its
-constructor's keyword arguments instead, so that backend decides which keys it
-accepts.
+its `kind` names, which also calls its floor `low_frequency_cutoff`. A
+`population` entry is checked by `gwmock-noise` itself, including its pinned
+`digest`. Both checks run when the configuration is loaded, so `gwmock simulate`
+stops before anything is generated. A custom `noise.backend` receives
+`noise.arguments` as its constructor's keyword arguments instead, so that
+backend decides which keys it accepts.
 
 ### Injection parameters in the data files
 
@@ -936,6 +937,33 @@ configurations — one per detector network, each covering that geometry's
 interferometers in a single file and writing frames — and
 `examples/noise/glitches/deepextractor/et_triangle_and_2l` for both designs in
 one file, with per-class power-law SNR tails.
+
+### Registered glitch populations
+
+A `glitches` entry can name a glitch population registered in `gwmock-noise`
+instead of describing one model. It expands to the population's class models,
+and needs `gwmock-noise` 0.21.0 or later. Its other keys are the population's
+run settings, such as `psd_file`, and `digest` pins the population those
+settings build:
+
+```yaml
+orchestration:
+    noise:
+        arguments:
+            glitches:
+                - population: deepextractor-o3-v1
+                  psd_file: ET2026a_10km_psd
+                  digest: sha256:bad0306a212c9d810c087763cbc4ff8fa652d50837ccdecef2f5393d6c10c7b9
+```
+
+`deepextractor-o3-v1` is the seven DeepExtractor classes at their measured O3
+rates and SNR tails; `gwmock-noise`'s documentation describes it. When the
+rates, tails or settings no longer build the pinned digest, the configuration is
+refused when it is loaded. Print the digest to pin with
+`gwmock_noise.populations.get_glitch_population(name, **settings).digest()`.
+Name the noise curve by a bundled preset: a path or URL in `psd_file` is part of
+the digest, so it would differ between machines. A `population` entry takes no
+`kind`, and can sit beside ordinary model entries.
 
 ## Template Variables
 
