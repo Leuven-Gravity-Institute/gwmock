@@ -10,9 +10,10 @@ strain is not changed. The realization is recorded three ways:
   GWF, has no unsigned 8-bit type, and LIGO's calibrated state vector is 32-bit too;
 - the run's **segments**: every interferometer's observing intervals and maintenance windows in one
   JSON file, and each interferometer's observing intervals as a plain text list. The first batch
-  writes and records them. A batch rewrites them, and records them, when they hold another
-  realization and it may overwrite: in a run started with ``--overwrite``, or a resumed run. Missing ones are batch 0's missing outputs, so a resumed run
-  regenerates from the first frame, as for any missing output;
+  writes and records them. A batch rewrites them, and records them, when their contents differ
+  from the ones it would write and it may overwrite: in a run started with ``--overwrite``, or a
+  resumed run. Missing ones are batch 0's missing outputs, so a resumed run regenerates from the
+  first frame, as for any missing output;
 - an **observing flag** on every injected signal with a merger time (for each interferometer, at that
   time) and on every glitch (for its interferometer, at its peak), in the batch metadata.
 
