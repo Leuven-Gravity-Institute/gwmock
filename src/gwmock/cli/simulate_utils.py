@@ -2999,12 +2999,9 @@ def execute_plan(  # noqa: PLR0915
         # tail, and writing these back out would describe a run that no longer exists.
         simulator_tails = {}
 
-    # The spilled tails the checkpoint on disk references. Kept until the checkpoint after next is
-    # written, because the one before it survives as the backup a damaged checkpoint is restored from;
-    # anything else in the tail directory -- a fresh run's leftovers from an earlier attempt, say -- is
-    # no longer needed.
-    previous_tail_files = spilled_tail_files(simulator_tails)
-    checkpoint_manager.remove_unreferenced_tails(previous_tail_files)
+    # Spilled tails that neither the checkpoint nor its backup on disk references -- a fresh run's
+    # leftovers from an earlier attempt, say -- are no longer needed.
+    checkpoint_manager.remove_unreferenced_tails()
 
     # Group batches by simulator name to execute sequentially per simulator
     simulator_batches: dict[str, list[SimulationBatch]] = {}
@@ -3172,9 +3169,9 @@ def execute_plan(  # noqa: PLR0915
                         config_sha256=plan_sha256,
                         simulator_tails=simulator_tails,
                     )
-                    current_tail_files = spilled_tail_files(simulator_tails)
-                    checkpoint_manager.remove_unreferenced_tails(current_tail_files | previous_tail_files)
-                    previous_tail_files = current_tail_files
+                    # The checkpoint just written and its backup -- the one before -- keep their tails;
+                    # so do the ones this run holds, should that write have failed.
+                    checkpoint_manager.remove_unreferenced_tails(spilled_tail_files(simulator_tails))
                     logger.debug(
                         "Checkpoint saved after batch %d - state counter=%s",
                         batch.batch_index,

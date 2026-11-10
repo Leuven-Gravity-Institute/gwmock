@@ -229,3 +229,95 @@ def test_each_event_is_placed_before_the_next_is_generated(tmp_path):
     TimeSeriesMixin.simulate(orchestrator)
 
     assert order == ["generate", "place"] * 3
+
+
+def _spilled(manager: CheckpointManager, value: float) -> SpilledTimeSeries:
+    return SpilledTimeSeries.spill(
+        TimeSeries(
+            data=np.full((1, 8), value), start_time=Quantity(0.0, unit="s"), sampling_frequency=Quantity(4.0, unit="Hz")
+        ),
+        manager.tail_directory / "long",
+    )
+
+
+def _save(manager: CheckpointManager, batch: int, tail: SpilledTimeSeries) -> None:
+    tails = {"long": {"batch_index": batch, "state": {"counter": batch + 1}, "spillover": TimeSeriesList([tail])}}
+    # As `execute_plan` calls it: the last simulator's tail goes in both.
+    manager.save_checkpoint(
+        [batch], "long", batch, {"counter": batch + 1}, TimeSeriesList([tail]), simulator_tails=tails
+    )
+
+
+class TestTheSweepKeepsWhatACheckpointOnDiskNeeds:
+    """Whatever started this process, a tail the checkpoint or its backup names stays on disk."""
+
+    def test_a_tail_only_the_backup_names_survives_a_restart(self, tmp_path):
+        """The backup is restored when the checkpoint is damaged, and then needs its own tails."""
+        manager = CheckpointManager(tmp_path)
+        older, newer = _spilled(manager, 1.0), _spilled(manager, 2.0)
+        _save(manager, 0, older)
+        _save(manager, 1, newer)
+
+        # What a restarted run does before its first batch.
+        CheckpointManager(tmp_path).remove_unreferenced_tails()
+
+        assert older.spill_path.is_file()
+        assert newer.spill_path.is_file()
+        manager.checkpoint_file.unlink()
+        restored = manager.load_checkpoint()
+        assert restored is not None
+        np.testing.assert_array_equal(np.asarray(restored["simulator_tails"]["long"]["spillover"][0]), np.ones((1, 8)))
+
+    def test_nothing_is_deleted_while_a_checkpoint_cannot_be_read(self, tmp_path):
+        manager = CheckpointManager(tmp_path)
+        tail = _spilled(manager, 1.0)
+        _save(manager, 0, tail)
+        manager.checkpoint_file.write_text("{ not json")
+
+        manager.remove_unreferenced_tails()
+
+        assert tail.spill_path.is_file()
+
+    def test_a_tail_in_use_is_kept_when_no_checkpoint_names_it(self, tmp_path):
+        """Should writing the checkpoint fail, the tails the simulator holds are still needed."""
+        manager = CheckpointManager(tmp_path)
+        in_use, orphan = _spilled(manager, 1.0), _spilled(manager, 2.0)
+
+        manager.remove_unreferenced_tails({in_use.spill_path})
+
+        assert in_use.spill_path.is_file()
+        assert not orphan.spill_path.exists()
+
+
+class TestAMissingTailStopsTheResume:
+    def test_the_resume_refuses_and_names_the_file(self, tmp_path):
+        from gwmock.data.time_series.spilled import MissingSpilledTailError
+
+        FAIL_AT_COUNTER.append(2)
+        root = _run(tmp_path, "run", expect_failure=True)
+        FAIL_AT_COUNTER.clear()
+        tails = CheckpointManager(root / "checkpoints").recorded_tail_files()
+        assert tails
+        missing = sorted(tails)[0]
+        missing.unlink()
+
+        with pytest.raises(MissingSpilledTailError, match=str(missing.name)):
+            _run(tmp_path, "run")
+
+    def test_ignore_checkpoint_starts_the_run_again(self, tmp_path):
+        FAIL_AT_COUNTER.append(2)
+        root = _run(tmp_path, "run", expect_failure=True)
+        FAIL_AT_COUNTER.clear()
+        for path in CheckpointManager(root / "checkpoints").recorded_tail_files() or ():
+            path.unlink()
+
+        execute_plan(
+            _plan(root / "checkpoints"),
+            root / "output",
+            root / "metadata",
+            overwrite=True,
+            max_retries=0,
+            ignore_checkpoint=True,
+        )
+
+        assert len(_segments(root)) == _SEGMENTS

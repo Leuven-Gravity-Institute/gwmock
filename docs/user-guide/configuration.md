@@ -1180,18 +1180,21 @@ gigabytes for an ET-like network.
 
 `gwmock simulate` therefore writes each tail to
 `.gwmock_checkpoints/tails/<simulator>/` once the segment that generated it is
-built, and each later segment reads only the part of it that lands there. Each
-signal is generated and placed in turn, before the next is generated, so memory
-holds the segment being built and about one signal at a time. The samples
-written are identical to those of a run that keeps its tails in memory.
+built, and each later segment reads only the part of it that lands there. With
+`execution: per-event`, the default, each signal is also generated and placed
+before the next is generated, so memory holds the segment being built and about
+one signal at a time. With `execution: batched`, a segment's new signals are
+generated together and held together while they are placed; only the tails they
+leave are bounded. The samples written are identical to those of a run that
+keeps its tails in memory.
 
 The checkpoint records each tail by its file, so a resumed run reads the same
 tails back. A file is removed once neither the checkpoint nor its backup refers
-to it, and the directory is removed when the run completes. Moving or deleting
-it while a checkpoint refers to it makes that checkpoint unusable: gwmock logs
-an error naming the missing file, as for a damaged checkpoint, and the run
-starts from the beginning, which needs `--overwrite` because the earlier outputs
-exist.
+to it, and the directory is removed when the run completes. If a file the
+checkpoint refers to is moved or deleted, the resume refuses and names the file,
+since continuing without it would leave that signal out of the following
+segments. Restore the file, or start the run again with `--ignore-checkpoint`
+(and `--overwrite`, because the earlier outputs exist).
 
 The disk space needed is about what the tails would have taken in memory: every
 signal still in band, at 8 bytes per sample per channel.

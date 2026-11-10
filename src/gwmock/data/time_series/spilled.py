@@ -32,6 +32,10 @@ from gwmock.data.time_series.time_series import TimeSeries
 SPILLED_TYPE = "SpilledTimeSeries"
 
 
+class MissingSpilledTailError(FileNotFoundError):
+    """A checkpoint references a spilled tail whose file is gone, so the run cannot resume from it."""
+
+
 def _channel_identities(series: TimeSeries) -> list[dict[str, Any]]:
     """Each channel's name, unit and channel label, which a series built from raw samples lacks."""
     return [
@@ -222,15 +226,17 @@ class SpilledTimeSeries(TimeSeries):
             The chunk, mapping the same samples of the same file.
 
         Raises:
-            FileNotFoundError: If the file is gone. A checkpoint references only files the run has not
-                deleted, so this means something outside the run removed it.
+            MissingSpilledTailError: If the file is gone. The run deletes a spilled tail only once
+                neither the checkpoint nor its backup references it, so something outside the run
+                removed it.
         """
         path = Path(json_dict["path"])
         if not path.is_file():
-            raise FileNotFoundError(
-                f"The checkpoint carries a signal tail spilled to {path}, which no longer exists. "
-                "The run removes spilled tails only once no checkpoint needs them, so it was removed "
-                "from outside the run; the run cannot resume and has to start again."
+            raise MissingSpilledTailError(
+                f"The checkpoint carries a signal tail spilled to {path}, which no longer exists. The run "
+                "removes a spilled tail only once no checkpoint needs it, so it was removed from outside "
+                "the run. Resuming without it would leave that signal out of the following segments. "
+                "Restore the file, or start the run again with --ignore-checkpoint."
             )
         return cls._open(
             path,
