@@ -363,3 +363,15 @@ class TestNotEmbedding:
 
         with pytest.raises(ValidationError):
             MetadataSettings.model_validate({"embedded": False})
+
+    @pytest.mark.parametrize("key", ["embed", "split"])
+    @pytest.mark.parametrize("value", [0, 1, "yes", "false", None])
+    def test_a_value_that_is_not_a_boolean_is_refused(self, key, value):
+        """Coerced, ``"false"`` would be read as one value and ``"yes"`` as another; neither is a boolean."""
+        from pydantic import ValidationError
+
+        from gwmock.cli.utils.config import MetadataSettings
+
+        with pytest.raises(ValidationError, match=key):
+            MetadataSettings.model_validate({key: value})
+        assert MetadataSettings.model_validate({key: False}).model_dump()[key] is False

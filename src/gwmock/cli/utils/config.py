@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger("gwmock")
 
@@ -734,16 +734,17 @@ class MetadataSettings(BaseModel):
     reproduced, so data released for a blind challenge should carry none. The record is still written
     beside the outputs.
 
-    Unknown keys are refused rather than ignored, so a misspelt ``split`` cannot silently leave a run
-    writing the layout its author meant to turn off.
+    Unknown keys are refused rather than ignored, and each value must be a boolean -- ``1`` or ``"yes"``
+    is refused rather than coerced -- so a misspelt switch cannot silently leave a run writing the layout
+    its author meant to turn off.
     """
 
-    split: bool = Field(
+    split: StrictBool = Field(
         default=True,
         description="Write each metadata record as a shareable record plus a private details file "
         "(true, the default), or as one combined record (false).",
     )
-    embed: bool = Field(
+    embed: StrictBool = Field(
         default=True,
         description="Write the shareable record into each HDF5 output (true, the default), or leave the "
         "outputs without one (false), as data released for a blind challenge should be.",
