@@ -280,7 +280,10 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             num_of_channels=len(self.detectors),
             segment_gap=segment_gap,
         )
-        self._active_duty_cycle_output_directory = Path("duty-cycle")
+        # The current batch's duty-cycle output directory and settings. A replay from metadata gives
+        # each batch its own rendered file names, so they are read from the batch, as the noise
+        # output's are.
+        self._active_duty_cycle_output_directory, self._active_duty_cycle_output = Path("duty-cycle"), None
         self.duty_cycle = self._build_duty_cycle()
 
     def _duty_cycle_detectors(self) -> list[str]:
@@ -815,6 +818,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 duty_cycle_config.output.output_directory,
                 fallback_subdir="duty-cycle",
             )
+            self._active_duty_cycle_output = duty_cycle_config.output
         self._active_overwrite = overwrite
 
     def simulate(self) -> AdapterOrchestrationResult:
@@ -880,6 +884,14 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return [directory / name for name in contents]
         return []
 
+    def _duty_cycle_output(self) -> Any:
+        """The duty-cycle output settings of the current batch, or of the configuration before one is set."""
+        if self._active_duty_cycle_output is not None:
+            return self._active_duty_cycle_output
+        config = self.orchestration_config.duty_cycle
+        assert config is not None  # noqa: S101 -- only called when a duty cycle is configured
+        return config.output
+
     def duty_cycle_channels(self) -> dict[str, str]:
         """The state-vector channel of each interferometer."""
         config = self.orchestration_config.duty_cycle
@@ -887,7 +899,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return {}
         detectors = list(self.duty_cycle.detectors)
         arguments = dict(
-            expand_template_variables(dict(config.output.arguments or {}), _NoiseTemplateProxy(self, detectors))
+            expand_template_variables(
+                dict(self._duty_cycle_output().arguments or {}), _NoiseTemplateProxy(self, detectors)
+            )
         )
         channel = arguments.pop("channel", "STATE_VECTOR")
         if arguments:
@@ -912,7 +926,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             return {}
         detectors = list(self.duty_cycle.detectors)
         paths = self._expand_per_detector_paths(
-            config.output.file_name, detectors, self._active_duty_cycle_output_directory, "Duty-cycle"
+            self._duty_cycle_output().file_name, detectors, self._active_duty_cycle_output_directory, "Duty-cycle"
         )
         return dict(zip(detectors, paths, strict=True))
 
@@ -936,9 +950,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             DeterministicRefusalError: If the templates do not all end with ``.gwf``, or all with
                 ``.hdf5``/``.h5``.
         """
-        config = self.orchestration_config.duty_cycle
-        assert config is not None  # noqa: S101 -- only called when a duty cycle is configured
-        names = config.output.file_name if isinstance(config.output.file_name, list) else [config.output.file_name]
+        file_name = self._duty_cycle_output().file_name
+        names = file_name if isinstance(file_name, list) else [file_name]
         suffixes = {"hdf5" if (s := Path(name).suffix.lower().lstrip(".")) == "h5" else s for name in names}
         if len(suffixes) != 1 or not suffixes <= {"gwf", "hdf5"}:
             raise DeterministicRefusalError(

@@ -438,3 +438,36 @@ def test_a_state_vector_format_gwmock_cannot_write_is_refused_before_anything_is
     assert isinstance(excinfo.value.__cause__, DeterministicRefusalError)
     assert "must all end with .gwf" in str(excinfo.value.__cause__)
     assert _noise_files(tmp_path) == []
+
+
+def test_a_replay_from_metadata_writes_each_frames_own_state_vectors(tmp_path: Path, monkeypatch) -> None:
+    """Each batch's record names its own state-vector files; a replay writes those, not the first batch's."""
+    from gwmock.cli.simulate import _simulate_impl
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _simulate(_config(run_dir))
+    records = sorted((run_dir / "metadata").glob("orchestration-*.metadata.json"))
+    assert len(records) == 3
+
+    repro_dir = tmp_path / "repro"
+    repro_dir.mkdir()
+    for record in records:
+        (repro_dir / record.name).write_text(record.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.chdir(repro_dir)
+    _simulate_impl([str(repro_dir / record.name) for record in records], metadata=False)
+
+    for index in range(3):
+        for detector in TRIANGLE:
+            name = f"duty-cycle-{detector}-{index}.hdf5"
+            original = run_dir / "output" / "duty-cycle" / name
+            replayed = repro_dir / "output" / "duty-cycle" / name
+            assert replayed.read_bytes() == original.read_bytes() or _same_state(original, replayed, detector)
+
+
+def _same_state(first: Path, second: Path, detector: str) -> bool:
+    from gwmock_data.io import read_hdf5
+
+    a = read_hdf5(first)[f"{detector}:STATE_VECTOR"]
+    b = read_hdf5(second)[f"{detector}:STATE_VECTOR"]
+    return a.t0 == b.t0 and np.array_equal(np.asarray(a.data), np.asarray(b.data))
