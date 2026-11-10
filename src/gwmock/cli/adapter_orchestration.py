@@ -15,7 +15,7 @@ from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network, SamplingGrid
 from gwmock_signal.projection import ProjectionEffects
 
-from gwmock.cli.duty_cycle import DutyCycle
+from gwmock.cli.duty_cycle import LIGOLW_MAX_GPS, DutyCycle
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
 from gwmock.cli.utils.config import OrchestrationConfig, check_default_noise_arguments
 from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
@@ -323,6 +323,11 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             sampling_frequency=float(config.sampling_frequency),
             mask_strain=bool(config.mask_strain),
         )
+        if duty_cycle.start + duty_cycle.span > LIGOLW_MAX_GPS:
+            raise DeterministicRefusalError(
+                f"orchestration.duty-cycle: the run ends at GPS {duty_cycle.start + duty_cycle.span}, after "
+                f"{LIGOLW_MAX_GPS}, the last time the LIGO_LW segment file's 32-bit columns can hold."
+            )
         if self.signal_adapter is not None:
             uncovered = sorted(set(self.detectors) - set(duty_cycle.detectors))
             if uncovered:
@@ -967,12 +972,6 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 "Duty-cycle output templates must all end with .gwf, or all with .hdf5/.h5."
             )
         return cast(Literal["gwf", "hdf5"], suffixes.pop())
-
-    def _mask_unobserved(self, detector: str, values: np.ndarray, times: Any) -> np.ndarray:
-        """``values`` as written: NaN where ``detector`` does not observe, when the duty cycle masks strain."""
-        if self.duty_cycle is None or not self.duty_cycle.mask_strain:
-            return values
-        return self.duty_cycle.mask(detector, values, times)
 
     def _flag_observing_injections(self, injections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Each injected signal with whether each interferometer observed at its merger time."""
@@ -2101,11 +2100,12 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         for i, detector in enumerate(noise_detectors):
             output_path = output_paths[i] if len(output_paths) > 1 else output_paths[0]
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            values = np.asarray(chunk[detector], dtype=float)
-            values = self._mask_unobserved(detector, values, gps_start + np.arange(values.size) / sample_rate)
+            values = chunk[detector]
+            if self.duty_cycle is not None and self.duty_cycle.mask_strain:
+                values = self.duty_cycle.mask(detector, values, gps_start + np.arange(len(values)) / sample_rate)
             if output_format in {"gwf", "hdf5"}:
                 channel_id = channels_dict[detector] if channels_dict is not None else f"{detector}:{channel_str}"
-                channel_series = ChannelSeries(values, t0=gps_start, sample_rate=sample_rate)
+                channel_series = ChannelSeries(np.asarray(values, dtype=float), t0=gps_start, sample_rate=sample_rate)
                 DetectorStrainStack.from_mapping([channel_id], {channel_id: channel_series}).write(
                     output_path, format=output_format
                 )
@@ -2390,7 +2390,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         ):
             series = data[index]
             if self.duty_cycle is not None and self.duty_cycle.mask_strain:
-                series = series.with_data(self._mask_unobserved(detector_name, series.value, series.times))
+                series = series.with_data(self.duty_cycle.mask(detector_name, series.value, series.times))
             effective_name = channel_name if channel_name is not None else detector_name
             if effective_name in mapping:
                 effective_name = f"{effective_name}__{detector_name}"

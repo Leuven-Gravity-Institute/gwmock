@@ -1,29 +1,33 @@
 """The duty cycle of a run: when each interferometer observes, and the products that record it.
 
 A run with ``orchestration.duty-cycle`` draws one realization of gwmock-noise's duty-cycle model over
-its whole span, so every frame of the run -- a resumed one included -- sees the same duty cycle. The
-realization is recorded so that the common analysis pipelines can use it as they use real data:
+its whole span, so every frame of the run -- a resumed one included -- sees the same duty cycle. From
+each interferometer's observing intervals it takes its **science segments**, the whole GPS seconds
+inside each interval, as LVK science segments are published. Every product below is drawn from those
+segments, so they agree with one another, and a pipeline that keeps its analysis windows inside them
+reads only observing data:
 
 - a **state-vector channel** per interferometer and frame, ``<interferometer>:<channel>``, at the
-  configured rate, with gwmock-noise's bits: bits 0 to 2 (``OBSERVING_MASK``) set while the
-  interferometer observes, as LIGO's calibrated state vector sets them while data can be analysed, and
-  bit 16 (``MAINTENANCE_BIT``) while it is in planned maintenance. PyCBC's low-latency search and gwpy
-  read it. The samples are ``uint32``, the type of LIGO's calibrated state vector;
+  configured rate, with gwmock-noise's bits: bits 0 to 2 (``OBSERVING_MASK``, LIGO's ``HOFT_OK``,
+  ``OBS_INTENT`` and ``OBS_READY``) on a sample whose whole interval lies in a science segment, and
+  bit 16 (``MAINTENANCE_BIT``) on a sample whose time is in planned maintenance. PyCBC's low-latency
+  search and gwpy read it. The samples are ``uint32``;
 - the run's **segments**, for the pipelines that take segment lists instead (PyCBC's offline search,
-  cWB, gwpy): a LIGO_LW XML file with each interferometer's observing segments under the flag
+  cWB, gwpy): a LIGO_LW XML file with each interferometer's science segments under the flag
   ``<interferometer>:science:1`` -- the name PyCBC's offline search reads from a segment file -- and
-  its maintenance windows under ``<interferometer>:maintenance:1``; each interferometer's observing
-  segments as a two-column ``start end`` text list, the format cWB reads; and one JSON file with
-  everything, the model and the seed. The first batch writes and records them. A batch rewrites
-  them, and records them, when their contents differ from the ones it would write and it may
-  overwrite: in a run started with ``--overwrite``, or a resumed run. A resumed run with no batch
-  left to run leaves them as they are. Missing ones are batch 0's missing outputs, so a resumed run
-  regenerates from the first frame, as for any missing output;
-- an **observing flag** on every injected signal with a merger time (for each interferometer, at that
-  time) and on every glitch (for its interferometer, at its peak), in the batch metadata.
+  its maintenance windows under ``<interferometer>:maintenance:1``; each interferometer's science
+  segments as a two-column ``start end`` text list, the format cWB reads; and one JSON file with the
+  exact realization, the science segments, the model and the seed. The first batch writes and records
+  them. A batch rewrites them, and records them, when their contents differ from the ones it would
+  write and it may overwrite: in a run started with ``--overwrite``, or a resumed run. A resumed run
+  with no batch left to run leaves them as they are. Missing ones are batch 0's missing outputs, so a
+  resumed run regenerates from the first frame, as for any missing output;
+- an **observing flag** on every injected signal with a merger time (for each interferometer, whether
+  that time is in a science segment) and on every glitch (for its interferometer, at its peak), in the
+  batch metadata.
 
-Unless ``mask-strain`` is off, every strain sample the run writes at a time its interferometer does not
-observe is NaN, as open data marks time outside observing runs: a pipeline that reads neither the state
+Unless ``mask-strain`` is off, every strain sample the run writes outside its interferometer's science
+segments is NaN, as open data marks time outside observing: a pipeline that reads neither the state
 vector nor the segments then meets NaN rather than analysing that time unaware. The noise realization
 itself is unchanged; only what is written is masked.
 
@@ -52,6 +56,10 @@ SEGMENTS_SCHEMA_VERSION = "1.0.0"
 
 #: Name of the run's segment file, in the duty-cycle output directory.
 SEGMENTS_FILE = "duty-cycle-segments.json"
+
+#: Last GPS second the LIGO_LW segment file can hold: its time columns are 32-bit signed integers, as
+#: gwpy writes them and PyCBC reads them.
+LIGOLW_MAX_GPS = 2**31 - 1
 
 #: Name of the run's LIGO_LW XML segment file, in the duty-cycle output directory.
 SEGMENTS_XML_FILE = "duty-cycle-segments.xml"
@@ -84,6 +92,7 @@ class DutyCycle:
     sampling_frequency: float
     mask_strain: bool = True
     _realization: Any = field(default=None, init=False, repr=False)
+    _science: dict[str, np.ndarray] | None = field(default=None, init=False, repr=False)
     _segment_files: dict[str, str] | None = field(default=None, init=False, repr=False)
 
     @property
@@ -95,9 +104,32 @@ class DutyCycle:
             self._realization = simulate_duty_cycle(self.model, self.detectors, self.start, self.span, self.seed)
         return self._realization
 
+    @property
+    def science(self) -> dict[str, np.ndarray]:
+        """Per interferometer, its science segments: the whole GPS seconds inside each observing interval.
+
+        Every product but the JSON record is drawn from these -- the XML and text segment files, the
+        state vector, the strain mask and the observing flags -- so they agree with one another. Whole
+        seconds because that is how LVK science segments are published, and what PyCBC's offline search
+        requires; cWB rounds a segment inward to whole seconds itself.
+        """
+        if self._science is None:
+            science = {}
+            for detector in self.detectors:
+                intervals = np.asarray(self.realization.observing[detector], dtype=float).reshape(-1, 2)
+                starts, ends = np.ceil(intervals[:, 0]), np.floor(intervals[:, 1])
+                keep = ends > starts
+                science[detector] = np.column_stack([starts[keep], ends[keep]])
+            self._science = science
+        return self._science
+
+    def _in_science(self, detector: str, times: Any) -> np.ndarray:
+        """Whether each GPS time lies in one of ``detector``'s ``[start, end)`` science segments."""
+        return _inside(self.science[detector], np.asarray(times, dtype=float))
+
     def observing(self, detector: str, time: float) -> bool:
-        """Whether ``detector`` observed at GPS ``time``."""
-        return bool(self.realization.is_observing(detector, np.array([float(time)]))[0])
+        """Whether GPS ``time`` lies in one of ``detector``'s science segments."""
+        return bool(self._in_science(detector, [float(time)])[0])
 
     def n_samples(self, duration: float) -> int:
         """Samples of the state vector in a frame of ``duration`` seconds.
@@ -114,8 +146,23 @@ class DutyCycle:
         return round(count)
 
     def state_vector(self, detector: str, t0: float, duration: float) -> np.ndarray:
-        """The state vector of ``detector`` over ``[t0, t0 + duration)``."""
-        state = self.realization.state_vector(detector, t0, self.sampling_frequency, self.n_samples(duration))
+        """The state vector of ``detector`` over ``[t0, t0 + duration)``.
+
+        A sample has the observing bits (``OBSERVING_MASK``) when the whole of its interval
+        ``[t, t + 1/f)`` lies in a science segment, so no strain sample a state-valid sample covers is
+        masked; it has ``MAINTENANCE_BIT`` when its time is in a maintenance window.
+        """
+        from gwmock_noise.duty_cycle import MAINTENANCE_BIT, OBSERVING_MASK  # noqa: PLC0415
+
+        n_samples = self.n_samples(duration)
+        starts = t0 + np.arange(n_samples) / self.sampling_frequency
+        stops = t0 + np.arange(1, n_samples + 1) / self.sampling_frequency
+        segments = self.science[detector]
+        index = np.searchsorted(segments[:, 0], starts, side="right") - 1
+        observing = index >= 0
+        observing[observing] = stops[observing] <= segments[index[observing], 1]
+        maintenance = _inside(np.asarray(self.realization.maintenance[detector], dtype=float), starts)
+        state = np.where(observing, OBSERVING_MASK, 0) | np.where(maintenance, MAINTENANCE_BIT, 0)
         return state.astype(STATE_VECTOR_DTYPE)
 
     def write_frame(
@@ -166,7 +213,11 @@ class DutyCycle:
         return {
             "schema": SEGMENTS_SCHEMA,
             "schema_version": SEGMENTS_SCHEMA_VERSION,
-            "time_convention": "GPS seconds; each interval is [start, end).",
+            "time_convention": (
+                "GPS seconds; each interval is [start, end). 'observing' is the realization's exact "
+                "intervals; 'science' is the whole seconds inside each, which the other segment files, "
+                "the state vector, the strain mask and the observing flags use."
+            ),
             "span": [realization.start, realization.end],
             "seed": self.seed,
             "model": asdict(self.model),
@@ -174,6 +225,7 @@ class DutyCycle:
                 detector: {
                     "observing_fraction": realization.observing_fraction(detector),
                     "observing": realization.observing[detector].tolist(),
+                    "science": self.science[detector].tolist(),
                     "maintenance": realization.maintenance[detector].tolist(),
                 }
                 for detector in self.detectors
@@ -194,7 +246,7 @@ class DutyCycle:
                 SEGMENTS_XML_FILE: self._ligolw_segments(),
             }
             for detector in self.detectors:
-                lines = [f"{start!r} {end!r}\n" for start, end in record["detectors"][detector]["observing"]]
+                lines = [f"{int(start)} {int(end)}\n" for start, end in self.science[detector]]
                 contents[f"{detector}-observing-segments.txt"] = "".join(lines)
             self._segment_files = contents
         return dict(self._segment_files)
@@ -213,7 +265,7 @@ class DutyCycle:
         definer_id = segment_id = 0
         for detector in self.detectors:
             for name, intervals in (
-                (OBSERVING_FLAG, realization.observing[detector]),
+                (OBSERVING_FLAG, self.science[detector]),
                 (MAINTENANCE_FLAG, realization.maintenance[detector]),
             ):
                 definers.append(f',,"{_ligolw_string(detector)}",,"{name}",,{definer_id},1')
@@ -230,7 +282,7 @@ class DutyCycle:
         )
 
     def mask(self, detector: str, values: Any, times: Any) -> np.ndarray:
-        """``values`` with every sample at a time ``detector`` does not observe set to NaN.
+        """``values`` with every sample outside ``detector``'s science segments set to NaN.
 
         Args:
             detector: The interferometer.
@@ -238,10 +290,13 @@ class DutyCycle:
             times: GPS time of each sample.
 
         Returns:
-            A new float array; ``values`` is not changed.
+            A float array; ``values`` is not changed.
         """
-        observing = self.realization.is_observing(detector, np.asarray(times, dtype=float))
-        return np.where(observing, np.asarray(values, dtype=float), np.nan)
+        observing = self._in_science(detector, times)
+        values = np.asarray(values, dtype=float)
+        if observing.all():
+            return values
+        return np.where(observing, values, np.nan)
 
     def write_segment_files(self, directory: Path) -> list[Path]:
         """Write the run's segment files into ``directory``, in the order of :meth:`segment_file_contents`."""
@@ -264,6 +319,15 @@ class DutyCycle:
             "segments_file": SEGMENTS_FILE,
             "segments_xml_file": SEGMENTS_XML_FILE,
         }
+
+
+def _inside(intervals: np.ndarray, times: np.ndarray) -> np.ndarray:
+    """Whether each time lies in one of the sorted, disjoint ``[start, end)`` intervals."""
+    intervals = intervals.reshape(-1, 2)
+    index = np.searchsorted(intervals[:, 0], times, side="right") - 1
+    inside = index >= 0
+    inside[inside] = times[inside] < intervals[index[inside], 1]
+    return inside
 
 
 def _ligolw_string(value: str) -> str:

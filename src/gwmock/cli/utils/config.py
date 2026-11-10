@@ -619,7 +619,8 @@ class DutyCycleConfig(BaseModel):
     gwmock-noise's default. The run draws one realization over its whole span, so every frame of a
     run, a resumed one included, sees the same duty cycle. It writes a state-vector channel per
     interferometer and frame, the run's observing segments, and an ``observing`` flag on every
-    injected signal and glitch. It changes no strain.
+    injected signal and glitch. Unless ``mask-strain`` is off, the strain written outside an
+    interferometer's science segments is NaN.
     """
 
     mean_uptime: float | None = Field(default=None, alias="mean-uptime", description="Mean unplanned lock, seconds.")
