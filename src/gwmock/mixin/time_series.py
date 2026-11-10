@@ -15,6 +15,7 @@ from gwmock.cli.utils.config_resolution import parse_seconds
 from gwmock.cli.utils.segment_layout import SegmentLayout, resolve_segment_count
 from gwmock.cli.utils.template import expand_template_variables
 from gwmock.data.time_series.inject import measure_content_before
+from gwmock.data.time_series.spilled import SpilledTimeSeries
 from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
 from gwmock.simulator.state import StateAttribute
@@ -41,11 +42,42 @@ def _injection_record(chunk: TimeSeries) -> dict[str, Any] | None:
     return {"event_id": event_id, "parameters": dict(parameters)}
 
 
+def _reaching(segment: TimeSeries, chunk: TimeSeries) -> TimeSeries:
+    """The part of *chunk* that building *segment* needs to read: for a spilled tail, a bounded view.
+
+    A tail spilled to disk can be far longer than a segment. Injection and the checks before it read
+    every sample of what they are handed -- its time array, and for content before the segment its
+    samples too -- so a spilled tail is handed over cut at the segment's end: everything up to it,
+    nothing after. That changes nothing placed, since nothing after the segment's end lands in it,
+    and it bounds what is read to the segment plus any gap before it.
+
+    Only a tail declared on the segment's grid is cut. One that is not -- a tail carried across a gap
+    that is not a whole number of samples -- is resampled by injection, as a whole, so that the kernel
+    has its context on both sides of every boundary; cutting it would change the samples. It is handed
+    over whole, as an in-memory tail would be.
+
+    Args:
+        segment: The segment being built.
+        chunk: A chunk about to be injected into it.
+
+    Returns:
+        *chunk* itself, or a view of its file ending at the segment's end.
+    """
+    if (
+        isinstance(chunk, SpilledTimeSeries)
+        and chunk.start_time < segment.end_time
+        # The predicate injection itself places a chunk by, so the two cannot disagree.
+        and segment._declared_on_grid(chunk)  # pylint: disable=protected-access
+    ):
+        return chunk.until(segment.end_time)
+    return chunk
+
+
 def _contributing_injections(segment: TimeSeries, chunks: Iterable[TimeSeries]) -> list[dict[str, Any]]:
     """Return injection records for the chunks that place at least one sample in *segment*."""
     records: list[dict[str, Any]] = []
     for chunk in chunks:
-        if not segment.contributes_samples(chunk):
+        if not segment.contributes_samples(_reaching(segment, chunk)):
             continue
         record = _injection_record(chunk)
         if record is not None:
@@ -102,13 +134,21 @@ def _gap_discarded_records(
     gap_start, gap_end = preceding_gap
     records: list[dict[str, Any]] = []
     for chunk in chunks:
+        measured = _reaching(segment, chunk)
         samples, seconds, energy_fraction = measure_content_before(
             float(segment.start_time.to(chunk.start_time.unit).value),
             float(segment.sampling_frequency.value),
-            chunk,
+            measured,
         )
         if samples <= 0:
             continue
+        if measured is not chunk and energy_fraction > 0.0:
+            # Measured on the view, so the fraction is of the view's energy; the record states it as a
+            # fraction of the whole tail's, as for a tail in memory. Both energies are read a block at a
+            # time, so neither costs a copy of the tail.
+            energy_fraction *= (
+                cast(SpilledTimeSeries, measured).summed_squares() / cast(SpilledTimeSeries, chunk).summed_squares()
+            )
         if float(chunk.start_time.to(segment.start_time.unit).value) < gap_start:
             continue
         record = _injection_record(chunk) or {"event_id": chunk.metadata.get("event_id"), "parameters": {}}
@@ -162,6 +202,18 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
     #: contiguous run. The samples themselves are gone -- the run writes no frame covering a gap --
     #: so this is the only place that says a signal lost content there.
     gap_discarded: list[dict[str, Any]]
+    #: Where a tail is written once it outlives the segment that generated it, or ``None`` to keep tails
+    #: in memory.
+    #:
+    #: A signal longer than a segment is carried forward as a tail until it is consumed, so memory holds
+    #: every signal still in band: at a low minimum frequency, binary neutron stars last hours and their
+    #: tails outgrow memory long before the segments do. With a directory set, each tail is written to a
+    #: file as soon as its first segment has taken its share, and every later segment reads only the
+    #: window of it that lands there; what stays in memory is the segment being built and the one signal
+    #: being generated. See :class:`~gwmock.data.time_series.spilled.SpilledTimeSeries`.
+    #:
+    #: Configuration, not state: it names a place on this machine, and a resumed run sets it again.
+    tail_spill_directory: Path | None = None
 
     def __init__(
         self,
@@ -514,23 +566,27 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
                 self.start_time,
             )
 
-        # Inject cached data chunks into the segment
-        self.cached_data_chunks = segment.inject_from_list(self.cached_data_chunks, preceding_gap=preceding_gap)
+        # Inject the carried chunks, then the new ones, in that order: injection sums into the
+        # segment, so the order fixes the floating-point result, and it is the order this has always
+        # used.
+        remaining = TimeSeriesList()
+        for chunk in self.cached_data_chunks:
+            tail = self._place(segment, chunk, preceding_gap)
+            if tail is not None:
+                remaining.append(tail)
 
-        # Generate new chunks of data
-        new_chunks = self._simulate(*args, **kwargs)
-
-        # Chunks generated for this segment that do not actually reach it are excluded for the same
-        # reason the carried ones are included: the record names the frames a signal is *in*.
-        self.carried_injections = _merge_injection_records(
-            self.carried_injections, _contributing_injections(segment, new_chunks)
-        )
-
-        # Add the new chunks to the segment
-        remaining_chunks = segment.inject_from_list(new_chunks, preceding_gap=preceding_gap)
-
-        # Add the remaining chunks to the cache
-        self.cached_data_chunks.extend(remaining_chunks)
+        # One new chunk at a time, each placed -- and its tail spilled -- before the next is generated,
+        # so a segment never holds every new signal at once.
+        new_records: list[dict[str, Any]] = []
+        for chunk in self._new_chunks(*args, **kwargs):
+            # Chunks generated for this segment that do not actually reach it are excluded for the
+            # same reason the carried ones are included: the record names the frames a signal is *in*.
+            new_records.extend(_contributing_injections(segment, [chunk]))
+            tail = self._place(segment, chunk, preceding_gap)
+            if tail is not None:
+                remaining.append(tail)
+        self.carried_injections = _merge_injection_records(self.carried_injections, new_records)
+        self.cached_data_chunks = remaining
 
         # Check whether there are chunks that are outside the whole dataset duration
         # Remove the chunks that are outside the total duration
@@ -552,6 +608,63 @@ class TimeSeriesMixin:  # pylint: disable=too-few-public-methods,too-many-instan
                 self.cached_data_chunks.pop(i)
 
         return segment
+
+    def _new_chunks(self, *args: Any, **kwargs: Any) -> Iterable[TimeSeries]:
+        """The chunks this segment adds, which :meth:`simulate` places one at a time.
+
+        :meth:`_simulate` by default. A simulator that can produce its chunks one by one overrides this
+        with a generator, so that each is placed and its tail spilled before the next is generated.
+
+        Args:
+            *args: Passed to :meth:`_simulate`.
+            **kwargs: Passed to :meth:`_simulate`.
+
+        Returns:
+            The new chunks, in the order they are injected.
+        """
+        return self._simulate(*args, **kwargs)
+
+    def _place(
+        self, segment: TimeSeries, chunk: TimeSeries, preceding_gap: tuple[float, float] | None
+    ) -> TimeSeries | None:
+        """Inject *chunk* into *segment* and return what is left of it for later segments, if anything.
+
+        A tail that lies beyond this segment is left for later, spilled to :attr:`tail_spill_directory`
+        when one is set. A spilled tail is placed through a view ending at this segment's end (see
+        :func:`_reaching`), and what is left of it is a view of the same file starting there, so its file
+        is written once and never rewritten.
+
+        Args:
+            segment: The segment being built.
+            chunk: A carried or newly generated chunk.
+            preceding_gap: The gap immediately before *segment*, if any; see ``TimeSeries.inject``.
+
+        Returns:
+            The rest of *chunk*, or ``None`` if nothing of it remains.
+        """
+        if isinstance(chunk, SpilledTimeSeries) and chunk.start_time >= segment.end_time:
+            # Not reached yet. Handed to injection it would come back as a copy read into memory.
+            return chunk
+        reaching = _reaching(segment, chunk)
+        tail = segment.inject(reaching, preceding_gap=preceding_gap)
+        if reaching is not chunk:
+            # Cut at the segment's end, so nothing of the view is left over; the rest is the file's.
+            tail = cast(SpilledTimeSeries, chunk).after(segment.end_time)
+        if tail is not None and tail.start_time >= self.final_end_time:
+            # Past the end of the run, so no segment will take it. Dropped here rather than after the
+            # whole segment is built, so the last segment does not hold every new signal's tail.
+            logger.info(
+                "Removing cached chunk starting at %s which is outside the total duration ending at %s.",
+                tail.start_time,
+                self.final_end_time,
+            )
+            return None
+        if tail is None or isinstance(tail, SpilledTimeSeries) or self.tail_spill_directory is None:
+            return tail
+        if tail.end_time <= segment.end_time:
+            # Wholly before this segment, which happens only across a gap: dropped below, so not written.
+            return tail
+        return SpilledTimeSeries.spill(tail, self.tail_spill_directory)
 
     @property
     def metadata(self) -> dict:

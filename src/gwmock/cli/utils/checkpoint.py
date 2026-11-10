@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import IO, Any
@@ -13,8 +14,41 @@ from urllib.parse import urlparse
 
 from gwmock.data.serialize.decoder import Decoder
 from gwmock.data.serialize.encoder import Encoder
+from gwmock.data.time_series.spilled import SPILLED_TYPE, MissingSpilledTailError, SpilledTimeSeries
 
 logger = logging.getLogger("gwmock")
+
+
+def spilled_tail_files(simulator_tails: Mapping[str, Any]) -> set[Path]:
+    """The files the spilled tails in *simulator_tails* read their samples from.
+
+    Args:
+        simulator_tails: Tails keyed by simulator name, as :meth:`CheckpointManager.save_checkpoint`
+            takes them.
+
+    Returns:
+        Every file a spilled chunk of any simulator's spillover maps, resolved.
+    """
+    files: set[Path] = set()
+    for tail in simulator_tails.values():
+        for chunk in (tail or {}).get("spillover") or []:
+            if isinstance(chunk, SpilledTimeSeries):
+                files.add(chunk.spill_path.resolve())
+    return files
+
+
+def _recorded_tail_files(document: Any) -> set[Path]:
+    """The files the spilled tails recorded anywhere in a checkpoint's undecoded JSON map."""
+    files: set[Path] = set()
+    if isinstance(document, dict):
+        if document.get("__type__") == SPILLED_TYPE and isinstance(document.get("path"), str):
+            files.add(Path(document["path"]).resolve())
+        for value in document.values():
+            files |= _recorded_tail_files(value)
+    elif isinstance(document, list):
+        for value in document:
+            files |= _recorded_tail_files(value)
+    return files
 
 
 def run_fingerprint(
@@ -583,6 +617,10 @@ class CheckpointManager:
                 len(checkpoint.get("completed_batch_indices", [])),
             )
             return checkpoint
+        except MissingSpilledTailError:
+            # Not a damaged checkpoint: a sound one whose tail was removed. Starting fresh would discard
+            # the run's progress, and resuming would drop the signal; both are the user's call.
+            raise
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to load checkpoint: %s", e)
             return None
@@ -609,9 +647,10 @@ class CheckpointManager:
 
                 Carried **beside** the state rather than in it, deliberately. ``state`` is also
                 serialized into every batch metadata record, and those are provenance documents
-                meant to stay small and readable; spillover is raw samples, megabytes of them for a
-                long inspiral. Putting it in ``state`` would bloat every metadata record and, since
-                those are written with plain ``json``, fail outright on a ``TimeSeriesList``.
+                meant to stay small and readable; spillover is samples -- a tail held in memory is
+                written out in full, and only a tail spilled to disk is recorded by its file. Putting
+                it in ``state`` would bloat every metadata record and, since those are written with
+                plain ``json``, fail outright on a ``TimeSeriesList``.
 
                 Without this a resumed run starts with no spillover, so the tail is never placed and
                 the segment after the resume point silently loses that content: a measured peak of
@@ -647,7 +686,7 @@ class CheckpointManager:
             "spillover": last_simulator_spillover,
         }
         # `last_simulator_state`/`last_simulator_spillover` are not written beside this: they are the
-        # entry for `last_simulator_name`, and duplicating them would write megabytes of spillover
+        # entry for `last_simulator_name`, and duplicating them would write any in-memory spillover's
         # samples twice per batch. `load_checkpoint` rebuilds them for callers that want them.
         checkpoint = {
             "completed_batch_indices": completed_batch_indices,
@@ -688,6 +727,64 @@ class CheckpointManager:
                     self.checkpoint_tmp.unlink()
             raise
 
+    @property
+    def tail_directory(self) -> Path:
+        """Where the run spills signal tails: beside the checkpoint that references them."""
+        return self.checkpoint_directory / "tails"
+
+    def recorded_tail_files(self) -> set[Path] | None:
+        """The spilled-tail files the checkpoint, its backup and any half-written checkpoint reference.
+
+        Read from the files on disk, as plain JSON: a checkpoint is decoded only to resume from it, and
+        decoding maps every tail. Whatever is on disk is what a resume -- from the checkpoint, or from
+        the backup a damaged checkpoint is restored from -- can need, however this process came to
+        start, and whether or not it read the checkpoint.
+
+        Returns:
+            The files, resolved; ``None`` if one of those checkpoint files exists but cannot be read,
+            in which case no tail can be shown to be unneeded.
+        """
+        files: set[Path] = set()
+        for path in (self.checkpoint_file, self.checkpoint_backup, self.checkpoint_tmp):
+            if not path.exists():
+                continue
+            try:
+                with path.open("r") as handle:
+                    files |= _recorded_tail_files(json.load(handle))
+            except (OSError, json.JSONDecodeError) as error:
+                logger.warning("Keeping every spilled signal tail: %s could not be read (%s).", path, error)
+                return None
+        return files
+
+    def remove_unreferenced_tails(self, in_use: Iterable[Path] = ()) -> None:
+        """Delete every spilled-tail file in :attr:`tail_directory` that nothing can need any more.
+
+        A file is kept while the checkpoint or its backup on disk references it (see
+        :meth:`recorded_tail_files`) or the caller names it in *in_use* -- the tails a simulator holds
+        right now, in case the checkpoint that should reference them failed to be written. Everything
+        else is a tail consumed by the run, or written by a batch attempt that failed and was retried.
+        Nothing is deleted when a checkpoint file cannot be read.
+
+        A file that cannot be removed -- on Windows, one still mapped -- is left and tried again at the
+        next call; :meth:`cleanup` removes the directory at the end of the run.
+
+        Args:
+            in_use: Files to keep besides those the checkpoints reference.
+        """
+        if not self.tail_directory.is_dir():
+            return
+        recorded = self.recorded_tail_files()
+        if recorded is None:
+            return
+        kept = recorded | {Path(path).resolve() for path in in_use}
+        for path in self.tail_directory.rglob("*"):
+            if not path.is_file() or path.resolve() in kept:
+                continue
+            try:
+                path.unlink()
+            except OSError as error:
+                logger.debug("Could not remove the spilled tail %s yet: %s", path, error)
+
     def cleanup(self) -> None:
         """Clean up checkpoint files after successful completion."""
         # Remove both checkpoint and backup after successful completion
@@ -700,6 +797,11 @@ class CheckpointManager:
                 logger.debug("Cleaned up checkpoint backup file")
         except OSError as e:
             logger.warning("Failed to clean up checkpoint files: %s", e)
+        # Every batch is done, so no tail is needed any more.
+        if self.tail_directory.exists():
+            shutil.rmtree(self.tail_directory, ignore_errors=True)
+            if self.tail_directory.exists():
+                logger.warning("Could not remove every spilled signal tail in %s.", self.tail_directory)
 
     def get_completed_batch_indices(self) -> set[int]:
         """Get set of completed batch indices from checkpoint.
