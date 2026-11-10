@@ -42,8 +42,9 @@ file**:
 | `schema_version` | `MAJOR.MINOR.PATCH` | Which revision of it the file was written to |
 
 Since `1.1.0` the root may carry a third attribute, `run_metadata`: the run's
-provenance record as JSON. It is optional -- a file written before `1.1.0`, or
-by a path with no record to embed, carries none -- so a consumer falls back to
+provenance record as JSON. It is optional -- a file written before `1.1.0`, by a
+path with no record to embed, or by a run told not to embed one
+(`globals.metadata.embed: false`) carries none -- so a consumer falls back to
 the metadata sidecar when it is absent. See
 [The record inside the file](#the-record-inside-the-file) below.
 
@@ -98,8 +99,10 @@ written.
 An HDF5 file usually also carries the provenance record of the run that wrote
 it, so a file that reaches you without its sidecar still says where it came
 from. Read it, and fall back to the sidecar when there is none — a file written
-before this existed carries no record, and neither does one from
-`gwmock merge --force`, which is merging files it was given no metadata for:
+before this existed carries no record, nor does one from a run or merge told not
+to embed one (`globals.metadata.embed: false`,
+`gwmock merge --no-embed-metadata`), nor one from `gwmock merge --force`, which
+is merging files it was given no metadata for:
 
 ```python
 from gwmock.strain_schema import read_run_metadata
@@ -130,8 +133,8 @@ with three deliberate omissions:
   signal, or a run that injected no glitches.
 - **The file hashes.** A file cannot carry its own digest: `file_hashes`,
   `content_hashes` and the `sha256`/`content_sha256` of each entry in `outputs`
-  are recorded in the sidecar, which is taken after the record is written into
-  the file.
+  are recorded in the sidecar, whose hashes are taken after the record, if any,
+  is written into the file.
 
 - **The simulator's replay state.** `pre_batch_state` is stored as separate
   `.npy` files an embedded copy could not point at. It is removed wherever it

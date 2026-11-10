@@ -1,8 +1,9 @@
 """Utilities for reading and writing versioned metadata records.
 
-A record is written twice: to its sidecar, which the producer keeps, and -- where the output format
-has room for it -- into the data file itself, so that a file handed to another pipeline describes
-itself. :func:`embed_metadata_record` is the only writer of the second copy, and the two copies come
+A record is written to its sidecar, which the producer keeps, and by default also -- where the output
+format has room for it -- into the data file itself, so that a file handed to another pipeline
+describes itself (``globals.metadata.embed: false`` and ``gwmock merge --no-embed-metadata`` turn the
+second copy off). :func:`embed_metadata_record` is the only writer of the second copy, and the two copies come
 from one record built once, so they cannot drift into disagreeing about the run.
 
 They are not identical, and the difference is the point. The embedded copy leaves out the injection
@@ -134,7 +135,7 @@ GAP_INJECTION_KEYS = ("gap_excluded_injections", "gap_discarded_injections")
 _REPLAY_STATE_KEY = "pre_batch_state"
 
 #: Top-level hash maps an embedded copy drops, and the per-output keys that duplicate them. A file
-#: cannot carry its own hash: the digest is taken after the record is embedded, precisely so that what
+#: cannot carry its own hash: the digest is taken after the record, if any, is embedded, precisely so that what
 #: the sidecar records describes the bytes that were published. Left in, they would be the hashes of a
 #: file that no longer exists.
 #:
@@ -301,8 +302,8 @@ def _normalize_json_value(value: Any) -> Any:
     Non-finite floats become ``None``. JSON has no way to write one: ``json.dumps`` emits the bare
     tokens ``Infinity``, ``-Infinity`` and ``NaN``, which Python reads back but which are not JSON,
     so a strict parser rejects the whole document rather than the one field. That was survivable
-    while the record only ever went to a sidecar Python read; it is not, now that a copy of it is
-    written into the data file for another pipeline to parse.
+    while the record only ever went to a sidecar Python read; it is not when a copy of it is written
+    into the data file for another pipeline to parse.
 
     ``None`` rather than a string, because these are numeric fields and a consumer doing arithmetic
     on them should get "no value" rather than a type it did not expect. It is also the spelling the

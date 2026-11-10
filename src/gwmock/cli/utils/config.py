@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger("gwmock")
 
@@ -728,14 +728,26 @@ class MetadataSettings(BaseModel):
     private details file beside it holding those. ``false`` writes one combined record, the layout
     gwmock wrote before the split existed.
 
-    Unknown keys are refused rather than ignored, so a misspelt ``split`` cannot silently leave a run
-    writing the layout its author meant to turn off.
+    ``embed`` (default ``true``) also writes the shareable record into each HDF5 output, so a file
+    handed on says which run wrote it. ``false`` leaves it out: the embedded record keeps the
+    configuration and the seeds, from which a population drawn from a public catalogue can be
+    reproduced, so data released for a blind challenge should carry none. The record is still written
+    beside the outputs.
+
+    Unknown keys are refused rather than ignored, and each value must be a boolean -- ``1`` or ``"yes"``
+    is refused rather than coerced -- so a misspelt switch cannot silently leave a run writing the layout
+    its author meant to turn off.
     """
 
-    split: bool = Field(
+    split: StrictBool = Field(
         default=True,
         description="Write each metadata record as a shareable record plus a private details file "
         "(true, the default), or as one combined record (false).",
+    )
+    embed: StrictBool = Field(
+        default=True,
+        description="Write the shareable record into each HDF5 output (true, the default), or leave the "
+        "outputs without one (false), as data released for a blind challenge should be.",
     )
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -785,6 +797,11 @@ class GlobalsConfig(BaseModel):
     def split_metadata(self) -> bool:
         """Whether this run writes shareable records with private details files beside them."""
         return True if self.metadata is None else self.metadata.split
+
+    @property
+    def embed_metadata(self) -> bool:
+        """Whether this run writes its shareable record into each HDF5 output."""
+        return True if self.metadata is None else self.metadata.embed
 
 
 class ChunkConfig(BaseModel):

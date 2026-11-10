@@ -19,15 +19,17 @@ What the schema declares is written into the artifact itself, at the **file root
 ``run_metadata`` (1.1.0, optional)
     The provenance record of the run that wrote the file, as a JSON document -- the same record the
     metadata sidecar carries, so that a file handed to another pipeline describes itself. Optional
-    because a file may be written by a path that has no record to embed, and because every file
-    written before 1.1.0 has none; a consumer reads it with :func:`read_run_metadata` and falls back
+    because a file may be written by a path that has no record to embed, by a run or merge told not
+    to embed one (``globals.metadata.embed: false``, ``gwmock merge --no-embed-metadata``), and
+    because every file written before 1.1.0 has none; a consumer reads it with :func:`read_run_metadata` and falls back
     to the sidecar when it is absent.
 
-    It is a *copy* rather than a second source of truth: one record is built per batch and written to
-    both places, and the embedded copy differs only by what it deliberately leaves out. It omits the
-    injection parameters unless the run asked for them (``orchestration.include-injection-parameters``
-    -- a blind challenge must not release the answer key with the data), and it omits the file hashes,
-    which cannot describe the file they are stored in. See
+    It is a *copy* rather than a second source of truth: one record is built per batch, written to
+    the sidecar and, when embedding is on, into the file, and the embedded copy differs only by what
+    it deliberately leaves out. It omits the injection parameters unless the run asked for them
+    (``orchestration.include-injection-parameters`` -- a blind challenge must not release the answer
+    key with the data), and it omits the file hashes, which cannot describe the file they are stored
+    in. See
     :func:`gwmock.cli.utils.metadata.embed_metadata_record`.
 
 Version 1.0.0 requires, of every dataset in the file:
@@ -260,8 +262,10 @@ def read_run_metadata(path: str | Path) -> dict[str, Any] | None:
     """Return the provenance record an artifact carries, or ``None`` if it carries none.
 
     ``None`` covers a file in a format with no metadata space, one written before 1.1.0, one written
-    by a path that had no record to embed, and one from another producer -- four situations a consumer
-    handles the same way: read the run's metadata sidecar instead.
+    by a path that had no record to embed, one from a run or merge told not to embed it
+    (``globals.metadata.embed: false``, ``gwmock merge --no-embed-metadata``), and one from another
+    producer -- five situations a consumer handles the same way: read the run's metadata sidecar
+    instead.
 
     What comes back is the *embedded* copy, which is not the whole record. It omits the file hashes,
     and it omits the injection parameters unless the run that wrote it opted in; the sidecar is the

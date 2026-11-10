@@ -440,9 +440,9 @@ class _OutputArtifact(NamedTuple):
     """One generated file and the descriptor the metadata record holds it under.
 
     The two travel together because the descriptor's hashes cannot be filled in when it is built.
-    They are taken after the record has been embedded in the artifact -- embedding changes the
-    container bytes -- and the path the digest is read from has to be the one the descriptor names,
-    not a path re-derived from the string it stores.
+    They are taken after the record, when embedding is on, has been embedded in the artifact --
+    embedding changes the container bytes -- and the path the digest is read from has to be the one
+    the descriptor names, not a path re-derived from the string it stores.
     """
 
     path: Path
@@ -581,8 +581,9 @@ def _build_output_records(
 def _hash_output_records(output_records: list[_OutputArtifact]) -> None:
     """Fill in each descriptor's hashes, from the artifact as it now stands on disk.
 
-    Separate from :func:`_build_output_records`, and called later, because the run embeds its
-    metadata record in the artifacts between the two: hashing first would record the digest of a
+    Separate from :func:`_build_output_records`, and called later, because the run may embed its
+    metadata record in the artifacts between the two (it does unless ``globals.metadata.embed`` is
+    false), and the hashes must describe the final bytes either way: hashing first would record the digest of a
     file that is never published, and `gwmock validate` would then report a byte mismatch for every
     output of every run.
 
@@ -2480,17 +2481,20 @@ def save_batch_metadata(
         record = parts.shareable
         record[PRIVATE_REFERENCE_KEY] = private_reference(private_file, digest)
 
-    # Embed the record in the artifacts it describes, so a file handed to another pipeline says
-    # which run wrote it. One record, written to both places, rather than two constructions that
-    # can disagree -- and the embedded copy withholds the injection parameters unless this run
-    # asked for them. Before the hashes below, because it changes the container bytes.
-    include_injection_parameters = _includes_injection_parameters(batch)
-    for output_file in output_files:
-        embed_metadata_record(
-            output_file,
-            record,
-            include_injection_parameters=include_injection_parameters,
-        )
+    # Unless the run turned it off (`globals.metadata.embed: false`), embed the record in the
+    # artifacts it describes, so a file handed to another pipeline says which run wrote it. The
+    # embedded copy is this same record, not a second construction that could disagree with the
+    # sidecar, and it withholds the injection parameters unless this run asked for them. Before the
+    # hashes below, because it changes the container bytes. With embedding off, the outputs carry
+    # no record at all.
+    if batch.globals_config.embed_metadata:
+        include_injection_parameters = _includes_injection_parameters(batch)
+        for output_file in output_files:
+            embed_metadata_record(
+                output_file,
+                record,
+                include_injection_parameters=include_injection_parameters,
+            )
 
     # Compute and add file hashes for integrity checking. Two hashes are kept:
     #   * file_hashes    -- raw container bytes (exact-file integrity)

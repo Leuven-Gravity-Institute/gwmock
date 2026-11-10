@@ -184,24 +184,26 @@ Python version and the version of every installed distribution (direct and
 transitive) — recorded so the run can be reproduced against exactly those
 dependencies. It is `null` for records written before this field existed.
 
-A copy of the record is written into each HDF5 output as well, at the file root,
-so a data file that reaches a consumer without its sidecar still describes the
-run. It is a copy of the shareable record -- never of the private details --
-with three omissions: the file hashes (a file cannot carry its own digest),
-`pre_batch_state` (stored as separate `.npy` files an embedded copy could not
-point at), and the injection truth -- `signal.injections`,
-`noise.glitch_injections`, `signal.gap_excluded_injections` and
-`signal.gap_discarded_injections` -- unless the run set
-`orchestration.include-injection-parameters: true`. The sidecar described above
-always keeps all three.
+Unless the run sets `globals.metadata.embed: false`, a copy of the record is
+written into each HDF5 output as well, at the file root, so a data file that
+reaches a consumer without its sidecar still describes the run. The copy is of
+the shareable record -- never of the private details -- with three omissions:
+the file hashes (a file cannot carry its own digest), `pre_batch_state` (stored
+as separate `.npy` files an embedded copy could not point at), and the injection
+truth -- `signal.injections`, `noise.glitch_injections`,
+`signal.gap_excluded_injections` and `signal.gap_discarded_injections` -- unless
+the run set `orchestration.include-injection-parameters: true`. The sidecar
+described above always keeps all three. With the switch off, the outputs carry
+no record and the sidecar is the only one.
 
-That copy carries a timestamp, the host and the environment freeze, so **two
-identical runs no longer write byte-identical HDF5 files** even though they hold
-identical samples. What "reproducible" is measured against here is the _content_
-hash — the decoded samples plus their timing, recorded as `content_sha256` and
-checked by `gwmock validate` separately from the byte hash — which the embedded
-record does not affect. GWF output has never been byte-reproducible, for the
-same kind of reason: a frame records its write time.
+Where it is embedded, that copy carries a timestamp, the host and the
+environment freeze, so **two identical runs no longer write byte-identical HDF5
+files** even though they hold identical samples. What "reproducible" is measured
+against here is the _content_ hash — the decoded samples plus their timing,
+recorded as `content_sha256` and checked by `gwmock validate` separately from
+the byte hash — which the embedded record does not affect. GWF output has never
+been byte-reproducible, for the same kind of reason: a frame records its write
+time.
 
 For the config shape that feeds this record, see
 [Orchestration](orchestration.md) and [Protocol Contracts](protocols.md).
@@ -330,7 +332,7 @@ other, so its `metadata` list holds one file even when its samples run into the
 next frame — `duration_seconds` is what says how far. Counting rows across a run
 therefore gives the number of glitches injected.
 
-The rows are injection truth, so they are withheld from the metadata embedded
+The rows are injection truth, so they are withheld from any metadata embedded
 **inside** a data file exactly as the signal parameters are: which transients a
 released file holds is as much an answer to a blind challenge as the parameters
 of the signals in it. Set `include-injection-parameters: true` for a run whose

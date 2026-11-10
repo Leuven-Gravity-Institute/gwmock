@@ -283,20 +283,35 @@ With `split: true` every record a run writes is two files in the metadata
 directory: the shareable record under its usual name
 (`orchestration-<k>.metadata.json`), with no user name, host name or absolute
 path, and a private details file beside it (`orchestration-<k>.private.json`)
-holding exactly what was taken out. The copy embedded in each HDF5 output and
-the signal and glitch indexes are built from the shareable record. What goes
-where is listed in
+holding exactly what was taken out. The signal and glitch indexes, and the copy
+embedded in the HDF5 outputs when embedding is on, are built from the shareable
+record. What goes where is listed in
 [Shareable and private metadata](metadata.md#shareable-and-private-metadata).
 
 `split: false` writes one combined record per batch, with the author, the
 absolute paths and the full platform string in it -- the layout gwmock wrote
-before the split existed, and the one that is embedded in the outputs. No
-private file is written.
+before the split existed, and the one embedded in the outputs (unless
+`embed: false`, below). No private file is written.
 
-`metadata` accepts only `split`, and `split` only a boolean: a misspelt key or
-value is refused when the configuration is loaded rather than ignored, so a run
-cannot silently write the layout its author meant to turn off. `gwmock merge`
-takes the same decision through `--split-metadata` / `--no-split-metadata`.
+`embed: false` writes no record into the HDF5 outputs at all, for data released
+as a blind challenge: the embedded record leaves out the injection parameters
+(see "Injection parameters in the data files" below), but keeps the
+configuration and the seeds, from which a population drawn from a distribution
+or a public catalogue can be regenerated. The record is still written beside the
+outputs, as the producer's copy, and the outputs still declare their layout. GWF
+and `.npy` outputs never carry a record.
+
+```yaml
+globals:
+    metadata:
+        embed: false # true is the default
+```
+
+`metadata` accepts only `split` and `embed`, each only a boolean: a misspelt key
+or value is refused when the configuration is loaded rather than ignored, so a
+run cannot silently write the layout its author meant to turn off.
+`gwmock merge` takes the same decisions through `--split-metadata` /
+`--no-split-metadata` and `--embed-metadata` / `--no-embed-metadata`.
 
 ### Orchestration
 
@@ -377,11 +392,13 @@ backend decides which keys it accepts.
 
 ### Injection parameters in the data files
 
-Every HDF5 file a run writes carries the run's metadata record inside it, at the
-file root, so that a file handed to another pipeline says which run produced it
-without its sidecar. `.npy` and `.gwf` have nowhere to put a document, so for
-those formats the sidecar remains the only description, and so does a file
-written by `gwmock merge --force`, which was given no metadata to carry. A
+By default every HDF5 file a run writes carries the run's metadata record inside
+it, at the file root, so that a file handed to another pipeline says which run
+produced it without its sidecar. `.npy` and `.gwf` have nowhere to put a
+document, so for those formats the sidecar remains the only description, and so
+does a file written by `gwmock merge --force`, which was given no metadata to
+carry, or by a run or merge told not to embed one
+(`globals.metadata.embed: false`, `gwmock merge --no-embed-metadata`). A
 consumer reads the sidecar whenever there is one — see
 [Reading data](reading-data.md) for how to read the embedded record back.
 
@@ -412,17 +429,21 @@ Two things the flag does **not** do, and both matter before releasing a blind
 challenge:
 
 - The embedded record still carries the run's configuration, its seeds and its
-  software versions. If the population is _drawn_ from a distribution rather
-  than loaded from a file you withhold, the configuration and the seed
-  regenerate the injections whether or not their values were embedded.
+  software versions. If the population is _drawn_ from a distribution, or from a
+  public catalogue, rather than loaded from a file you withhold, the
+  configuration and the seed regenerate the injections whether or not their
+  values were embedded. To release HDF5 files with no record in them at all, set
+  `globals.metadata.embed: false` (see
+  [`metadata`](#metadata-shareable-and-private-records) above).
 - It does not touch data already written. Files from an earlier run keep
   whatever they were written with.
 
-One further consequence: two identical runs no longer write byte-identical HDF5
-files, because the record embedded in them carries a timestamp, the host and the
-environment freeze. What reproducibility is checked against is the _content_
-hash — the decoded samples and their timing — which the record does not affect,
-and which `gwmock validate` reports separately from the byte hash.
+One further consequence of embedding: two identical runs no longer write
+byte-identical HDF5 files, because the record embedded in them carries a
+timestamp, the host and the environment freeze. What reproducibility is checked
+against is the _content_ hash — the decoded samples and their timing — which the
+record does not affect, and which `gwmock validate` reports separately from the
+byte hash.
 
 ### Choosing the waveform library
 
@@ -914,10 +935,10 @@ Four things about it are worth knowing before a production run:
 - **`revision` is the difference between a reproducible run and one that tracks
   whatever the Hub served that day.** Pin it to a commit SHA and a regenerated
   dataset holds bit-identical samples for a fixed (version, configuration, seed)
-  — compare the content hash, not the container bytes, since each HDF5 file
-  embeds its own run's record. Whatever you pin, the run records the concrete
-  commit it resolved to, so replaying a run through its metadata fetches that
-  commit even as the upstream dataset moves.
+  — compare the content hash, not the container bytes, since by default each
+  HDF5 file embeds its own run's record. Whatever you pin, the run records the
+  concrete commit it resolved to, so replaying a run through its metadata
+  fetches that commit even as the upstream dataset moves.
 - **The dataset is 2.3 GB, fetched lazily on first use** and cached by
   `huggingface_hub`. Later runs reuse the cache after an ETag check; if the Hub
   is unreachable the check is skipped with a warning and the cache is used

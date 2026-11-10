@@ -9,10 +9,14 @@ files ending in `.json` are written as JSON; files ending in any other suffix
 The `gwmock merge` command writes merged metadata with a `.metadata.yaml`
 suffix.
 
-A copy of the same record is also written **inside** each HDF5 output, at the
-file root, so a data file separated from its sidecar still describes its run.
-The copy omits the file hashes -- a file cannot carry its own digest -- and, by
-default, the injection parameters; see
+By default a copy of the same record is also written **inside** each HDF5
+output, at the file root, so a data file separated from its sidecar still
+describes its run. `globals.metadata.embed: false` (and
+`gwmock merge --no-embed-metadata`) writes no copy, for data released as a blind
+challenge; see
+[`metadata`](configuration.md#metadata-shareable-and-private-records). The
+sidecar is written either way. The copy omits the file hashes -- a file cannot
+carry its own digest -- and, by default, the injection parameters; see
 [Injection parameters in the data files](configuration.md#injection-parameters-in-the-data-files)
 for the flag that includes them and
 [The record inside the file](reading-data.md#the-record-inside-the-file) for
@@ -119,8 +123,8 @@ relative to the record's own directory, and replay resolves paths against the
 directory it is started in (see
 [Reproducing a run](reproducibility.md#reproducing-a-run)).
 
-**The copy embedded in each HDF5 output is the shareable record**, never the
-private details, so a data file released on its own names no person, machine or
+**A copy embedded in an HDF5 output is the shareable record**, never the private
+details, so a data file released on its own names no person, machine or
 directory either. The signal and glitch indexes are built from it too.
 
 `gwmock merge` writes its record the same way: the merged record, with the paths
@@ -138,8 +142,8 @@ Set `globals.metadata.split: false` in the configuration (and pass
 `--no-split-metadata` to `gwmock merge`) to write one combined record per batch,
 with the same keys as before the split existed -- including `author`, the
 absolute paths and the full `host.platform` -- and no private file. That record
-is also the one embedded in the outputs. See
-[Configuration](configuration.md#metadata-shareable-and-private-records).
+is also the one embedded in the outputs, unless `globals.metadata.embed: false`.
+See [Configuration](configuration.md#metadata-shareable-and-private-records).
 
 ### Before sharing a data set
 
