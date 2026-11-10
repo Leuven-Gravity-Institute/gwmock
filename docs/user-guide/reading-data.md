@@ -99,8 +99,10 @@ written.
 An HDF5 file usually also carries the provenance record of the run that wrote
 it, so a file that reaches you without its sidecar still says where it came
 from. Read it, and fall back to the sidecar when there is none — a file written
-before this existed carries no record, and neither does one from
-`gwmock merge --force`, which is merging files it was given no metadata for:
+before this existed carries no record, nor does one from a run or merge told not
+to embed one (`globals.metadata.embed: false`,
+`gwmock merge --no-embed-metadata`), nor one from `gwmock merge --force`, which
+is merging files it was given no metadata for:
 
 ```python
 from gwmock.strain_schema import read_run_metadata

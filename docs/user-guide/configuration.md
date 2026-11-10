@@ -433,7 +433,8 @@ challenge:
   public catalogue, rather than loaded from a file you withhold, the
   configuration and the seed regenerate the injections whether or not their
   values were embedded. To release HDF5 files with no record in them at all, set
-  `globals.metadata.embed: false` (below).
+  `globals.metadata.embed: false` (see
+  [`metadata`](#metadata-shareable-and-private-records) above).
 - It does not touch data already written. Files from an earlier run keep
   whatever they were written with.
 

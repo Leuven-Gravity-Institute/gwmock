@@ -184,16 +184,17 @@ Python version and the version of every installed distribution (direct and
 transitive) — recorded so the run can be reproduced against exactly those
 dependencies. It is `null` for records written before this field existed.
 
-A copy of the record is written into each HDF5 output as well, at the file root,
-so a data file that reaches a consumer without its sidecar still describes the
-run. It is a copy of the shareable record -- never of the private details --
-with three omissions: the file hashes (a file cannot carry its own digest),
-`pre_batch_state` (stored as separate `.npy` files an embedded copy could not
-point at), and the injection truth -- `signal.injections`,
-`noise.glitch_injections`, `signal.gap_excluded_injections` and
-`signal.gap_discarded_injections` -- unless the run set
-`orchestration.include-injection-parameters: true`. The sidecar described above
-always keeps all three.
+Unless the run sets `globals.metadata.embed: false`, a copy of the record is
+written into each HDF5 output as well, at the file root, so a data file that
+reaches a consumer without its sidecar still describes the run. With the switch
+off, the outputs carry no record and the sidecar is the only one. It is a copy
+of the shareable record -- never of the private details -- with three omissions:
+the file hashes (a file cannot carry its own digest), `pre_batch_state` (stored
+as separate `.npy` files an embedded copy could not point at), and the injection
+truth -- `signal.injections`, `noise.glitch_injections`,
+`signal.gap_excluded_injections` and `signal.gap_discarded_injections` -- unless
+the run set `orchestration.include-injection-parameters: true`. The sidecar
+described above always keeps all three.
 
 That copy carries a timestamp, the host and the environment freeze, so **two
 identical runs no longer write byte-identical HDF5 files** even though they hold

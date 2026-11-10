@@ -64,9 +64,9 @@ orchestration:
 
 ## Injection parameters in the released files
 
-Each HDF5 file a run writes carries the run's metadata record inside it, so the
-data describes itself. The injection parameters are excluded from that embedded
-copy unless the run asks for them:
+By default each HDF5 file a run writes carries the run's metadata record inside
+it, so the data describes itself. The injection parameters are excluded from
+that embedded copy unless the run asks for them:
 
 ```yaml
 orchestration:
@@ -95,6 +95,13 @@ a training set, a benchmark, or a challenge released with its solutions.
 `gwmock merge` carries the same switch as `--include-injection-parameters`, with
 the same default: the sidecars it reads hold the parameters even when the files
 it merges do not, so a merge would otherwise re-publish what each run withheld.
+
+The embedded record still carries the configuration and the seeds, from which a
+population drawn from a distribution or a public catalogue can be regenerated.
+To release HDF5 files with no record in them at all, set
+`globals.metadata.embed: false` (`gwmock merge --no-embed-metadata`). It takes
+precedence: with no record embedded, `include-injection-parameters` has nothing
+to add the parameters to.
 
 See
 [Configuration Files](configuration.md#injection-parameters-in-the-data-files)
