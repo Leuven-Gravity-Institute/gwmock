@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -67,6 +67,18 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             ),
         ),
     ] = False,
+    copy_channel: Annotated[
+        list[str],
+        typer.Option(
+            "--copy-channel",
+            help=(
+                "A channel to carry into the merged file unchanged, beside the merged channel -- a "
+                "state vector, say. It is read from the one named file that holds it; that file need "
+                "not hold the merged channel. Repeat for several. Only for a merge of named files."
+            ),
+        ),
+    ]
+    | None = None,
     author: Annotated[str, typer.Option("--author", help="Author of the merged file")] | None = None,
     email: Annotated[str, typer.Option("--email", help="Email of the author")] | None = None,
     force: Annotated[bool, typer.Option("--force", help="Bypass the requirements of providing metadata files")] = False,
@@ -117,6 +129,8 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         output_dir (Path): Directory a whole-segment merge writes its files to.
         skip_unmatched (bool): In a whole-segment merge, skip with a warning each channel written to
             one file only, instead of refusing the record.
+        copy_channel (list[str] | None): Channels carried into the merged file unchanged, each read
+            from the one named file that holds it.
 
     Raises:
         ValueError: If metadata files are not provided and force is False, or if the format cannot be
@@ -125,6 +139,10 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     import datetime
 
     if not file_names:
+        if copy_channel:
+            raise ValueError(
+                "--copy-channel carries a channel from a named file into the merged file; name the files to merge."
+            )
         _merge_run_segments(
             metadata=metadata,
             output=output,
@@ -203,16 +221,22 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     # Placeholder for actual merging logic
     typer.echo(f"Merging files: {file_names}")
 
+    # With channels to copy, a file may hold only those; the merged channel is summed over the rest.
+    merge_files, copy_sources = _split_merge_and_copy_sources(file_names, channel, copy_channel or [])
+    if output_channel is not None and output_channel in copy_sources:
+        # The copied channel would replace the merged one under the shared name.
+        raise ValueError(f"--output-channel {output_channel!r} is also a --copy-channel.")
+
     # Read the first file
-    frame_data = cast(TimeSeries, TimeSeries.read(file_names[0], channel))
+    frame_data = cast(TimeSeries, TimeSeries.read(merge_files[0], channel))
 
     # Get the start time, duration and sampling frequency
     start_time = frame_data.epoch
     duration = frame_data.duration
     sampling_frequency = frame_data.sample_rate
 
-    for i in range(1, len(file_names)):
-        next_frame_data = cast(TimeSeries, TimeSeries.read(file_names[i], channel))
+    for i in range(1, len(merge_files)):
+        next_frame_data = cast(TimeSeries, TimeSeries.read(merge_files[i], channel))
 
         if next_frame_data.epoch != start_time:
             raise ValueError(f"Start time mismatch: {next_frame_data.epoch} != {start_time}")
@@ -238,7 +262,12 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         # GWpy's HDF5 reader does not always name the series it returns, and its HDF5 writer then
         # has no dataset path to write under. The channel the series was read from is that name.
         frame_data.name = channel
-    frame_data.write(temp_output)
+    if copy_sources:
+        copied = _read_copied_channels(copy_sources, start_time, duration)
+        TimeSeriesDict = require("gwpy.timeseries", "gwpy", "Merging frame or HDF5 files").TimeSeriesDict  # noqa: N806
+        TimeSeriesDict({str(frame_data.name): frame_data, **copied}).write(temp_output)
+    else:
+        frame_data.write(temp_output)
     # Declared before the rename, so the merged file carries the contract from the moment it appears
     # under its final name -- a reader that opens it the instant it exists sees a complete artifact.
     # A merge is a strain artifact like any other, and it is the one gwmock hands to another pipeline.
@@ -339,6 +368,75 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
     else:
         typer.echo("No metadata provided for the source files.")
         typer.echo("No metadata file will be created for the merged file.")
+
+
+def _channels_in(path: Path) -> set[str]:
+    """The channels a GWF or HDF5 file holds."""
+    from gwmock._optional import require  # noqa: PLC0415
+
+    if path.suffix.lower() == ".gwf":
+        return set(require("gwpy.io.gwf", "gwpy", "Merging frame files").iter_channel_names(str(path)))
+    from gwmock_data.io import read_hdf5  # noqa: PLC0415
+
+    return set(read_hdf5(path))
+
+
+def _split_merge_and_copy_sources(
+    file_names: list[Path], channel: str, copy_channels: list[str]
+) -> tuple[list[Path], dict[str, Path]]:
+    """Split the named files into those summed for ``channel`` and the one source of each copied channel.
+
+    Without channels to copy every file is summed, as before. With them, the files holding ``channel``
+    are summed, each copied channel must be held by exactly one file, and every file must hold one or
+    the other.
+
+    Raises:
+        ValueError: If a copied channel is held by no file or by several, if a file holds neither the
+            merged channel nor a copied one, if a copied channel is the merged one, or if no file holds
+            the merged channel.
+    """
+    if not copy_channels:
+        return list(file_names), {}
+    if channel in copy_channels:
+        raise ValueError(f"--copy-channel {channel!r} is the channel being merged.")
+    held = {path: _channels_in(path) for path in file_names}
+    sources: dict[str, Path] = {}
+    for name in copy_channels:
+        holders = [path for path, channels in held.items() if name in channels]
+        if len(holders) != 1:
+            where = ", ".join(str(path) for path in holders) or "none of them"
+            raise ValueError(f"--copy-channel {name!r} must be held by exactly one named file; it is held by {where}.")
+        sources[name] = holders[0]
+    merge_files = [path for path, channels in held.items() if channel in channels]
+    idle = [str(path) for path, channels in held.items() if channel not in channels and path not in sources.values()]
+    if idle:
+        raise ValueError(f"These files hold neither {channel!r} nor a channel to copy: {', '.join(idle)}.")
+    if not merge_files:
+        raise ValueError(f"No named file holds {channel!r}.")
+    return merge_files, sources
+
+
+def _read_copied_channels(sources: dict[str, Path], start_time: Any, duration: Any) -> dict[str, Any]:
+    """Read each copied channel, refusing one that does not cover the merged channel's span.
+
+    Raises:
+        ValueError: If a copied channel starts or lasts differently from the merged channel.
+    """
+    from gwmock._optional import require  # noqa: PLC0415
+
+    TimeSeries = require("gwpy.timeseries", "gwpy", "Merging frame or HDF5 files").TimeSeries  # noqa: N806
+    copied: dict[str, Any] = {}
+    for name, path in sources.items():
+        series = TimeSeries.read(str(path), name)
+        if series.epoch != start_time or series.duration != duration:
+            raise ValueError(
+                f"--copy-channel {name!r} in {path} spans {series.epoch} for {series.duration}, not the merged "
+                f"channel's {start_time} for {duration}."
+            )
+        series.name = name
+        series.channel = name
+        copied[name] = series
+    return copied
 
 
 def _merge_run_segments(

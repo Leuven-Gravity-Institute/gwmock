@@ -593,7 +593,8 @@ class TestWhatAConsumerSees:
         run. 1.8.0: the record that travels with the data is the shareable one, without ``author``
         or absolute paths, and its private details are written to a separate file. 1.9.0: ``host``
         records the processor model and the host name of the machine that wrote the record, the
-        shareable record withholding the host name.
+        shareable record withholding the host name. 1.10.0: the record describes the run's duty
+        cycle, and flags each injection and glitch with whether its interferometers observed.
 
         A consumer reading an old record and a new one sees the same shape while ``injections``
         means something different in each. The version is the only signal available, so it has to
@@ -601,7 +602,7 @@ class TestWhatAConsumerSees:
         """
         from gwmock.cli.utils.metadata import SCHEMA_VERSION
 
-        assert SCHEMA_VERSION == "1.9.0"
+        assert SCHEMA_VERSION == "1.10.0"
 
     def test_an_older_record_still_loads(self):
         """Bumping the minor must not orphan archived runs: the major is what gates parsing."""

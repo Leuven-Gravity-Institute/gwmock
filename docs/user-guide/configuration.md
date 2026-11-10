@@ -969,6 +969,87 @@ read. A `population` entry takes no `kind`, and can sit beside ordinary model
 entries. A population of DeepExtractor classes needs the `deepextractor` extra,
 described above.
 
+### Duty cycle
+
+`orchestration.duty-cycle` records when each interferometer observes. The model
+is `gwmock-noise`'s (see its "Duty Cycle" guide): unplanned unlocks and relocks
+as a Markov chain, with correlated unlocks that take every observing
+interferometer down together, and periodic planned maintenance. The strain is
+not changed; the run records the duty cycle beside it.
+
+```yaml
+orchestration:
+    noise:
+        arguments:
+            psd_file: ET2026a_10km_psd
+            seed: 42
+            detectors:
+                - ET-Triangle-EMR
+    duty-cycle:
+        mean-uptime: 19440 # s; 5.4 h
+        mean-downtime: 5760 # s; 1.6 h
+        correlated-downtime-fraction: 0.02
+        maintenance:
+            strategy: rotating # or coincident, or none
+            period: 604800 # s; weekly
+            duration: 60480 # s; 10 % of the time
+            offset: 198000 # s after GPS 0; Tuesdays at 07:00 UTC
+        sampling-frequency: 16
+```
+
+Every key is optional; the values above are `gwmock-noise`'s defaults, from
+Negri et al. (arXiv:2606.19201) and LVK maintenance practice. An invalid value
+is refused when the configuration is loaded. What depends on the network or the
+frame length is refused before the first frame is written: a `rotating` schedule
+whose windows do not fit one after another in a period, a correlated share the
+network cannot reach, or a `sampling-frequency` that does not give each frame a
+whole number of samples.
+
+The realization is drawn when the run starts. At the default rates it takes well
+under a second for a year of three interferometers; its cost, and the size of
+the segment files, grow with the number of unlocks, so a `mean-uptime` of
+minutes makes both large.
+
+One realization covers the run's whole span, so every frame sees the same duty
+cycle, and a resumed run sees the one it started with. Its seed is `seed`, or is
+derived from the noise seed when `seed` is omitted; with neither, the run is
+refused. The duty cycle is drawn for the noise's interferometers, or for the
+signal's when the run has no noise.
+
+The run records it three ways:
+
+- **A state-vector channel**, `<interferometer>:STATE_VECTOR`, one file per
+  interferometer and frame, in `duty-cycle/` beside the other outputs. Bit 0 is
+  set while the interferometer observes and bit 1 while it is in planned
+  maintenance. The samples are `uint32` at `sampling-frequency`, which must give
+  each frame a whole number of samples. `duty-cycle.output` has the shape of
+  `noise.output`: `file_name` (required whenever the block is given; its
+  extension selects GWF or HDF5), `output_directory`, and `arguments`, which
+  takes `channel` only. Templates are expanded as for noise. An existing
+  state-vector file is refused without `--overwrite`, as a noise file is.
+- **Segment files**, written and recorded with the first frame:
+  `duty-cycle-segments.json` holds every interferometer's observing intervals
+  and maintenance windows, the model and the seed, and
+  `<interferometer>-observing-segments.txt` lists each interferometer's
+  observing intervals, one `start end` line each, in GPS seconds. Intervals are
+  `[start, end)`. A segment file on disk whose contents differ from the ones
+  this run would write is refused without `--overwrite` when a run starts, and
+  is replaced, and recorded again, by the next frame the run writes with
+  `--overwrite` or after resuming. A resumed run with no frames left to write
+  leaves it as it is. Missing ones are missing outputs of the first frame, so
+  resuming regenerates the run from its first frame. The segment files have
+  fixed names, so without `--overwrite` two runs can write to one duty-cycle
+  `output_directory` only if they write identical segment files and their
+  state-vector file names differ.
+- **Observing flags** in the batch metadata: every injected signal with a merger
+  time (`coa_time`) gets `observing: {<interferometer>: true | false}` at that
+  time, for each interferometer of the duty cycle, and every glitch gets
+  `observing: true | false` for its own interferometer at its peak. A signal
+  with no merger time, such as a stochastic background, gets no flag.
+
+To carry the state vector into the merged strain file, pass it to `gwmock merge`
+with `--copy-channel`; see "Reading Data".
+
 ## Template Variables
 
 You can use Jinja2-style templates in configuration values such as file names

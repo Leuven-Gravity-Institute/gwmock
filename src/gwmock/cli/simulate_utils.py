@@ -449,6 +449,40 @@ class _OutputArtifact(NamedTuple):
     record: dict[str, Any]
 
 
+def _duty_cycle_output_records(
+    simulator: Simulator, batch_data: AdapterOrchestrationResult, working_directory: str | None
+) -> list[_OutputArtifact]:
+    """Descriptors of a batch's state-vector files and, in the batch that wrote them, the run's segment files."""
+    output_records: list[_OutputArtifact] = []
+    if batch_data.duty_cycle_paths:
+        channels = cast(AdapterOrchestrator, simulator).duty_cycle_channels()
+        for detector, output_path in batch_data.duty_cycle_paths.items():
+            output_records.append(
+                _OutputArtifact(
+                    output_path,
+                    {
+                        "kind": "duty-cycle",
+                        "path": _to_path_string(output_path, working_directory),
+                        "channels": [channels[detector]],
+                        "t0": _to_plain_number(simulator.start_time),
+                        "duration": _to_plain_number(simulator.duration),
+                    },
+                )
+            )
+    for output_path in batch_data.duty_cycle_segment_paths:
+        output_records.append(
+            _OutputArtifact(
+                output_path,
+                {
+                    "kind": "duty-cycle-segments",
+                    "path": _to_path_string(output_path, working_directory),
+                    "channels": [],
+                },
+            )
+        )
+    return output_records
+
+
 def _build_output_records(
     simulator: Simulator,
     batch: SimulationBatch,
@@ -505,6 +539,8 @@ def _build_output_records(
                         },
                     )
                 )
+
+        output_records.extend(_duty_cycle_output_records(simulator, batch_data, working_directory))
         return output_records
 
     if isinstance(batch_data, SimulationResult):
@@ -2560,13 +2596,18 @@ def process_batch(
                     + ", ".join(str(path) for path in missing_noise_outputs)
                 )
 
+        duty_cycle_files = [
+            *(batch_data.duty_cycle_paths or {}).values(),
+            *batch_data.duty_cycle_segment_paths,
+        ]
         logger.debug(
-            "[PROCESS] Batch %s: adapter outputs - signal=%d files, noise=%d files",
+            "[PROCESS] Batch %s: adapter outputs - signal=%d files, noise=%d files, duty cycle=%d files",
             batch.batch_index,
             len(signal_output_files),
             len(noise_output_files),
+            len(duty_cycle_files),
         )
-        return [*signal_output_files, *noise_output_files]
+        return [*signal_output_files, *noise_output_files, *duty_cycle_files]
 
     if isinstance(batch_data, SimulationResult):
         output_files_list = list(batch_data.output_paths.values())

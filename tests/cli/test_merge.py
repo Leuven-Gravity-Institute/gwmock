@@ -675,3 +675,122 @@ class TestAChannelWithNothingToMergeWith:
         assert (output_dir / f"L1_STRAIN-{START}-1.hdf5").is_file()
         assert not (output_dir / f"V1_STRAIN-{START}-1.hdf5").exists()
         assert "V1:STRAIN" in caplog.text
+
+
+class TestCopiedChannels:
+    """``--copy-channel`` carries a channel, such as a state vector, into the merged file unchanged.
+
+    The summed channel is what it would be without it; the copied channel keeps its values, type and
+    rate; and a copied channel must come from exactly one named file and cover the merged span.
+    """
+
+    STATE = "STATE_VECTOR"
+
+    @classmethod
+    def _state(cls, path: Path, *, start: float = START, seconds: int = 1) -> Path:
+        values = np.arange(16 * seconds, dtype=np.uint32) % 4
+        TimeSeries(values, sample_rate=16, t0=start, channel=cls.STATE, name=cls.STATE).write(path)
+        return path
+
+    @pytest.mark.requires_gwpy
+    @pytest.mark.parametrize("suffix", [".gwf", ".hdf5"])
+    def test_the_copied_channel_rides_along_unchanged(self, tmp_path: Path, suffix: str) -> None:
+        signal = _frame(tmp_path / f"signal{suffix}", np.ones(RATE))
+        noise = _frame(tmp_path / f"noise{suffix}", 2 * np.ones(RATE))
+        state = self._state(tmp_path / f"state{suffix}")
+        output = tmp_path / f"merged{suffix}"
+
+        merge_command([signal, noise, state], output=str(output), force=True, copy_channel=[self.STATE])
+
+        np.testing.assert_array_equal(TimeSeries.read(str(output), CHANNEL).value, 3 * np.ones(RATE))
+        copied = TimeSeries.read(str(output), self.STATE)
+        source = TimeSeries.read(str(state), self.STATE)
+        assert copied.dtype == np.uint32
+        assert copied.sample_rate == source.sample_rate
+        assert copied.t0 == source.t0
+        np.testing.assert_array_equal(copied.value, source.value)
+
+    @pytest.mark.requires_gwpy
+    def test_a_copied_channel_no_file_holds_is_refused(self, tmp_path: Path, two_frames) -> None:
+        with pytest.raises(ValueError, match="held by none of them"):
+            merge_command(list(two_frames), output=str(tmp_path / "m.gwf"), force=True, copy_channel=[self.STATE])
+
+    @pytest.mark.requires_gwpy
+    def test_a_copied_channel_two_files_hold_is_refused(self, tmp_path: Path, two_frames) -> None:
+        states = [self._state(tmp_path / "s1.gwf"), self._state(tmp_path / "s2.gwf")]
+        with pytest.raises(ValueError, match="exactly one named file"):
+            merge_command([*two_frames, *states], output=str(tmp_path / "m.gwf"), force=True, copy_channel=[self.STATE])
+
+    @pytest.mark.requires_gwpy
+    def test_a_file_with_neither_channel_is_refused(self, tmp_path: Path, two_frames) -> None:
+        stray = TimeSeries(np.zeros(RATE), sample_rate=RATE, t0=START, channel="OTHER", name="OTHER")
+        stray.write(tmp_path / "stray.gwf")
+        state = self._state(tmp_path / "state.gwf")
+        with pytest.raises(ValueError, match="hold neither"):
+            merge_command(
+                [*two_frames, state, tmp_path / "stray.gwf"],
+                output=str(tmp_path / "m.gwf"),
+                force=True,
+                copy_channel=[self.STATE],
+            )
+
+    @pytest.mark.requires_gwpy
+    def test_copying_the_merged_channel_is_refused(self, tmp_path: Path, two_frames) -> None:
+        with pytest.raises(ValueError, match="is the channel being merged"):
+            merge_command(list(two_frames), output=str(tmp_path / "m.gwf"), force=True, copy_channel=[CHANNEL])
+
+    @pytest.mark.requires_gwpy
+    def test_only_a_state_file_is_refused(self, tmp_path: Path) -> None:
+        state = self._state(tmp_path / "state.gwf")
+        with pytest.raises(ValueError, match="No named file holds"):
+            merge_command([state], output=str(tmp_path / "m.gwf"), force=True, copy_channel=[self.STATE])
+
+    @pytest.mark.requires_gwpy
+    @pytest.mark.parametrize(("start", "seconds"), [(START + 1, 1), (START, 2)])
+    def test_a_copied_channel_over_another_span_is_refused(
+        self, tmp_path: Path, two_frames, start: float, seconds: int
+    ) -> None:
+        state = self._state(tmp_path / "state.gwf", start=start, seconds=seconds)
+        output = tmp_path / "m.gwf"
+        with pytest.raises(ValueError, match="not the merged channel's"):
+            merge_command([*two_frames, state], output=str(output), force=True, copy_channel=[self.STATE])
+        assert not output.exists()
+
+    def test_a_whole_segment_merge_takes_no_copied_channel(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="name the files to merge"):
+            merge_command(None, output_dir=tmp_path, metadata=["run.json"], copy_channel=[self.STATE])
+
+    @pytest.mark.requires_gwpy
+    def test_an_output_channel_named_like_a_copied_channel_is_refused(self, tmp_path: Path, two_frames) -> None:
+        """Otherwise the copied channel would replace the merged one under the shared name."""
+        state = self._state(tmp_path / "state.gwf")
+        output = tmp_path / "m.gwf"
+        with pytest.raises(ValueError, match="is also a --copy-channel"):
+            merge_command(
+                [*two_frames, state],
+                output=str(output),
+                force=True,
+                output_channel=self.STATE,
+                copy_channel=[self.STATE],
+            )
+        assert not output.exists()
+
+    @pytest.mark.requires_gwpy
+    @pytest.mark.parametrize("suffix", [".gwf", ".hdf5"])
+    def test_a_state_vector_at_its_own_rate_rides_along(self, tmp_path: Path, suffix: str) -> None:
+        """The real case: strain at kHz, state vector at 16 Hz, in one file."""
+        strain_rate = 4096
+        signal = _frame(tmp_path / f"signal{suffix}", np.ones(strain_rate), rate=strain_rate)
+        noise = _frame(tmp_path / f"noise{suffix}", 2 * np.ones(strain_rate), rate=strain_rate)
+        state = self._state(tmp_path / f"state{suffix}")
+        output = tmp_path / f"merged{suffix}"
+
+        merge_command([signal, noise, state], output=str(output), force=True, copy_channel=[self.STATE])
+
+        merged = TimeSeries.read(str(output), CHANNEL)
+        assert merged.sample_rate.value == strain_rate
+        np.testing.assert_array_equal(merged.value, 3 * np.ones(strain_rate))
+        copied = TimeSeries.read(str(output), self.STATE)
+        assert copied.sample_rate.value == 16
+        assert copied.dtype == np.uint32
+        np.testing.assert_array_equal(copied.value, TimeSeries.read(str(state), self.STATE).value)
