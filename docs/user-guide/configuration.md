@@ -283,15 +283,15 @@ With `split: true` every record a run writes is two files in the metadata
 directory: the shareable record under its usual name
 (`orchestration-<k>.metadata.json`), with no user name, host name or absolute
 path, and a private details file beside it (`orchestration-<k>.private.json`)
-holding exactly what was taken out. The copy embedded in each HDF5 output and
+holding exactly what was taken out. The copy embedded in the HDF5 outputs and
 the signal and glitch indexes are built from the shareable record. What goes
 where is listed in
 [Shareable and private metadata](metadata.md#shareable-and-private-metadata).
 
 `split: false` writes one combined record per batch, with the author, the
 absolute paths and the full platform string in it -- the layout gwmock wrote
-before the split existed, and the one that is embedded in the outputs. No
-private file is written.
+before the split existed, and the one embedded in the outputs (unless
+`embed: false`, below). No private file is written.
 
 `embed: false` writes no record into the HDF5 outputs at all, for data released
 as a blind challenge: the embedded record leaves out the injection parameters
@@ -935,10 +935,10 @@ Four things about it are worth knowing before a production run:
 - **`revision` is the difference between a reproducible run and one that tracks
   whatever the Hub served that day.** Pin it to a commit SHA and a regenerated
   dataset holds bit-identical samples for a fixed (version, configuration, seed)
-  — compare the content hash, not the container bytes, since each HDF5 file
-  embeds its own run's record. Whatever you pin, the run records the concrete
-  commit it resolved to, so replaying a run through its metadata fetches that
-  commit even as the upstream dataset moves.
+  — compare the content hash, not the container bytes, since by default each
+  HDF5 file embeds its own run's record. Whatever you pin, the run records the
+  concrete commit it resolved to, so replaying a run through its metadata
+  fetches that commit even as the upstream dataset moves.
 - **The dataset is 2.3 GB, fetched lazily on first use** and cached by
   `huggingface_hub`. Later runs reuse the cache after an ETag check; if the Hub
   is unreachable the check is skipped with a warning and the cache is used
