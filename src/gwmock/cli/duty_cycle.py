@@ -33,7 +33,8 @@ itself is unchanged; only what is written is masked.
 
 An HDF5 state-vector file declares the gwmock strain schema, like every HDF5 file gwmock writes: the
 schema is the file's layout (one dataset per channel, named for it, with its grid in ``x0``/``dx``),
-which the state vector follows, and declaring it is what lets the run record be embedded in the file.
+which the state vector follows. The declaration is always written; the run record is embedded
+beside it unless ``globals.metadata.embed`` is false.
 Its ``unit`` is empty, as for any dimensionless series: the samples are bit masks.
 """
 

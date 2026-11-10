@@ -283,9 +283,9 @@ With `split: true` every record a run writes is two files in the metadata
 directory: the shareable record under its usual name
 (`orchestration-<k>.metadata.json`), with no user name, host name or absolute
 path, and a private details file beside it (`orchestration-<k>.private.json`)
-holding exactly what was taken out. The copy embedded in the HDF5 outputs and
-the signal and glitch indexes are built from the shareable record. What goes
-where is listed in
+holding exactly what was taken out. The signal and glitch indexes, and the copy
+embedded in the HDF5 outputs when embedding is on, are built from the shareable
+record. What goes where is listed in
 [Shareable and private metadata](metadata.md#shareable-and-private-metadata).
 
 `split: false` writes one combined record per batch, with the author, the

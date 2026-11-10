@@ -332,7 +332,7 @@ released frame set says what its own discontinuity is.
   warned about.
 
 Both lists carry source parameters, so — like `signal.injections` — they are
-withheld from the copy of the record embedded in a released data file unless
+withheld from any copy of the record embedded in a released data file unless
 `orchestration.include-injection-parameters` is set.
 
 ### What the gaps do to the noise

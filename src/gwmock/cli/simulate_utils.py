@@ -440,9 +440,9 @@ class _OutputArtifact(NamedTuple):
     """One generated file and the descriptor the metadata record holds it under.
 
     The two travel together because the descriptor's hashes cannot be filled in when it is built.
-    They are taken after the record has been embedded in the artifact -- embedding changes the
-    container bytes -- and the path the digest is read from has to be the one the descriptor names,
-    not a path re-derived from the string it stores.
+    They are taken after the record, when embedding is on, has been embedded in the artifact --
+    embedding changes the container bytes -- and the path the digest is read from has to be the one
+    the descriptor names, not a path re-derived from the string it stores.
     """
 
     path: Path
@@ -581,8 +581,9 @@ def _build_output_records(
 def _hash_output_records(output_records: list[_OutputArtifact]) -> None:
     """Fill in each descriptor's hashes, from the artifact as it now stands on disk.
 
-    Separate from :func:`_build_output_records`, and called later, because the run embeds its
-    metadata record in the artifacts between the two: hashing first would record the digest of a
+    Separate from :func:`_build_output_records`, and called later, because the run may embed its
+    metadata record in the artifacts between the two (it does unless ``globals.metadata.embed`` is
+    false), and the hashes must describe the final bytes either way: hashing first would record the digest of a
     file that is never published, and `gwmock validate` would then report a byte mismatch for every
     output of every run.
 

@@ -87,10 +87,11 @@ a training set, a benchmark, or a challenge released with its solutions.
   that leave.
 - `.npy` and `.gwf` outputs carry no record either way, having nowhere to put
   one.
-- No adapter has to do anything to honour it. gwmock writes the record into the
-  artifact after the backend has produced it, in the one place that also stamps
-  the [strain schema](reading-data.md), so a third-party population, signal or
-  noise backend gets the behaviour without implementing any of it.
+- No adapter has to do anything to honour it. When embedding is on, gwmock
+  writes the record into the artifact after the backend has produced it, in the
+  one place that also stamps the [strain schema](reading-data.md), so a
+  third-party population, signal or noise backend gets the behaviour without
+  implementing any of it.
 
 `gwmock merge` carries the same switch as `--include-injection-parameters`, with
 the same default: the sidecars it reads hold the parameters even when the files

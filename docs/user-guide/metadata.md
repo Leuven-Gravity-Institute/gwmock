@@ -123,8 +123,8 @@ relative to the record's own directory, and replay resolves paths against the
 directory it is started in (see
 [Reproducing a run](reproducibility.md#reproducing-a-run)).
 
-**The copy embedded in an HDF5 output is the shareable record**, never the
-private details, so a data file released on its own names no person, machine or
+**A copy embedded in an HDF5 output is the shareable record**, never the private
+details, so a data file released on its own names no person, machine or
 directory either. The signal and glitch indexes are built from it too.
 
 `gwmock merge` writes its record the same way: the merged record, with the paths

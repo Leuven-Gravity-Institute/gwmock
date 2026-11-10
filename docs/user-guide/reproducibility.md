@@ -332,7 +332,7 @@ other, so its `metadata` list holds one file even when its samples run into the
 next frame — `duration_seconds` is what says how far. Counting rows across a run
 therefore gives the number of glitches injected.
 
-The rows are injection truth, so they are withheld from the metadata embedded
+The rows are injection truth, so they are withheld from any metadata embedded
 **inside** a data file exactly as the signal parameters are: which transients a
 released file holds is as much an answer to a blind challenge as the parameters
 of the signals in it. Set `include-injection-parameters: true` for a run whose
