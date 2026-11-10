@@ -321,3 +321,39 @@ class TestAMissingTailStopsTheResume:
         )
 
         assert len(_segments(root)) == _SEGMENTS
+
+
+@pytest.mark.parametrize("resumed", [False, True])
+def test_no_tail_is_still_mapped_when_the_run_removes_them(tmp_path, monkeypatch, resumed):
+    """On Windows a mapped file cannot be deleted, so every view must be gone before the directory is.
+
+    Resumed too, where the decoded checkpoint holds views of its own. The interrupted run is a separate
+    process, as it is in practice: in this one, the test's captured error records would keep its
+    exception -- and through the traceback, its views -- alive.
+    """
+    import gc
+    import subprocess
+    import sys
+
+    if resumed:
+        interrupt = (
+            "import sys; from pathlib import Path; from tests.cli import test_tail_spill_run as t; "
+            "t.FAIL_AT_COUNTER.append(3); t._run(Path(sys.argv[1]), 'run', expect_failure=True)"
+        )
+        subprocess.run(  # noqa: S603 - this interpreter, a fixed script
+            [sys.executable, "-c", interrupt, str(tmp_path)], check=True, cwd=Path(__file__).parents[2]
+        )
+        assert (tmp_path / "run" / "checkpoints" / "simulation.checkpoint.json").is_file()
+
+    live: list[int] = []
+    cleanup = CheckpointManager.cleanup
+
+    def _counting_cleanup(self):
+        gc.collect()
+        live.append(sum(isinstance(item, SpilledTimeSeries) for item in gc.get_objects()))
+        cleanup(self)
+
+    monkeypatch.setattr(CheckpointManager, "cleanup", _counting_cleanup)
+    _run(tmp_path, "run")
+
+    assert live == [0]

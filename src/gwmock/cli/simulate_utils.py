@@ -7,6 +7,7 @@ from __future__ import annotations
 import atexit
 import copy
 import errno
+import gc
 import hashlib
 import json
 import logging
@@ -2998,6 +2999,10 @@ def execute_plan(  # noqa: PLR0915
         # Dropped rather than carried: every batch is regenerated, so no simulator resumes from a
         # tail, and writing these back out would describe a run that no longer exists.
         simulator_tails = {}
+    # Everything needed from the decoded checkpoint is now in `simulator_tails` and the batch indices.
+    # Its own copy of the last tail is let go, so the files of tails the run consumes are not kept
+    # mapped -- which on Windows would stop the sweeps below from deleting them.
+    checkpoint = {}
 
     # Spilled tails that neither the checkpoint nor its backup on disk references -- a fresh run's
     # leftovers from an earlier attempt, say -- are no longer needed.
@@ -3169,8 +3174,9 @@ def execute_plan(  # noqa: PLR0915
                         config_sha256=plan_sha256,
                         simulator_tails=simulator_tails,
                     )
-                    # The checkpoint just written and its backup -- the one before -- keep their tails;
-                    # so do the ones this run holds, should that write have failed.
+                    # The checkpoint just written and its backup -- the one before -- keep their tails.
+                    # The tails this run holds are named as well, so that keeping them does not rest on
+                    # reading back the file just written.
                     checkpoint_manager.remove_unreferenced_tails(spilled_tail_files(simulator_tails))
                     logger.debug(
                         "Checkpoint saved after batch %d - state counter=%s",
@@ -3192,6 +3198,13 @@ def execute_plan(  # noqa: PLR0915
                     )
                     raise
 
-    # All batches completed successfully - clean up checkpoint files
+    # All batches completed successfully - clean up checkpoint files.
+    # First let go of every spilled tail, so its file can be removed: on Windows a file cannot be deleted
+    # while it is mapped. The last simulator, the checkpoint's copy of each tail and the last batch's
+    # retry snapshot (bound into its closures) are what still hold them.
+    simulator_tails.clear()
+    simulator = spillover_for_batch = pre_batch_spillover = spillover_snapshot = None
+    execute_batch = restore_state_for_retry = None
+    gc.collect()
     checkpoint_manager.cleanup()
     logger.info("All batches completed successfully. Checkpoint files cleaned up.")
