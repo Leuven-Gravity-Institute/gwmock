@@ -2483,14 +2483,16 @@ def save_batch_metadata(
     # Embed the record in the artifacts it describes, so a file handed to another pipeline says
     # which run wrote it. One record, written to both places, rather than two constructions that
     # can disagree -- and the embedded copy withholds the injection parameters unless this run
-    # asked for them. Before the hashes below, because it changes the container bytes.
-    include_injection_parameters = _includes_injection_parameters(batch)
-    for output_file in output_files:
-        embed_metadata_record(
-            output_file,
-            record,
-            include_injection_parameters=include_injection_parameters,
-        )
+    # asked for them. Before the hashes below, because it changes the container bytes. A run that
+    # turned it off (`globals.metadata.embed: false`) writes outputs that carry no record at all.
+    if batch.globals_config.embed_metadata:
+        include_injection_parameters = _includes_injection_parameters(batch)
+        for output_file in output_files:
+            embed_metadata_record(
+                output_file,
+                record,
+                include_injection_parameters=include_injection_parameters,
+            )
 
     # Compute and add file hashes for integrity checking. Two hashes are kept:
     #   * file_hashes    -- raw container bytes (exact-file integrity)

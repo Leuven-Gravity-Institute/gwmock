@@ -42,8 +42,9 @@ file**:
 | `schema_version` | `MAJOR.MINOR.PATCH` | Which revision of it the file was written to |
 
 Since `1.1.0` the root may carry a third attribute, `run_metadata`: the run's
-provenance record as JSON. It is optional -- a file written before `1.1.0`, or
-by a path with no record to embed, carries none -- so a consumer falls back to
+provenance record as JSON. It is optional -- a file written before `1.1.0`, by a
+path with no record to embed, or by a run told not to embed one
+(`globals.metadata.embed: false`) carries none -- so a consumer falls back to
 the metadata sidecar when it is absent. See
 [The record inside the file](#the-record-inside-the-file) below.
 

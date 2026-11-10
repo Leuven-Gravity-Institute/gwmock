@@ -128,6 +128,7 @@ def _run(
     *,
     include_injection_parameters: bool | None = None,
     signal_suffix: str = "hdf5",
+    embed: bool | None = None,
 ) -> Path:
     """Run the two-batch orchestration and return the configured metadata directory.
 
@@ -137,6 +138,8 @@ def _run(
     raw = _config(tmp_path, signal_suffix=signal_suffix).model_dump(by_alias=True, exclude_none=True)
     if include_injection_parameters is not None:
         raw["orchestration"]["include-injection-parameters"] = include_injection_parameters
+    if embed is not None:
+        raw["globals"]["metadata"] = {"embed": embed}
     config_file = tmp_path / "config.yaml"
     config_file.write_text(yaml.safe_dump(raw, sort_keys=False))
 
@@ -325,3 +328,38 @@ class TestTheConfigurationFlag:
                     "include-injection-parameters": "sometimes",
                 }
             )
+
+
+class TestNotEmbedding:
+    """``globals.metadata.embed: false``: outputs for a blind challenge, with no record inside them."""
+
+    def test_the_hdf5_outputs_carry_no_record(self, monkeypatch, tmp_path: Path):
+        """The embedded record keeps the configuration and the seeds; here there is none to read."""
+        _run(monkeypatch, tmp_path, include_injection_parameters=True, embed=False)
+
+        outputs = sorted((tmp_path / "output").rglob("*.hdf5"))
+        assert outputs
+        for output in outputs:
+            assert _embedded_document(output) is None
+            assert str(CANARY_MASS) not in output.read_bytes().decode("latin-1")
+
+    def test_the_outputs_still_declare_their_layout_and_the_sidecar_vouches_for_them(self, monkeypatch, tmp_path):
+        """Only the record is left out: the schema declaration stays, and the hashes are of these bytes."""
+        from gwmock.strain_schema import read_strain_schema
+
+        metadata_directory = _run(monkeypatch, tmp_path, embed=False)
+        sidecar = json.loads((metadata_directory / "orchestration-0.metadata.json").read_text())
+
+        signal_output = tmp_path / "output" / "signal" / "signal-0.hdf5"
+        assert read_strain_schema(signal_output) is not None
+        assert sidecar["file_hashes"][signal_output.name] == compute_file_hash(signal_output)
+        assert sidecar["signal"]["injections"][0]["parameters"]["detector_frame_mass_1"] == CANARY_MASS
+
+    def test_a_misspelt_switch_is_refused(self):
+        """A typo must not leave a blind challenge's outputs carrying the record."""
+        from pydantic import ValidationError
+
+        from gwmock.cli.utils.config import MetadataSettings
+
+        with pytest.raises(ValidationError):
+            MetadataSettings.model_validate({"embedded": False})

@@ -104,6 +104,17 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             ),
         ),
     ] = True,
+    embed_metadata: Annotated[
+        bool,
+        typer.Option(
+            "--embed-metadata/--no-embed-metadata",
+            help=(
+                "Write the merged record into the merged HDF5 file (the default), or leave the file "
+                "without one, as data released for a blind challenge should be. Matches "
+                "'globals.metadata.embed' in a run's config."
+            ),
+        ),
+    ] = True,
 ):
     """Merge multiple frame files into a single file.
 
@@ -125,6 +136,9 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
             record -- no author, no host name, paths relative to the current directory or reduced to
             file names -- with the author and the original paths in a private details file beside
             it. If False, one combined record is written.
+        embed_metadata (bool): If True (the default), the merged record is also written into a
+            merged HDF5 file. If False the file carries none, as data released for a blind challenge
+            should: the record keeps the sources' configurations and seeds.
 
         output_dir (Path): Directory a whole-segment merge writes its files to.
         skip_unmatched (bool): In a whole-segment merge, skip with a warning each channel written to
@@ -154,6 +168,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
                 "email": email,
                 "include_injection_parameters": include_injection_parameters,
                 "split_metadata": split_metadata,
+                "embed_metadata": embed_metadata,
             },
         )
         return
@@ -320,7 +335,7 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
         private_file = private_metadata_path(merged_metadata_file)
         private_document = parts.private
 
-    if merged_metadata is not None:
+    if merged_metadata is not None and embed_metadata:
         # Embedded here for the two reasons the declaration above is placed here: before the rename,
         # so the file is complete the moment it appears under its final name, and before the hash
         # below, since embedding changes the container bytes the hash is of. The sources' records

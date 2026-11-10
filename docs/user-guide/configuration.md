@@ -293,10 +293,25 @@ absolute paths and the full platform string in it -- the layout gwmock wrote
 before the split existed, and the one that is embedded in the outputs. No
 private file is written.
 
-`metadata` accepts only `split`, and `split` only a boolean: a misspelt key or
-value is refused when the configuration is loaded rather than ignored, so a run
-cannot silently write the layout its author meant to turn off. `gwmock merge`
-takes the same decision through `--split-metadata` / `--no-split-metadata`.
+`embed: false` writes no record into the HDF5 outputs at all, for data released
+as a blind challenge: the embedded record leaves out the injection parameters
+(see "Injection parameters in the data files" below), but keeps the
+configuration and the seeds, from which a population drawn from a distribution
+or a public catalogue can be regenerated. The record is still written beside the
+outputs, as the producer's copy, and the outputs still declare their layout. GWF
+and `.npy` outputs never carry a record.
+
+```yaml
+globals:
+    metadata:
+        embed: false # true is the default
+```
+
+`metadata` accepts only `split` and `embed`, each only a boolean: a misspelt key
+or value is refused when the configuration is loaded rather than ignored, so a
+run cannot silently write the layout its author meant to turn off.
+`gwmock merge` takes the same decisions through `--split-metadata` /
+`--no-split-metadata` and `--embed-metadata` / `--no-embed-metadata`.
 
 ### Orchestration
 
@@ -381,9 +396,11 @@ Every HDF5 file a run writes carries the run's metadata record inside it, at the
 file root, so that a file handed to another pipeline says which run produced it
 without its sidecar. `.npy` and `.gwf` have nowhere to put a document, so for
 those formats the sidecar remains the only description, and so does a file
-written by `gwmock merge --force`, which was given no metadata to carry. A
-consumer reads the sidecar whenever there is one — see
-[Reading data](reading-data.md) for how to read the embedded record back.
+written by `gwmock merge --force`, which was given no metadata to carry, or by a
+run or merge told not to embed one (`globals.metadata.embed: false`,
+`gwmock merge --no-embed-metadata`). A consumer reads the sidecar whenever there
+is one — see [Reading data](reading-data.md) for how to read the embedded record
+back.
 
 The embedded copy leaves out the source parameters of the injected signals, and
 the per-event glitch truth beside them:
@@ -412,9 +429,11 @@ Two things the flag does **not** do, and both matter before releasing a blind
 challenge:
 
 - The embedded record still carries the run's configuration, its seeds and its
-  software versions. If the population is _drawn_ from a distribution rather
-  than loaded from a file you withhold, the configuration and the seed
-  regenerate the injections whether or not their values were embedded.
+  software versions. If the population is _drawn_ from a distribution, or from a
+  public catalogue, rather than loaded from a file you withhold, the
+  configuration and the seed regenerate the injections whether or not their
+  values were embedded. To release HDF5 files with no record in them at all, set
+  `globals.metadata.embed: false` (below).
 - It does not touch data already written. Files from an earlier run keep
   whatever they were written with.
 

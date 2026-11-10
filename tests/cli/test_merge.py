@@ -538,6 +538,15 @@ class TestTheRecordInsideTheMergedFile:
         assert record["file_hashes"][output.name] == compute_file_hash(output)
 
     @pytest.mark.requires_gwpy
+    def test_no_record_is_embedded_when_asked_not_to(self, tmp_path: Path) -> None:
+        """``--no-embed-metadata``: the merged file carries no record; the record is still written beside it."""
+        output = self._merge(tmp_path, embed_metadata=False)
+
+        assert read_run_metadata(output) is None
+        record = yaml.safe_load((tmp_path / "merged.metadata.yaml").read_text())
+        assert record["file_hashes"][output.name] == compute_file_hash(output)
+
+    @pytest.mark.requires_gwpy
     def test_a_forced_merge_embeds_nothing(self, tmp_path: Path) -> None:
         """With no source metadata there is no record to carry, and none is invented."""
         sources = [self._hdf5(tmp_path / "a.hdf5", np.ones(RATE))]
