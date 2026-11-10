@@ -163,7 +163,8 @@ writes, and a `host` block, for the machine that merged, to a merged record; an
 older record has neither, and only `schema_version` says why.
 
 Schema 1.10.0 added `simulator_metadata.orchestration.duty_cycle`: the model,
-seed, interferometers, span and state-vector rate of the run's duty cycle (see
+seed, interferometers, span and state-vector rate of the run's duty cycle, and
+whether the run wrote NaN in the strain where it does not observe (see
 [Duty cycle](configuration.md#duty-cycle)), or `null` for a run without one. A
 run with a duty cycle also adds `observing` to each injection with a merger time
 and to each glitch, and records two more output kinds: `duty-cycle`, a frame's
