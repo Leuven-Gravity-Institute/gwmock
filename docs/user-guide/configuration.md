@@ -969,6 +969,65 @@ read. A `population` entry takes no `kind`, and can sit beside ordinary model
 entries. A population of DeepExtractor classes needs the `deepextractor` extra,
 described above.
 
+### Duty cycle
+
+`orchestration.duty-cycle` records when each interferometer observes. The model
+is `gwmock-noise`'s (see its "Duty Cycle" guide): unplanned unlocks and relocks
+as a Markov chain, with correlated unlocks that take every observing
+interferometer down together, and periodic planned maintenance. The strain is
+not changed; the run records the duty cycle beside it.
+
+```yaml
+orchestration:
+    noise:
+        arguments:
+            psd_file: ET2026a_10km_psd
+            seed: 42
+            detectors:
+                - ET-Triangle-EMR
+    duty-cycle:
+        mean-uptime: 19440 # s; 5.4 h
+        mean-downtime: 5760 # s; 1.6 h
+        correlated-downtime-fraction: 0.02
+        maintenance:
+            strategy: rotating # or coincident, or none
+            period: 604800 # s; weekly
+            duration: 60480 # s; 10 % of the time
+            offset: 198000 # s after GPS 0; Tuesdays at 07:00 UTC
+        sampling-frequency: 16
+```
+
+Every key is optional; the values above are `gwmock-noise`'s defaults, from
+Negri et al. (arXiv:2606.19201) and LVK maintenance practice. An invalid value
+is refused when the configuration is loaded.
+
+One realization covers the run's whole span, so every frame sees the same duty
+cycle, and a resumed run sees the one it started with. Its seed is `seed`, or is
+derived from the noise seed when `seed` is omitted; with neither, the run is
+refused. The duty cycle is drawn for the noise's interferometers, or for the
+signal's when the run has no noise.
+
+The run records it three ways:
+
+- **A state-vector channel**, `<interferometer>:STATE_VECTOR`, one file per
+  interferometer and frame, in `duty-cycle/` beside the other outputs. Bit 0 is
+  set while the interferometer observes and bit 1 while it is in planned
+  maintenance. The samples are `uint32` at `sampling-frequency`, which must give
+  each frame a whole number of samples. `duty-cycle.output` takes the same keys
+  as `noise.output`; its file extension selects GWF or HDF5.
+- **Segment files**, written once, with the first frame:
+  `duty-cycle-segments.json` holds every interferometer's observing intervals
+  and maintenance windows, the model and the seed, and
+  `<interferometer>-observing-segments.txt` lists each interferometer's
+  observing intervals, one `start end` line each, in GPS seconds. Intervals are
+  `[start, end)`.
+- **Observing flags** in the batch metadata: every injected signal gets
+  `observing: {<interferometer>: true | false}` at its merger time, and every
+  glitch gets `observing: true | false` for its own interferometer at its peak.
+
+To carry the state vector into the merged strain file, pass it to `gwmock merge`
+with `--copy-channel`; see "Reading Data".
+
 ## Template Variables
 
 You can use Jinja2-style templates in configuration values such as file names

@@ -854,9 +854,9 @@ requires-dist = [
     { name = "astropy", specifier = ">=7.0" },
     { name = "filelock", specifier = ">=3.17.0" },
     { name = "gwmock-data", specifier = ">=0.4.7" },
-    { name = "gwmock-noise", specifier = ">=0.21.0" },
-    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.21.0" },
-    { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.21.0" },
+    { name = "gwmock-noise", specifier = ">=0.22.0" },
+    { name = "gwmock-noise", extras = ["deepextractor"], marker = "extra == 'deepextractor'", specifier = ">=0.22.0" },
+    { name = "gwmock-noise", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.22.0" },
     { name = "gwmock-pop", specifier = ">=0.18.3" },
     { name = "gwmock-pop", extras = ["hdf5"], marker = "extra == 'hdf5'", specifier = ">=0.18.3" },
     { name = "gwmock-signal", specifier = ">=0.22.0" },
@@ -919,7 +919,7 @@ wheels = [
 
 [[package]]
 name = "gwmock-noise"
-version = "0.21.0"
+version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gwmock-data" },
@@ -929,9 +929,9 @@ dependencies = [
     { name = "scipy" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/70/b126522041b5465b94513f817f4ec6d65389d09270da146a4b77c4950286/gwmock_noise-0.21.0.tar.gz", hash = "sha256:0c9517af3435461db24a0b853d825b9a226a92a029881ca4a46b681e4237dc95", size = 1925539, upload-time = "2026-11-09T12:48:24.609Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/17/1dbc7ddf669e28b7157d7574f87baaadd9bd7406c61142da7dbd3820a7f0/gwmock_noise-0.22.0.tar.gz", hash = "sha256:2e01e82ee81071888f90da6583faf7f9e684cc69c326742c57441b99a0ea3a9d", size = 1941961, upload-time = "2026-11-10T03:54:54.445Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/bd/b5d04b1b80ff9ae7b4b9c1f14c7ca4362a94652141295ea7bdd8ed49a98e/gwmock_noise-0.21.0-py3-none-any.whl", hash = "sha256:3b033eaeada27a166926580e1b1f748dd84b42e3196633833cd1f8bb067d11f5", size = 1475511, upload-time = "2026-11-09T12:48:22.589Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/3e/3496c98b0e8c4f2ec486526ede46ba71f59009260494815ac86d36aee46e/gwmock_noise-0.22.0-py3-none-any.whl", hash = "sha256:0a3f688b3feaea7c7a059a3b29643f642c83ad1cecdd18ce9cdca8fe77d73de1", size = 1484905, upload-time = "2026-11-10T03:54:52.671Z" },
 ]
 
 [package.optional-dependencies]

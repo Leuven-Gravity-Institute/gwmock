@@ -225,6 +225,26 @@ gwmock merge output/noise/E-ET1_EMR_STRAIN_NOISE-1577491218-1024.hdf5 \
 Each merge produces the merged file and a merged metadata file documenting all
 input files and merge details.
 
+A run with a duty cycle writes each interferometer's state vector to its own
+file. To carry it into the merged file unchanged, name its file with the others
+and pass the channel to `--copy-channel`:
+
+```bash
+gwmock merge output/noise/E-ET1_EMR_STRAIN_NOISE-1577491218-1024.hdf5 \
+    output/signal/E-ET1_EMR_STRAIN_BBH-1577491218-1024.hdf5 \
+    output/duty-cycle/duty-cycle-ET1_EMR-0.hdf5 \
+    --metadata metadata/orchestration-0.metadata.json \
+    --channel ET1_EMR:STRAIN \
+    --copy-channel ET1_EMR:STATE_VECTOR \
+    --output E-ET1_EMR_STRAIN-1577491218-1024.hdf5
+```
+
+The files holding `--channel` are summed; each copied channel must be held by
+exactly one named file and cover the same span, and every named file must hold
+one or the other. The copied channel keeps its values, type and rate.
+`--copy-channel` can be given more than once, and needs the files named: a
+whole-segment merge does not take it.
+
 ### Merging Multiple Files
 
 To merge a sequence of files:

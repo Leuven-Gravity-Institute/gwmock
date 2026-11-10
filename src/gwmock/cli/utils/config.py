@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+import math
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -590,12 +591,93 @@ class NoiseAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
+class MaintenanceConfig(BaseModel):
+    """Planned maintenance of a duty cycle (``orchestration.duty-cycle.maintenance``).
+
+    Each field left unset takes gwmock-noise's default (``gwmock_noise.duty_cycle.MaintenanceSchedule``),
+    so the defaults are defined in one place.
+    """
+
+    strategy: Literal["coincident", "rotating", "none"] | None = Field(
+        default=None,
+        description="'coincident' maintains every interferometer together; 'rotating' one after another; 'none' never.",
+    )
+    period: float | None = Field(default=None, description="Seconds between successive windows of one interferometer.")
+    duration: float | None = Field(default=None, description="Seconds one interferometer's window lasts.")
+    offset: float | None = Field(
+        default=None, description="Opening time of the windows, GPS seconds modulo the period."
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DutyCycleConfig(BaseModel):
+    """When each interferometer observes (``orchestration.duty-cycle``).
+
+    The model is gwmock-noise's ``DutyCycleModel``: unplanned unlocks as a continuous-time Markov chain
+    with correlated unlocks, and planned maintenance laid over it. Each model field left unset takes
+    gwmock-noise's default. The run draws one realization over its whole span, so every frame of a
+    run, a resumed one included, sees the same duty cycle. It writes a state-vector channel per
+    interferometer and frame, the run's observing segments, and an ``observing`` flag on every
+    injected signal and glitch. It changes no strain.
+    """
+
+    mean_uptime: float | None = Field(default=None, alias="mean-uptime", description="Mean unplanned lock, seconds.")
+    mean_downtime: float | None = Field(default=None, alias="mean-downtime", description="Mean unplanned gap, seconds.")
+    correlated_downtime_fraction: float | None = Field(
+        default=None,
+        alias="correlated-downtime-fraction",
+        description="Share of unplanned downtime caused by unlocks that take every observing interferometer down.",
+    )
+    maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
+    seed: int | None = Field(
+        default=None,
+        description="Seed of the duty cycle. Unset, it is derived from the noise seed.",
+    )
+    sampling_frequency: float = Field(
+        default=16.0,
+        alias="sampling-frequency",
+        description="Samples per second of the state-vector channel; LIGO's calibrated state vector is 16 Hz.",
+    )
+    output: SimulatorOutputConfig = Field(
+        default_factory=lambda: SimulatorOutputConfig(
+            file_name="duty-cycle-{{ detectors }}-{{ counter }}.hdf5",
+            output_directory="duty-cycle",
+            arguments={"channel": "STATE_VECTOR"},
+        ),
+        description="State-vector output. The channel is written as '<interferometer>:<channel>'.",
+    )
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    @model_validator(mode="after")
+    def _validate_model(self) -> DutyCycleConfig:
+        """Build the gwmock-noise model, so an invalid value fails at load time."""
+        self.to_model()
+        if not (math.isfinite(self.sampling_frequency) and self.sampling_frequency > 0.0):
+            raise ValueError(
+                f"duty-cycle sampling-frequency must be positive and finite, not {self.sampling_frequency!r}."
+            )
+        return self
+
+    def to_model(self) -> Any:
+        """Return the ``gwmock_noise.duty_cycle.DutyCycleModel`` this configuration describes."""
+        from gwmock_noise.duty_cycle import DutyCycleModel, MaintenanceSchedule  # noqa: PLC0415
+
+        schedule = MaintenanceSchedule(**self.maintenance.model_dump(exclude_none=True))
+        fields = self.model_dump(
+            include={"mean_uptime", "mean_downtime", "correlated_downtime_fraction"}, exclude_none=True
+        )
+        return DutyCycleModel(**fields, maintenance=schedule)
+
+
 class OrchestrationConfig(BaseModel):
     """Composite adapter-backed orchestration configuration."""
 
     noise: NoiseAdapterConfig | None = None
     population: PopulationConfig | None = None
     signal: SignalConfig | None = None
+    duty_cycle: DutyCycleConfig | None = Field(default=None, alias="duty-cycle")
     include_injection_parameters: bool = Field(
         default=False,
         alias="include-injection-parameters",
@@ -612,6 +694,10 @@ class OrchestrationConfig(BaseModel):
     def _validate_combinations(self) -> OrchestrationConfig:
         if self.noise is None and self.population is None and self.signal is None:
             raise ValueError("orchestration must define at least one of: noise, population, signal")
+        if self.duty_cycle is not None and self.noise is None and self.signal is None:
+            raise ValueError(
+                "orchestration.duty-cycle needs the interferometers of orchestration.noise or orchestration.signal."
+            )
         if self.signal is not None and self.population is None and self.signal.source_type != "sgwb":
             raise ValueError(
                 "orchestration.signal without orchestration.population is only supported when "
