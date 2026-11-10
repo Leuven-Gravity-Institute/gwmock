@@ -1,0 +1,52 @@
+name: Pipelines
+
+# Runs the documented analysis-pipeline examples (docs/user-guide/analysis-pipelines.md) against a
+# gwmock run, with the current release of each pipeline: PyCBC, bilby and bilby_pipe, and gwpy with
+# igwn-ligolw. They are upgraded on top of the locked environment rather than locked with it,
+# because they constrain shared dependencies (numpy among them) more tightly than gwmock does, and
+# because the point is to meet each pipeline's newest release. The weekly run catches a pipeline
+# release that changes what it accepts, which no change to this repository would trigger.
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+    schedule:
+        - cron: '17 5 * * 1'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    pipelines:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+              with:
+                  python-version: '3.13'
+
+            - name: Install dependencies and the analysis pipelines
+              run: |
+                  uv sync --frozen --group dev --all-extras
+                  uv pip install --upgrade pycbc bilby_pipe gwpy igwn-ligolw lalsuite
+
+            - name: Record the pipeline versions
+              run: >-
+                  uv run --no-sync python -c "import importlib.metadata as m;
+                  print({p: m.version(p) for p in ('pycbc', 'bilby',
+                  'bilby_pipe', 'gwpy', 'igwn-ligolw', 'lalsuite', 'numpy')})"
+
+            - name: Run the pipeline tests
+              # A missing pipeline fails instead of skipping, so this job cannot pass by skipping.
+              env:
+                  GWMOCK_REQUIRE_PIPELINES: '1'
+              run: >-
+                  uv run --no-sync pytest -m pipelines --no-cov -p
+                  no:cacheprovider -rs
+                  tests/docs/test_analysis_pipelines_page.py

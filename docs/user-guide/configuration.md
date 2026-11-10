@@ -976,7 +976,7 @@ is `gwmock-noise`'s (see its "Duty Cycle" guide): unplanned unlocks and relocks
 as a Markov chain, with correlated unlocks that take every observing
 interferometer down together, and periodic planned maintenance. The run records
 the duty cycle in the forms the common analysis pipelines read, and by default
-writes NaN in the strain wherever an interferometer does not observe.
+writes NaN in the strain outside each interferometer's science segments.
 
 ```yaml
 orchestration:
@@ -1022,28 +1022,35 @@ signal's when the run has no noise.
 
 From each interferometer's observing intervals the run takes its **science
 segments**: the whole GPS seconds inside each interval, as LVK science segments
-are published. Everything below is drawn from them, so the products agree with
-one another, and a pipeline that keeps its analysis windows inside them reads
-only observing data. The run records the duty cycle four ways:
+are published. Up to a second at each end of an observing interval is therefore
+not in a segment, and an interval shorter than a second gives none. Everything
+below is drawn from them, so the products agree with one another, and a pipeline
+that keeps its analysis windows inside them reads only observing data. The run
+records the duty cycle four ways:
 
 - **NaN in the strain.** Every strain sample the run writes, noise and signal,
   outside its interferometer's science segments is NaN, as open data marks time
   outside observing. A pipeline that reads neither the state vector nor the
   segments then meets NaN instead of analysing that time unaware. NaN spreads
-  through any filter: whitening or high-passing a stretch that contains one NaN
-  sample returns NaN throughout. So every window a pipeline reads, including its
-  padding and the data it estimates a PSD from, has to lie inside one science
-  segment, as with open data. The noise realization is the same with or without
-  the mask; only what is written changes. Set `mask-strain: false` to write the
-  strain in full. The duty cycle must cover every interferometer the signal is
-  written for, so a signal written for an interferometer the noise does not have
-  is refused.
+  through filtering: an FFT-based step, such as whitening or a PSD estimate,
+  over a stretch with one NaN sample returns NaN throughout, and a time-domain
+  filter spreads it over its length. So every window a pipeline reads, including
+  its padding and the data it estimates a PSD from, has to lie inside one
+  science segment, as with open data. A pipeline that filters continuously and
+  relies on the state vector instead, such as PyCBC's low-latency search, needs
+  `mask-strain: false`: see
+  [Analysing Data with a Duty Cycle](analysis-pipelines.md). The noise
+  realization is the same with or without the mask; only what is written
+  changes. Set `mask-strain: false` to write the strain in full. The duty cycle
+  must cover every interferometer the signal is written for, so a signal written
+  for an interferometer the noise does not have is refused.
 - **A state-vector channel**, `<interferometer>:STATE_VECTOR`, one file per
   interferometer and frame, in `duty-cycle/` beside the other outputs. Its bits
   are `gwmock-noise`'s, which follow LIGO's calibrated state vector: bits 0, 1
-  and 2 (value 7; LIGO's `HOFT_OK`, `OBS_INTENT` and `OBS_READY`) are set on a
-  sample whose whole interval lies in a science segment, so a sample with them
-  set never covers a masked strain sample, and bit 16 (value 65536) on a sample
+  and 2 (value 7; LIGO's `HOFT_OK`, `OBS_INTENT` and `OBS_READY`, which PyCBC
+  names `HOFT_OK`, `SCIENCE_INTENT` and `SCIENCE_QUALITY`) are set on a sample
+  whose whole interval lies in a science segment, so a sample with them set
+  never covers a masked strain sample, and bit 16 (value 65536) on a sample
   whose time is in planned maintenance. No other bit is set. The samples are
   `uint32` at `sampling-frequency`, which must give each frame a whole number of
   samples. `duty-cycle.output` has the shape of `noise.output`: `file_name`
@@ -1082,41 +1089,9 @@ only observing data. The run records the duty cycle four ways:
 To carry the state vector into the merged strain file, pass it to `gwmock merge`
 with `--copy-channel`; see "Reading Data".
 
-#### Using the duty cycle in an analysis
-
-- **PyCBC, low latency** (`pycbc_live`) reads the state vector: give it the
-  merged files carrying the state vector, with
-  `--state-channel <interferometer>:STATE_VECTOR` and
-  `--analyze-flags <interferometer>:HOFT_OK,SCIENCE_INTENT`. The flags of one
-  interferometer go in one comma-separated value: repeating the interferometer
-  keeps only the last. A block whose state is not valid is not analysed.
-- **PyCBC, offline** (`pycbc_make_offline_search_workflow`) reads science
-  segments from a file. Put `segments-source = file` and
-  `segments-science-file = <a copy of duty-cycle-segments.xml>` in a
-  `[workflow-segments-science]` section: in `[workflow-segments]` they would
-  apply to the veto and data-quality segments too, which would then need files
-  of their own. The workflow looks the segments up as `<interferometer>:science`
-  and needs them in whole seconds, as they are; it keeps each job's padding
-  inside them. It moves the file into its own output directory, which is why it
-  gets a copy.
-- **cWB** reads segment lists: give each interferometer a data quality file of
-  category `CWB_CAT0`, not inverted, in two columns,
-  `{"<interferometer>", "<interferometer>-observing-segments.txt", CWB_CAT0, 0., false, false}`
-  (the last field, `false`, selects the two-column format). cWB keeps its edges
-  inside the segments. It stops on an empty file, which is what an
-  interferometer that never observes in the run gets; leave it out of the
-  network.
-- **bilby** (`bilby_pipe`) reads neither. Choose each analysis time so that its
-  whole data segment, and the data its PSD is estimated from, lie inside one
-  science segment of every interferometer used. Leave
-  `ignore-gwpy-data-quality-check` at its default, true: the check asks a
-  segment server about `<interferometer>:DMT-SCIENCE:1`, which knows nothing
-  about these data.
-- **gwpy** reads the state vector,
-  `StateVector.read(path, "<interferometer>:STATE_VECTOR", bits=[...])`, whose
-  `to_dqflags()` gives segments per bit; the text files, with
-  `SegmentList.read(path, format="segwizard")`; and the XML file, with
-  `DataQualityDict.read(path, format="ligolw")`, which needs `igwn-ligolw`.
+How PyCBC, cWB, bilby and gwpy read these files, with examples that gwmock's
+tests run against each pipeline's current release, is on
+[Analysing Data with a Duty Cycle](analysis-pipelines.md).
 
 ## Template Variables
 

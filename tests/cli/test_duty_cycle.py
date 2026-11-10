@@ -671,8 +671,8 @@ def test_masking_changes_nothing_but_the_masked_samples(tmp_path: Path) -> None:
     [
         (1_000_000_000.0, (1_000_000_000, 0)),
         (1_000_000_000.25, (1_000_000_000, 250_000_000)),
-        (1_000_000_000.9999999999, (1_000_000_001, 0)),
         (0.0, (0, 0)),
+        (0.9999999995, (1, 0)),  # rounds up to the next second: the carry
     ],
 )
 def test_a_gps_time_splits_into_seconds_and_nanoseconds(time: float, expected: tuple[int, int]) -> None:

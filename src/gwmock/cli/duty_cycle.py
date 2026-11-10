@@ -81,7 +81,7 @@ class DutyCycle:
         span: Length of the span, gaps included, in seconds.
         seed: Seed of the realization.
         sampling_frequency: Samples per second of the state-vector channel.
-        mask_strain: Whether strain written at a time its interferometer does not observe is NaN.
+        mask_strain: Whether strain written outside its interferometer's science segments is NaN.
     """
 
     model: Any
@@ -152,6 +152,9 @@ class DutyCycle:
         ``[t, t + 1/f)`` lies in a science segment, so no strain sample a state-valid sample covers is
         masked; it has ``MAINTENANCE_BIT`` when its time is in a maintenance window.
         """
+        # gwmock-noise's ``DutyCycleRealization.state_vector`` samples the exact intervals; the product here
+        # is drawn from the whole-second science segments instead, so that it agrees with the segment
+        # files and the strain mask. Only the bit values are shared, imported so they cannot drift.
         from gwmock_noise.duty_cycle import MAINTENANCE_BIT, OBSERVING_MASK  # noqa: PLC0415
 
         n_samples = self.n_samples(duration)
@@ -208,7 +211,8 @@ class DutyCycle:
                 declare_strain_schema(path)
 
     def segments_record(self) -> dict[str, Any]:
-        """The run's segments, every interferometer's observing intervals and maintenance windows."""
+        """The run's segments: every interferometer's exact observing intervals, science segments and
+        maintenance windows."""
         realization = self.realization
         return {
             "schema": SEGMENTS_SCHEMA,
@@ -322,7 +326,10 @@ class DutyCycle:
 
 
 def _inside(intervals: np.ndarray, times: np.ndarray) -> np.ndarray:
-    """Whether each time lies in one of the sorted, disjoint ``[start, end)`` intervals."""
+    """Whether each time lies in one of the sorted, disjoint ``[start, end)`` intervals.
+
+    gwmock-noise has the same membership test for its realization; this one serves the science segments.
+    """
     intervals = intervals.reshape(-1, 2)
     index = np.searchsorted(intervals[:, 0], times, side="right") - 1
     inside = index >= 0

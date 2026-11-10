@@ -54,6 +54,7 @@ nav = [
     { "Quick Start" = "user-guide/quickstart.md" },
     { "Generating Data" = "user-guide/generating-data.md" },
     { "Reading Data" = "user-guide/reading-data.md" },
+    { "Analysing Data with a Duty Cycle" = "user-guide/analysis-pipelines.md" },
     { "Configuration Files" = "user-guide/configuration.md" },
     { Examples = "user-guide/examples.md" },
   ] },

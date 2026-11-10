@@ -227,7 +227,7 @@ addopts = [
   "--junitxml=test-results.xml",
   "--cov-append",
   "-m",
-  "not integration and not e2e",
+  "not integration and not e2e and not pipelines",
 ]
 pythonpath = ["src", "scripts"]
 testpaths = "tests"
@@ -248,6 +248,9 @@ markers = [
   # `e2e` CI job runs them, and it installs the extras the matrix needs so the optional-stack
   # entries in tests/e2e/matrix.py actually execute rather than silently skipping.
   "e2e: end-to-end tests that run an example config through the CLI",
+  # Needs the analysis pipelines (PyCBC, bilby, gwpy with igwn-ligolw), which are not in `dev`. Excluded
+  # from the default run below; the `pipelines` CI job installs them and runs these.
+  "pipelines: checks a run's outputs against the analysis pipelines that read them",
 ]
 
 [tool.mutmut]

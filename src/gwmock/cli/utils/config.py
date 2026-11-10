@@ -644,9 +644,10 @@ class DutyCycleConfig(BaseModel):
         default=True,
         alias="mask-strain",
         description=(
-            "Write NaN in every strain sample at a time its interferometer does not observe, as open data "
-            "does, so a pipeline that ignores the state vector and the segments cannot analyse that time "
-            "unaware. Off, the strain is written in full."
+            "Write NaN in every strain sample outside its interferometer's science segments (the whole "
+            "seconds inside each observing interval), as open data does, so a pipeline that ignores the "
+            "state vector and the segments cannot analyse that time unaware. Off, the strain is written in "
+            "full, as a pipeline that filters continuously and reads the state vector needs."
         ),
     )
     output: SimulatorOutputConfig = Field(
