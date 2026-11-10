@@ -698,6 +698,7 @@ def test_a_run_past_the_segment_files_32_bit_range_is_refused(tmp_path: Path) ->
 
 def test_the_xml_segment_file_reads_with_gwpy(tmp_path: Path) -> None:
     """The reader the file exists for, when it is installed (it needs igwn-ligolw and lal)."""
+    pytest.importorskip("gwpy")
     pytest.importorskip("igwn_ligolw")
     pytest.importorskip("lal")
     from gwpy.segments import DataQualityDict
