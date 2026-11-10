@@ -1005,6 +1005,11 @@ whose windows do not fit one after another in a period, a correlated share the
 network cannot reach, or a `sampling-frequency` that does not give each frame a
 whole number of samples.
 
+The realization is drawn when the run starts. At the default rates it takes well
+under a second for a year of three interferometers; its cost, and the size of
+the segment files, grow with the number of unlocks, so a `mean-uptime` of
+minutes makes both large.
+
 One realization covers the run's whole span, so every frame sees the same duty
 cycle, and a resumed run sees the one it started with. Its seed is `seed`, or is
 derived from the noise seed when `seed` is omitted; with neither, the run is
@@ -1022,13 +1027,16 @@ The run records it three ways:
   extension selects GWF or HDF5), `output_directory`, and `arguments`, which
   takes `channel` only. Templates are expanded as for noise. An existing
   state-vector file is refused without `--overwrite`, as a noise file is.
-- **Segment files**, written with the first frame, and again by a later frame
-  only if they are missing or hold another realization (a file holding another
-  realization is refused without `--overwrite`): `duty-cycle-segments.json`
-  holds every interferometer's observing intervals and maintenance windows, the
-  model and the seed, and `<interferometer>-observing-segments.txt` lists each
-  interferometer's observing intervals, one `start end` line each, in GPS
-  seconds. Intervals are `[start, end)`.
+- **Segment files**, written and recorded with the first frame:
+  `duty-cycle-segments.json` holds every interferometer's observing intervals
+  and maintenance windows, the model and the seed, and
+  `<interferometer>-observing-segments.txt` lists each interferometer's
+  observing intervals, one `start end` line each, in GPS seconds. Intervals are
+  `[start, end)`. Segment files on disk that hold another realization are
+  refused without `--overwrite` when a run starts, and rewritten, and recorded
+  again, when a run resumes. Missing ones are missing outputs of the first
+  frame, so resuming regenerates the run from its first frame. The segment files
+  have fixed names, so two runs cannot share one duty-cycle `output_directory`.
 - **Observing flags** in the batch metadata: every injected signal with a merger
   time (`coa_time`) gets `observing: {<interferometer>: true | false}` at that
   time, for each interferometer of the duty cycle, and every glitch gets

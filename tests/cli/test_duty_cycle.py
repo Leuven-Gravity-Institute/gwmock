@@ -421,3 +421,20 @@ def test_a_signal_only_run_draws_the_duty_cycle_for_the_signals_interferometers(
         "observing" not in row for row in metadata["simulator_metadata"]["orchestration"]["signal"]["injections"]
     )
     assert [o["kind"] for o in metadata["outputs"]].count("duty-cycle") == 2
+
+
+@pytest.mark.parametrize(
+    "file_name", ["state-{{ detectors }}-{{ counter }}.npy", ["a-{{ counter }}.gwf", "b-{{ counter }}.hdf5", "c.hdf5"]]
+)
+def test_a_state_vector_format_gwmock_cannot_write_is_refused_before_anything_is_written(
+    tmp_path: Path, file_name
+) -> None:
+    import typer
+
+    from gwmock.utils.errors import DeterministicRefusalError
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(_config(tmp_path, duty_cycle={"output": {"file_name": file_name}}))
+    assert isinstance(excinfo.value.__cause__, DeterministicRefusalError)
+    assert "must all end with .gwf" in str(excinfo.value.__cause__)
+    assert _noise_files(tmp_path) == []

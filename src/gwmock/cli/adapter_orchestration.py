@@ -844,11 +844,12 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         """Refuse the batch before it writes if its duty-cycle outputs cannot be written.
 
         Raises:
-            DeterministicRefusalError: If the output arguments or templates are invalid.
+            DeterministicRefusalError: If the output format, arguments or templates are invalid.
             FileExistsError: Without overwrite, if a state-vector file of this batch already exists or a
                 segment file on disk holds another realization than this run's -- the same rule the
                 noise files follow.
         """
+        self._duty_cycle_output_format()
         self.duty_cycle_channels()
         paths = self.duty_cycle_output_paths()
         if self._active_overwrite:
@@ -918,23 +919,32 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
     def _write_duty_cycle_batch(self) -> dict[str, Path]:
         """Write the state vector of every interferometer over the current batch's segment."""
         assert self.duty_cycle is not None  # noqa: S101 -- only called when a duty cycle is configured
-        config = self.orchestration_config.duty_cycle
-        assert config is not None  # noqa: S101
-        names = config.output.file_name if isinstance(config.output.file_name, list) else [config.output.file_name]
-        suffixes = {"hdf5" if (s := Path(name).suffix.lower().lstrip(".")) == "h5" else s for name in names}
-        if len(suffixes) != 1 or not suffixes <= {"gwf", "hdf5"}:
-            raise DeterministicRefusalError(
-                "Duty-cycle output templates must all end with .gwf, or all with .hdf5/.h5."
-            )
         paths = self.duty_cycle_output_paths()
         self.duty_cycle.write_frame(
             paths,
             self.duty_cycle_channels(),
             float(self.start_time.value),
             float(self.duration.value),
-            cast(Literal["gwf", "hdf5"], suffixes.pop()),
+            self._duty_cycle_output_format(),
         )
         return paths
+
+    def _duty_cycle_output_format(self) -> Literal["gwf", "hdf5"]:
+        """The state-vector files' format, from the extension of every ``file_name`` template.
+
+        Raises:
+            DeterministicRefusalError: If the templates do not all end with ``.gwf``, or all with
+                ``.hdf5``/``.h5``.
+        """
+        config = self.orchestration_config.duty_cycle
+        assert config is not None  # noqa: S101 -- only called when a duty cycle is configured
+        names = config.output.file_name if isinstance(config.output.file_name, list) else [config.output.file_name]
+        suffixes = {"hdf5" if (s := Path(name).suffix.lower().lstrip(".")) == "h5" else s for name in names}
+        if len(suffixes) != 1 or not suffixes <= {"gwf", "hdf5"}:
+            raise DeterministicRefusalError(
+                "Duty-cycle output templates must all end with .gwf, or all with .hdf5/.h5."
+            )
+        return cast(Literal["gwf", "hdf5"], suffixes.pop())
 
     def _flag_observing_injections(self, injections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Each injected signal with whether each interferometer observed at its merger time."""

@@ -10,8 +10,9 @@ strain is not changed. The realization is recorded three ways:
   GWF, has no unsigned 8-bit type, and LIGO's calibrated state vector is 32-bit too;
 - the run's **segments**: every interferometer's observing intervals and maintenance windows in one
   JSON file, and each interferometer's observing intervals as a plain text list. The first batch
-  writes them, and a later batch rewrites them only if they are missing or hold another realization
-  -- a resumed run whose duty-cycle directory was cleared, say;
+  writes and records them. A later batch rewrites them, and records them, only if they hold another
+  realization when a run resumes. Missing ones are batch 0's missing outputs, so a resumed run
+  regenerates from the first frame, as for any missing output;
 - an **observing flag** on every injected signal with a merger time (for each interferometer, at that
   time) and on every glitch (for its interferometer, at its peak), in the batch metadata.
 
@@ -62,6 +63,7 @@ class DutyCycle:
     seed: int
     sampling_frequency: float
     _realization: Any = field(default=None, init=False, repr=False)
+    _segment_files: dict[str, str] | None = field(default=None, init=False, repr=False)
 
     @property
     def realization(self) -> Any:
@@ -164,12 +166,14 @@ class DutyCycle:
             The JSON file, then one ``<interferometer>-observing-segments.txt`` per interferometer,
             each line ``start end`` in GPS seconds.
         """
-        record = self.segments_record()
-        contents = {SEGMENTS_FILE: json.dumps(record, indent=2) + "\n"}
-        for detector in self.detectors:
-            lines = [f"{start!r} {end!r}\n" for start, end in record["detectors"][detector]["observing"]]
-            contents[f"{detector}-observing-segments.txt"] = "".join(lines)
-        return contents
+        if self._segment_files is None:  # a pure function of the realization, rendered once per run
+            record = self.segments_record()
+            contents = {SEGMENTS_FILE: json.dumps(record, indent=2) + "\n"}
+            for detector in self.detectors:
+                lines = [f"{start!r} {end!r}\n" for start, end in record["detectors"][detector]["observing"]]
+                contents[f"{detector}-observing-segments.txt"] = "".join(lines)
+            self._segment_files = contents
+        return dict(self._segment_files)
 
     def write_segment_files(self, directory: Path) -> list[Path]:
         """Write the run's segment files into ``directory``, in the order of :meth:`segment_file_contents`."""
