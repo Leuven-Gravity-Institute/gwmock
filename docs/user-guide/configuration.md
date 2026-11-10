@@ -1036,7 +1036,8 @@ The run records it three ways:
   refused without `--overwrite` when a run starts, and rewritten, and recorded
   again, when a run resumes. Missing ones are missing outputs of the first
   frame, so resuming regenerates the run from its first frame. The segment files
-  have fixed names, so two runs cannot share one duty-cycle `output_directory`.
+  have fixed names, so two runs can share one duty-cycle `output_directory` only
+  if their duty cycles are identical.
 - **Observing flags** in the batch metadata: every injected signal with a merger
   time (`coa_time`) gets `observing: {<interferometer>: true | false}` at that
   time, for each interferometer of the duty cycle, and every glitch gets
