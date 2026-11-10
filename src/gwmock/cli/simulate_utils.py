@@ -2481,11 +2481,12 @@ def save_batch_metadata(
         record = parts.shareable
         record[PRIVATE_REFERENCE_KEY] = private_reference(private_file, digest)
 
-    # Embed the record in the artifacts it describes, so a file handed to another pipeline says
-    # which run wrote it. One record, written to both places, rather than two constructions that
-    # can disagree -- and the embedded copy withholds the injection parameters unless this run
-    # asked for them. Before the hashes below, because it changes the container bytes. A run that
-    # turned it off (`globals.metadata.embed: false`) writes outputs that carry no record at all.
+    # Unless the run turned it off (`globals.metadata.embed: false`), embed the record in the
+    # artifacts it describes, so a file handed to another pipeline says which run wrote it. The
+    # embedded copy is this same record, not a second construction that could disagree with the
+    # sidecar, and it withholds the injection parameters unless this run asked for them. Before the
+    # hashes below, because it changes the container bytes. With embedding off, the outputs carry
+    # no record at all.
     if batch.globals_config.embed_metadata:
         include_injection_parameters = _includes_injection_parameters(batch)
         for output_file in output_files:
