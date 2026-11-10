@@ -1,8 +1,9 @@
 """How cWB reads data quality files and turns them into analysis jobs, for the tests.
 
 cWB is not published on PyPI, so the tests cannot run it. This is a line-for-line reimplementation of
-the three routines of its toolbox (``CWB::Toolbox``) that decide which data an analysis reads, from
-cWB's O4 release:
+the three routines of its toolbox (``CWB::Toolbox``) that decide which data an analysis reads, as in
+``tools/toolbox/Toolbox.cc`` of cWB 6.4.6.9
+(https://gitlab.com/gwburst/public/library/-/blob/cWB-6.4.6.9/tools/toolbox/Toolbox.cc):
 
 - ``readSegList(dqfile)``: reads one data quality file, ``start stop`` per line (format B) when the
   entry's ``c4`` field is false, ``index start stop duration`` (format A) when it is true; skips lines

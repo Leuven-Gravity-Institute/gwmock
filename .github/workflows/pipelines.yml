@@ -7,10 +7,26 @@ name: Pipelines
 # because the point is to meet each pipeline's newest release. The weekly run catches a pipeline
 # release that changes what it accepts, which no change to this repository would trigger.
 on:
+    # On pushes and pull requests only where a change could alter what the pipelines read; the weekly
+    # run covers everything.
     push:
         branches: [main]
+        paths:
+            - 'src/gwmock/**'
+            - 'docs/user-guide/analysis-pipelines.md'
+            - 'tests/docs/**'
+            - 'pyproject.toml'
+            - 'uv.lock'
+            - '.github/workflows/pipelines.yml'
     pull_request:
         branches: [main]
+        paths:
+            - 'src/gwmock/**'
+            - 'docs/user-guide/analysis-pipelines.md'
+            - 'tests/docs/**'
+            - 'pyproject.toml'
+            - 'uv.lock'
+            - '.github/workflows/pipelines.yml'
     schedule:
         - cron: '17 5 * * 1'
     workflow_dispatch:
@@ -21,6 +37,7 @@ permissions:
 jobs:
     pipelines:
         runs-on: ubuntu-latest
+        timeout-minutes: 60
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
@@ -43,10 +60,12 @@ jobs:
                   'bilby_pipe', 'gwpy', 'igwn-ligolw', 'lalsuite', 'numpy')})"
 
             - name: Run the pipeline tests
-              # A missing pipeline fails instead of skipping, so this job cannot pass by skipping.
+              # A missing pipeline fails instead of skipping, so this job cannot pass by skipping. The
+              # whole file runs, marked or not, so a test added without the marker still meets the
+              # pipelines.
               env:
                   GWMOCK_REQUIRE_PIPELINES: '1'
               run: >-
-                  uv run --no-sync pytest -m pipelines --no-cov -p
-                  no:cacheprovider -rs
+                  uv run --no-sync pytest -m "pipelines or not pipelines"
+                  --no-cov -p no:cacheprovider -rs
                   tests/docs/test_analysis_pipelines_page.py

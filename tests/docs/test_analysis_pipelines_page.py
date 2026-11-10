@@ -18,6 +18,8 @@ import importlib
 import os
 import re
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -59,11 +61,17 @@ def _run_example(name: str, directory: Path, monkeypatch) -> None:
 
 
 def _make_run(tmp_path_factory, *, mask_strain: bool) -> Path:
-    """A three-frame run of the ET triangle with a duty cycle, merged as the page's merge loop does."""
+    """A three-frame run of the ET triangle with a duty cycle, configured and merged as the page shows.
+
+    The noise and duty-cycle outputs are the page's ``outputs`` block, and the merge is the page's
+    ``merge`` loop, run as written with the ``gwmock`` of this environment.
+    """
     _require("gwpy")
-    from gwmock.cli.merge import merge_command
     from gwmock.cli.simulate import simulate_command
 
+    language, outputs = _example("outputs")
+    assert language == "yaml"
+    outputs = yaml.safe_load(outputs)["orchestration"]
     directory = tmp_path_factory.mktemp("analysis-pipelines")
     config = {
         "globals": {
@@ -85,21 +93,14 @@ def _make_run(tmp_path_factory, *, mask_strain: bool) -> Path:
                     "low_frequency_cutoff": 5.0,
                     "detectors": ["ET-Triangle-EMR"],
                 },
-                "output": {
-                    "output_directory": "noise",
-                    "file_name": "E-{{ detectors }}_STRAIN-{{ start_time }}-{{ duration }}.gwf",
-                    "arguments": {"channel": "{{ detectors }}:STRAIN"},
-                },
+                "output": outputs["noise"]["output"],
             },
             "duty-cycle": {
                 "mask-strain": mask_strain,
                 "mean-uptime": 1200,
                 "mean-downtime": 300,
                 "maintenance": {"strategy": "coincident", "period": 2048, "duration": 100, "offset": 0},
-                "output": {
-                    "output_directory": "duty-cycle",
-                    "file_name": "E-{{ detectors }}_STATE-{{ start_time }}-{{ duration }}.gwf",
-                },
+                "output": outputs["duty-cycle"]["output"],
             },
         },
     }
@@ -108,22 +109,15 @@ def _make_run(tmp_path_factory, *, mask_strain: bool) -> Path:
     os.chdir(directory)
     try:
         simulate_command(["config.yaml"])
-        Path("merged").mkdir()
-        for index in range(N_FRAMES):
-            t0 = START + FRAME * index
-            for ifo in TRIANGLE:
-                merge_command(
-                    [
-                        Path(f"output/noise/E-{ifo}_STRAIN-{t0}-{FRAME}.gwf"),
-                        Path(f"output/duty-cycle/E-{ifo}_STATE-{t0}-{FRAME}.gwf"),
-                    ],
-                    metadata=[f"metadata/orchestration-{index}.metadata.json"],
-                    channel=f"{ifo}:STRAIN",
-                    copy_channel=[f"{ifo}:STATE_VECTOR"],
-                    output=f"merged/E-{ifo}_STRAIN-{t0}-{FRAME}.gwf",
-                )
     finally:
         os.chdir(cwd)
+
+    language, merge = _example("merge")
+    assert language == "bash"
+    environment = {**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}"}
+    subprocess.run(["bash", "-e", "-c", merge], cwd=directory, env=environment, check=True, capture_output=True)  # noqa: S603, S607
+    assert len(list((directory / "merged").glob("*.gwf"))) == len(TRIANGLE) * N_FRAMES
+
     # The examples only test something if the run has gaps, and segments long enough to analyse.
     for ifo in TRIANGLE:
         segments = _science(directory, ifo)
@@ -148,17 +142,16 @@ def _science(directory: Path, ifo: str) -> np.ndarray:
     return np.loadtxt(directory / "output" / "duty-cycle" / f"{ifo}-observing-segments.txt", ndmin=2)
 
 
-def test_the_merge_loop_on_the_page_matches_the_run_the_tests_make() -> None:
-    """The examples read the files the page's merge loop writes; the fixture writes the same names."""
-    page = _PAGE.read_text()
-    assert '--copy-channel "${ifo}:STATE_VECTOR"' in page
-    assert '--output "merged/E-${ifo}_STRAIN-${t0}-1024.gwf"' in page
-    assert '"output/duty-cycle/E-${ifo}_STATE-${t0}-1024.gwf"' in page
-
-
 @pytest.mark.requires_gwpy
 def test_the_cwb_example_reads_only_observing_data(run: Path) -> None:
-    """cWB's data quality files, as the page writes them, give jobs whose data hold no NaN."""
+    """cWB's data quality files, as the page writes them, give jobs whose data hold no NaN.
+
+    The job windows come from the reimplementation of cWB's reader and job builder, so their staying
+    inside the segments follows from that reimplementation (checked against cWB's source, which it
+    cites). What this pins on gwmock's side: the page's entries parse as cWB reads them (three
+    ``CWB_CAT0`` lists, not inverted, two columns), gwmock's text files are what cWB accepts (non-empty,
+    sorted, disjoint, ending after they start), and the strain a job reads holds no NaN.
+    """
     from gwpy.timeseries import TimeSeries
 
     language, code = _example("cwb")
@@ -235,7 +228,14 @@ def test_pycbc_live_with_the_pages_options_analyses_exactly_the_science_segments
 
     language, command = _example("pycbc-live")
     assert language == "bash"
-    arguments = shlex.split(command.replace("\\\n", " "))[1:]
+    arguments = [word for word in shlex.split(command.replace("\\\n", " "))[1:] if word != "..."]
+    # pycbc_live is a script, not importable without MPI: check that each option the page gives is one
+    # it still declares.
+    script = Path(sys.executable).parent / "pycbc_live"
+    assert script.is_file(), "PyCBC no longer installs pycbc_live"
+    declared = script.read_text(encoding="utf-8")
+    for option in {word.split("=")[0] for word in arguments if word.startswith("--")}:
+        assert f"'{option}'" in declared or f'"{option}"' in declared, f"pycbc_live no longer declares {option}"
     parser = argparse.ArgumentParser()
     # As pycbc_live declares them.
     parser.add_argument("--frame-src")
@@ -260,8 +260,13 @@ def test_pycbc_live_with_the_pages_options_analyses_exactly_the_science_segments
     np.testing.assert_array_equal(analysed, expected)
 
 
-def _live_psds(directory: Path, ifo: str) -> list[np.ndarray]:
-    """The PSDs ``pycbc_live``'s strain buffer estimates, block by block, over a run's merged frames."""
+def _live_psd_stretches(directory: Path, ifo: str) -> list[list[bool]]:
+    """Whether ``pycbc_live``'s PSD is finite, block by block, over a run's merged frames.
+
+    The strain buffer is advanced as ``pycbc_live`` advances it, one second at a time, and its PSD is read
+    as ``advance`` leaves it: it estimates one when it has none and enough valid data, and drops it at a
+    block whose state is not valid. Returns one list per stretch of blocks with a PSD.
+    """
     from pycbc.strain.strain import StrainBuffer
 
     frames = sorted(str(path) for path in (directory / "merged").glob(f"E-{ifo}_STRAIN-*.gwf"))
@@ -282,28 +287,37 @@ def _live_psds(directory: Path, ifo: str) -> list[np.ndarray]:
         max_buffer=512,
         force_update_cache=False,
     )
-    psds = []
-    for second in range(1, FRAME * N_FRAMES - 2):
-        if not buffer.advance(1) or second < 600:  # a PSD once the buffer holds enough data
+    stretches: list[list[bool]] = []
+    current: list[bool] = []
+    for _ in range(FRAME * N_FRAMES - 2):
+        buffer.advance(1)
+        if buffer.psd is None:
+            if current:
+                stretches.append(current)
+                current = []
             continue
-        buffer.recalculate_psd()
-        psds.append(buffer.psd.numpy()[1:])
-    return psds
+        current.append(bool(np.isfinite(buffer.psd.numpy()[1:]).all()))
+    if current:
+        stretches.append(current)
+    return stretches
 
 
 @pytest.mark.pipelines
 def test_pycbc_live_needs_the_strain_in_full(run: Path, unmasked_run: Path) -> None:
-    """With the strain masked, its filter reaches NaN after a gap and the PSD turns NaN; in full, it does not.
+    """With the strain masked, the PSD after each gap is NaN until the next gap; in full, it is always finite.
 
     This is why the page tells a ``pycbc_live`` user to set ``mask-strain: false``.
     """
     _require("pycbc")
     ifo = "ET1_EMR"
-    full = _live_psds(unmasked_run, ifo)
-    assert full
-    assert all(np.isfinite(psd).all() for psd in full)
-    masked = _live_psds(run, ifo)
-    assert any(not np.isfinite(psd).all() for psd in masked)
+    full = _live_psd_stretches(unmasked_run, ifo)
+    assert len(full) >= 2
+    assert all(all(stretch) for stretch in full)
+    masked = _live_psd_stretches(run, ifo)
+    assert len(masked) == len(full)
+    # The first PSD of the run is estimated before any gap; every one after a gap is NaN, throughout.
+    assert all(masked[0])
+    assert all(not any(stretch) for stretch in masked[1:])
 
 
 @pytest.mark.pipelines
