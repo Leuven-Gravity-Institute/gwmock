@@ -5,11 +5,12 @@ each interferometer observes, in the forms the common analysis pipelines read.
 This page shows how each pipeline reads them. gwmock's tests check its examples
 against a run made as the page describes, with each pipeline's current release,
 so a change on either side is caught there before it reaches a user: the Python
-examples are run as written, the PyCBC configuration and options are parsed by
-PyCBC's own code, the merge loop is run as written, and the configuration below
-is the one the run uses. cWB, which is not on PyPI, is checked with a
-reimplementation of how it reads segment files. The state vector itself is
-described in `gwmock-noise`'s
+examples are run as written, the PyCBC configuration is parsed by PyCBC's
+configuration parser, the `pycbc_live` options with the option actions
+`pycbc_live` declares for them and then fed to PyCBC's state buffer, the merge
+loop is run as written, and the configuration below is the one the run uses.
+cWB, which is not on PyPI, is checked with a reimplementation of how it reads
+segment files. The state vector itself is described in `gwmock-noise`'s
 [Duty Cycle](https://leuven-gravity-institute.github.io/gwmock-noise/user_guide/duty_cycle/)
 guide.
 

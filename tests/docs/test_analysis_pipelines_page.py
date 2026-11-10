@@ -229,19 +229,22 @@ def test_pycbc_live_with_the_pages_options_analyses_exactly_the_science_segments
     language, command = _example("pycbc-live")
     assert language == "bash"
     arguments = [word for word in shlex.split(command.replace("\\\n", " "))[1:] if word != "..."]
-    # pycbc_live is a script, not importable without MPI: check that each option the page gives is one
-    # it still declares.
+    # pycbc_live is a script, not importable without MPI, so its parser cannot be called. Instead each
+    # option the page gives is declared here with the option action pycbc_live declares it with, read
+    # from the installed script, so a change of action there fails here.
     script = Path(sys.executable).parent / "pycbc_live"
     assert script.is_file(), "PyCBC no longer installs pycbc_live"
     declared = script.read_text(encoding="utf-8")
-    for option in {word.split("=")[0] for word in arguments if word.startswith("--")}:
-        assert f"'{option}'" in declared or f'"{option}"' in declared, f"pycbc_live no longer declares {option}"
+    actions = {
+        "MultiDetOptionAction": MultiDetOptionAction,
+        "MultiDetMultiColonOptionAction": MultiDetMultiColonOptionAction,
+    }
     parser = argparse.ArgumentParser()
-    # As pycbc_live declares them.
-    parser.add_argument("--frame-src")
-    parser.add_argument("--channel-name", action=MultiDetMultiColonOptionAction, nargs="+")
-    parser.add_argument("--state-channel", action=MultiDetMultiColonOptionAction, nargs="+")
-    parser.add_argument("--analyze-flags", action=MultiDetOptionAction, nargs="+")
+    for option in sorted({word.split("=")[0] for word in arguments if word.startswith("--")}):
+        match = re.search(r"add_argument\(\s*['\"]" + re.escape(option) + r"['\"]\s*,\s*action=(\w+)", declared)
+        assert match is not None, f"pycbc_live no longer declares {option} with an option action"
+        assert match[1] in actions, f"pycbc_live declares {option} with {match[1]}"
+        parser.add_argument(option, action=actions[match[1]], nargs="+")
     options = parser.parse_args(arguments)
 
     ifo = "ET1_EMR"
