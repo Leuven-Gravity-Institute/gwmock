@@ -639,6 +639,15 @@ class DutyCycleConfig(BaseModel):
         alias="sampling-frequency",
         description="Samples per second of the state-vector channel; LIGO's calibrated state vector is 16 Hz.",
     )
+    mask_strain: bool = Field(
+        default=True,
+        alias="mask-strain",
+        description=(
+            "Write NaN in every strain sample at a time its interferometer does not observe, as open data "
+            "does, so a pipeline that ignores the state vector and the segments cannot analyse that time "
+            "unaware. Off, the strain is written in full."
+        ),
+    )
     output: SimulatorOutputConfig = Field(
         default_factory=lambda: SimulatorOutputConfig(
             file_name="duty-cycle-{{ detectors }}-{{ counter }}.hdf5",

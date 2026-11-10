@@ -974,8 +974,9 @@ described above.
 `orchestration.duty-cycle` records when each interferometer observes. The model
 is `gwmock-noise`'s (see its "Duty Cycle" guide): unplanned unlocks and relocks
 as a Markov chain, with correlated unlocks that take every observing
-interferometer down together, and periodic planned maintenance. The strain is
-not changed; the run records the duty cycle beside it.
+interferometer down together, and periodic planned maintenance. The run records
+the duty cycle in the forms the common analysis pipelines read, and by default
+writes NaN in the strain wherever an interferometer does not observe.
 
 ```yaml
 orchestration:
@@ -995,6 +996,7 @@ orchestration:
             duration: 60480 # s; 10 % of the time
             offset: 198000 # s after GPS 0; Tuesdays at 07:00 UTC
         sampling-frequency: 16
+        mask-strain: true
 ```
 
 Every key is optional; the values above are `gwmock-noise`'s defaults, from
@@ -1016,31 +1018,48 @@ derived from the noise seed when `seed` is omitted; with neither, the run is
 refused. The duty cycle is drawn for the noise's interferometers, or for the
 signal's when the run has no noise.
 
-The run records it three ways:
+The run records it four ways:
 
+- **NaN in the strain.** Every strain sample the run writes, noise and signal,
+  at a time its interferometer does not observe is NaN, as open data marks time
+  outside observing runs. A pipeline that reads neither the state vector nor the
+  segments then meets NaN instead of analysing that time unaware. The noise
+  realization is the same with or without it; only what is written is masked.
+  Set `mask-strain: false` to write the strain in full. The duty cycle must
+  cover every interferometer the signal is written for, so a signal written for
+  an interferometer the noise does not have is refused.
 - **A state-vector channel**, `<interferometer>:STATE_VECTOR`, one file per
-  interferometer and frame, in `duty-cycle/` beside the other outputs. Bit 0 is
-  set while the interferometer observes and bit 1 while it is in planned
-  maintenance. The samples are `uint32` at `sampling-frequency`, which must give
-  each frame a whole number of samples. `duty-cycle.output` has the shape of
-  `noise.output`: `file_name` (required whenever the block is given; its
-  extension selects GWF or HDF5), `output_directory`, and `arguments`, which
-  takes `channel` only. Templates are expanded as for noise. An existing
-  state-vector file is refused without `--overwrite`, as a noise file is.
+  interferometer and frame, in `duty-cycle/` beside the other outputs. Its bits
+  are `gwmock-noise`'s, which follow LIGO's calibrated state vector: bits 0, 1
+  and 2 (value 7) are set while the interferometer observes, as LIGO sets them
+  while data can be analysed (`HOFT_OK`, `SCIENCE_INTENT` and `SCIENCE_QUALITY`
+  in PyCBC), and bit 16 (value 65536) while it is in planned maintenance. The
+  samples are `uint32` at `sampling-frequency`, which must give each frame a
+  whole number of samples. `duty-cycle.output` has the shape of `noise.output`:
+  `file_name` (required whenever the block is given; its extension selects GWF
+  or HDF5), `output_directory`, and `arguments`, which takes `channel` only.
+  Templates are expanded as for noise. An existing state-vector file is refused
+  without `--overwrite`, as a noise file is.
 - **Segment files**, written and recorded with the first frame:
-  `duty-cycle-segments.json` holds every interferometer's observing intervals
-  and maintenance windows, the model and the seed, and
-  `<interferometer>-observing-segments.txt` lists each interferometer's
-  observing intervals, one `start end` line each, in GPS seconds. Intervals are
-  `[start, end)`. A segment file on disk whose contents differ from the ones
-  this run would write is refused without `--overwrite` when a run starts, and
-  is replaced, and recorded again, by the next frame the run writes with
-  `--overwrite` or after resuming. A resumed run with no frames left to write
-  leaves it as it is. Missing ones are missing outputs of the first frame, so
-  resuming regenerates the run from its first frame. The segment files have
-  fixed names, so without `--overwrite` two runs can write to one duty-cycle
-  `output_directory` only if they write identical segment files and their
-  state-vector file names differ.
+    - `duty-cycle-segments.xml`, LIGO_LW XML: for each interferometer, its
+      observing segments under the flag `<interferometer>:science:1` and its
+      maintenance windows under `<interferometer>:maintenance:1`, both known
+      over the run's span, with times to the nanosecond;
+    - `<interferometer>-observing-segments.txt`: each interferometer's observing
+      segments, one `start end` line each, in GPS seconds;
+    - `duty-cycle-segments.json`: every interferometer's observing segments and
+      maintenance windows, with the model and the seed.
+
+    Segments are `[start, end)`. A segment file on disk whose contents differ
+    from the ones this run would write is refused without `--overwrite` when a
+    run starts, and is replaced, and recorded again, by the next frame the run
+    writes with `--overwrite` or after resuming. A resumed run with no frames
+    left to write leaves it as it is. Missing ones are missing outputs of the
+    first frame, so resuming regenerates the run from its first frame. The
+    segment files have fixed names, so without `--overwrite` two runs can write
+    to one duty-cycle `output_directory` only if they write identical segment
+    files and their state-vector file names differ.
+
 - **Observing flags** in the batch metadata: every injected signal with a merger
   time (`coa_time`) gets `observing: {<interferometer>: true | false}` at that
   time, for each interferometer of the duty cycle, and every glitch gets
@@ -1049,6 +1068,30 @@ The run records it three ways:
 
 To carry the state vector into the merged strain file, pass it to `gwmock merge`
 with `--copy-channel`; see "Reading Data".
+
+#### Using the duty cycle in an analysis
+
+- **PyCBC, low latency** (`pycbc_live`) reads the state vector: give it the
+  merged files carrying the state vector, with
+  `--state-channel <interferometer>:STATE_VECTOR` and
+  `--analyze-flags <interferometer>:HOFT_OK <interferometer>:SCIENCE_INTENT`.
+- **PyCBC, offline** (`pycbc_make_offline_search_workflow`) reads science
+  segments from a file: set `segments-source = file` and
+  `segments-science-file = duty-cycle-segments.xml` in `[workflow-segments]`. It
+  looks the segments up as `<interferometer>:science`. It moves the file into
+  its own output directory, so give it a copy.
+- **cWB** reads segment lists: give each interferometer a `CWB_CAT0` data
+  quality file,
+  `{"<interferometer>", "<interferometer>-observing-segments.txt", CWB_CAT0, 0., false, false}`.
+  cWB stops on an empty file, which is what an interferometer that never
+  observes in the run gets; leave it out of the network.
+- **gwpy** reads the state vector,
+  `StateVector.read(path, "<interferometer>:STATE_VECTOR", bits=[...])`, whose
+  `to_dqflags()` gives segments per bit; the text files, with
+  `SegmentList.read(path, format="segwizard")`; and the XML file, with
+  `DataQualityDict.read(path, format="ligolw")`, which needs `igwn-ligolw`.
+- **bilby** reads neither: take the analysis times from the segment files. Data
+  outside them are NaN.
 
 ## Template Variables
 

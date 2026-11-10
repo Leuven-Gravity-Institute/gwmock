@@ -321,7 +321,16 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             span=float(layout.span),
             seed=int(seed),
             sampling_frequency=float(config.sampling_frequency),
+            mask_strain=bool(config.mask_strain),
         )
+        if self.signal_adapter is not None:
+            uncovered = sorted(set(self.detectors) - set(duty_cycle.detectors))
+            if uncovered:
+                raise DeterministicRefusalError(
+                    "orchestration.duty-cycle covers the noise's interferometers, "
+                    f"{', '.join(duty_cycle.detectors)}, but the signal is also written for "
+                    f"{', '.join(uncovered)}: their observing time would be unknown and their strain unmasked."
+                )
         # What depends on the network or the frame -- whether a rotating schedule fits the network,
         # whether the correlated share is reachable, whether a frame holds whole state-vector
         # samples -- is checked here, before any batch writes, and refused rather than retried: the
@@ -850,7 +859,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         Raises:
             DeterministicRefusalError: If the output format, arguments or templates are invalid.
             FileExistsError: Without overwrite, if a state-vector file of this batch already exists or a
-                segment file on disk holds another realization than this run's -- the same rule the
+                segment file on disk differs from the one this run would write -- the same rule the
                 noise files follow.
         """
         self._duty_cycle_output_format()
@@ -958,6 +967,12 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 "Duty-cycle output templates must all end with .gwf, or all with .hdf5/.h5."
             )
         return cast(Literal["gwf", "hdf5"], suffixes.pop())
+
+    def _mask_unobserved(self, detector: str, values: np.ndarray, times: Any) -> np.ndarray:
+        """``values`` as written: NaN where ``detector`` does not observe, when the duty cycle masks strain."""
+        if self.duty_cycle is None or not self.duty_cycle.mask_strain:
+            return values
+        return self.duty_cycle.mask(detector, values, times)
 
     def _flag_observing_injections(self, injections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Each injected signal with whether each interferometer observed at its merger time."""
@@ -2082,21 +2097,20 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         chunk = self._next_noise_chunk(gps_start=gps_start)
         output_paths_by_detector: dict[str, Path] = {}
 
+        sample_rate = float(self.sampling_frequency.value)
         for i, detector in enumerate(noise_detectors):
             output_path = output_paths[i] if len(output_paths) > 1 else output_paths[0]
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            values = np.asarray(chunk[detector], dtype=float)
+            values = self._mask_unobserved(detector, values, gps_start + np.arange(values.size) / sample_rate)
             if output_format in {"gwf", "hdf5"}:
                 channel_id = channels_dict[detector] if channels_dict is not None else f"{detector}:{channel_str}"
-                channel_series = ChannelSeries(
-                    np.asarray(chunk[detector], dtype=float),
-                    t0=gps_start,
-                    sample_rate=float(self.sampling_frequency.value),
-                )
+                channel_series = ChannelSeries(values, t0=gps_start, sample_rate=sample_rate)
                 DetectorStrainStack.from_mapping([channel_id], {channel_id: channel_series}).write(
                     output_path, format=output_format
                 )
             else:
-                np.save(output_path, chunk[detector])
+                np.save(output_path, values)
             # Every strain artifact a run writes declares the contract it meets, whichever of the three
             # writers above produced it; the call is a no-op for the formats with no attribute space.
             declare_strain_schema(output_path)
@@ -2375,6 +2389,8 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             active_detector_names, channel_names, active_indices, strict=True
         ):
             series = data[index]
+            if self.duty_cycle is not None and self.duty_cycle.mask_strain:
+                series = series.with_data(self._mask_unobserved(detector_name, series.value, series.times))
             effective_name = channel_name if channel_name is not None else detector_name
             if effective_name in mapping:
                 effective_name = f"{effective_name}__{detector_name}"

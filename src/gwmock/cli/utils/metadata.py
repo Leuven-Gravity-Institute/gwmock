@@ -83,7 +83,8 @@ _logger = logging.getLogger("gwmock")
 #: ``cpu_model``, ``os`` and ``architecture`` in its shareable form.
 #:
 #: 1.10.0: ``simulator_metadata.orchestration.duty_cycle`` describes the run's duty cycle (its
-#: model, seed, interferometers, span and state-vector rate), ``null`` for a run without one. A run
+#: model, seed, interferometers, span and state-vector rate, and whether the strain is NaN where an
+#: interferometer does not observe), ``null`` for a run without one. A run
 #: with one also flags each injection and glitch with ``observing``, and records two more output
 #: kinds: ``duty-cycle`` (a frame's state-vector file) and ``duty-cycle-segments`` (the run's segment
 #: files, recorded by the batch that wrote them). A record written by an older gwmock has no
