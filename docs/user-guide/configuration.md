@@ -392,15 +392,15 @@ backend decides which keys it accepts.
 
 ### Injection parameters in the data files
 
-Every HDF5 file a run writes carries the run's metadata record inside it, at the
-file root, so that a file handed to another pipeline says which run produced it
-without its sidecar. `.npy` and `.gwf` have nowhere to put a document, so for
-those formats the sidecar remains the only description, and so does a file
-written by `gwmock merge --force`, which was given no metadata to carry, or by a
-run or merge told not to embed one (`globals.metadata.embed: false`,
-`gwmock merge --no-embed-metadata`). A consumer reads the sidecar whenever there
-is one — see [Reading data](reading-data.md) for how to read the embedded record
-back.
+By default every HDF5 file a run writes carries the run's metadata record inside
+it, at the file root, so that a file handed to another pipeline says which run
+produced it without its sidecar. `.npy` and `.gwf` have nowhere to put a
+document, so for those formats the sidecar remains the only description, and so
+does a file written by `gwmock merge --force`, which was given no metadata to
+carry, or by a run or merge told not to embed one
+(`globals.metadata.embed: false`, `gwmock merge --no-embed-metadata`). A
+consumer reads the sidecar whenever there is one — see
+[Reading data](reading-data.md) for how to read the embedded record back.
 
 The embedded copy leaves out the source parameters of the injected signals, and
 the per-event glitch truth beside them:
@@ -438,11 +438,12 @@ challenge:
 - It does not touch data already written. Files from an earlier run keep
   whatever they were written with.
 
-One further consequence: two identical runs no longer write byte-identical HDF5
-files, because the record embedded in them carries a timestamp, the host and the
-environment freeze. What reproducibility is checked against is the _content_
-hash — the decoded samples and their timing — which the record does not affect,
-and which `gwmock validate` reports separately from the byte hash.
+One further consequence of embedding: two identical runs no longer write
+byte-identical HDF5 files, because the record embedded in them carries a
+timestamp, the host and the environment freeze. What reproducibility is checked
+against is the _content_ hash — the decoded samples and their timing — which the
+record does not affect, and which `gwmock validate` reports separately from the
+byte hash.
 
 ### Choosing the waveform library
 

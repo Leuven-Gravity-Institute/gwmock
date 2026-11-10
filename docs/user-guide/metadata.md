@@ -142,8 +142,8 @@ Set `globals.metadata.split: false` in the configuration (and pass
 `--no-split-metadata` to `gwmock merge`) to write one combined record per batch,
 with the same keys as before the split existed -- including `author`, the
 absolute paths and the full `host.platform` -- and no private file. That record
-is also the one embedded in the outputs. See
-[Configuration](configuration.md#metadata-shareable-and-private-records).
+is also the one embedded in the outputs, unless `globals.metadata.embed: false`.
+See [Configuration](configuration.md#metadata-shareable-and-private-records).
 
 ### Before sharing a data set
 

@@ -133,8 +133,8 @@ with three deliberate omissions:
   signal, or a run that injected no glitches.
 - **The file hashes.** A file cannot carry its own digest: `file_hashes`,
   `content_hashes` and the `sha256`/`content_sha256` of each entry in `outputs`
-  are recorded in the sidecar, which is taken after the record is written into
-  the file.
+  are recorded in the sidecar, whose hashes are taken after the record, if any,
+  is written into the file.
 
 - **The simulator's replay state.** `pre_batch_state` is stored as separate
   `.npy` files an embedded copy could not point at. It is removed wherever it
