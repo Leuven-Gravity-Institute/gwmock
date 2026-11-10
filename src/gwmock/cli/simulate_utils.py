@@ -40,6 +40,7 @@ from gwmock.cli.utils.checkpoint import (
     require_matching_config,
     resume_tail,
     run_fingerprint,
+    spilled_tail_files,
 )
 from gwmock.cli.utils.config import OrchestrationConfig, SimulatorConfig, resolve_class_path
 from gwmock.cli.utils.environment import capture_environment
@@ -62,6 +63,7 @@ from gwmock.cli.utils.simulation_plan import (
 from gwmock.cli.utils.template import expand_template_variables
 from gwmock.cli.utils.truth_index import GLITCH_INDEX, SIGNAL_INDEX, TRUTH_INDEXES, IndexSpec
 from gwmock.cli.utils.utils import handle_signal
+from gwmock.mixin.time_series import TimeSeriesMixin
 from gwmock.simulator.base import Simulator
 from gwmock.utils.errors import DeterministicRefusalError
 
@@ -2922,9 +2924,10 @@ def execute_plan(  # noqa: PLR0915
 
     # Initialize checkpoint manager for resumption support
     checkpoint_manager = CheckpointManager(plan.checkpoint_directory)
-    # One decode for the whole setup. The file now carries the spillover -- 131 MB of base64 for a
-    # 1000 s tail -- and every `load_checkpoint` decodes all of it, so each convenience getter used
-    # here would pay that again before the run started.
+    # One decode for the whole setup. The file carries the spillover -- spilled tails as references to
+    # their files, but a tail restored from a checkpoint written before tails were spilled is samples,
+    # 131 MB of base64 for a 1000 s tail -- and every `load_checkpoint` decodes all of it, so each
+    # convenience getter used here would pay that again before the run started.
     # `--ignore-checkpoint` discards it here rather than deleting the file: the refusal below is a
     # dead end for anything that cannot answer a prompt -- an automated campaign would fail on a
     # stale file with no way forward but manual intervention -- and deleting on the user's behalf is
@@ -2996,6 +2999,13 @@ def execute_plan(  # noqa: PLR0915
         # tail, and writing these back out would describe a run that no longer exists.
         simulator_tails = {}
 
+    # The spilled tails the checkpoint on disk references. Kept until the checkpoint after next is
+    # written, because the one before it survives as the backup a damaged checkpoint is restored from;
+    # anything else in the tail directory -- a fresh run's leftovers from an earlier attempt, say -- is
+    # no longer needed.
+    previous_tail_files = spilled_tail_files(simulator_tails)
+    checkpoint_manager.remove_unreferenced_tails(previous_tail_files)
+
     # Group batches by simulator name to execute sequentially per simulator
     simulator_batches: dict[str, list[SimulationBatch]] = {}
     for batch in plan.batches:
@@ -3013,6 +3023,10 @@ def execute_plan(  # noqa: PLR0915
             # Extract global simulator arguments from the first batch's global config
             global_sim_args = batches[0].globals_config.simulator_arguments if batches else {}
             simulator = instantiate_simulator(batches[0].simulator_config, simulator_name, global_sim_args)
+            if isinstance(simulator, TimeSeriesMixin):
+                # Tails that outlive their segment go to disk, beside the checkpoint that records them,
+                # so memory holds the segment being built rather than every signal still in band.
+                simulator.tail_spill_directory = checkpoint_manager.tail_directory / simulator_name
 
             # Process batches sequentially, maintaining state across them
             for batch_idx, batch in enumerate(batches):
@@ -3139,7 +3153,8 @@ def execute_plan(  # noqa: PLR0915
                     completed_batch_indices.add(batch.batch_index)
                     state_snapshot = copy.deepcopy(simulator.state)
                     # Beside the state, not inside it: `state` also goes into every batch metadata
-                    # record, and spillover is raw samples. See `save_checkpoint`.
+                    # record, and spillover is samples, or references to spilled files. See
+                    # `save_checkpoint`. A spilled tail's deep copy is a new view of the same file.
                     spillover_snapshot = copy.deepcopy(getattr(simulator, "cached_data_chunks", None))
                     # Replaces only this simulator's entry, so the tails of the simulators that ran
                     # before it are still in the checkpoint after this one completes.
@@ -3157,6 +3172,9 @@ def execute_plan(  # noqa: PLR0915
                         config_sha256=plan_sha256,
                         simulator_tails=simulator_tails,
                     )
+                    current_tail_files = spilled_tail_files(simulator_tails)
+                    checkpoint_manager.remove_unreferenced_tails(current_tail_files | previous_tail_files)
+                    previous_tail_files = current_tail_files
                     logger.debug(
                         "Checkpoint saved after batch %d - state counter=%s",
                         batch.batch_index,

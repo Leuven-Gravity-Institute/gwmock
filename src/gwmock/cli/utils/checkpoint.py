@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import IO, Any
@@ -13,8 +14,27 @@ from urllib.parse import urlparse
 
 from gwmock.data.serialize.decoder import Decoder
 from gwmock.data.serialize.encoder import Encoder
+from gwmock.data.time_series.spilled import SpilledTimeSeries
 
 logger = logging.getLogger("gwmock")
+
+
+def spilled_tail_files(simulator_tails: Mapping[str, Any]) -> set[Path]:
+    """The files the spilled tails in *simulator_tails* read their samples from.
+
+    Args:
+        simulator_tails: Tails keyed by simulator name, as :meth:`CheckpointManager.save_checkpoint`
+            takes them.
+
+    Returns:
+        Every file a spilled chunk of any simulator's spillover maps, resolved.
+    """
+    files: set[Path] = set()
+    for tail in simulator_tails.values():
+        for chunk in (tail or {}).get("spillover") or []:
+            if isinstance(chunk, SpilledTimeSeries):
+                files.add(chunk.spill_path.resolve())
+    return files
 
 
 def run_fingerprint(
@@ -609,9 +629,10 @@ class CheckpointManager:
 
                 Carried **beside** the state rather than in it, deliberately. ``state`` is also
                 serialized into every batch metadata record, and those are provenance documents
-                meant to stay small and readable; spillover is raw samples, megabytes of them for a
-                long inspiral. Putting it in ``state`` would bloat every metadata record and, since
-                those are written with plain ``json``, fail outright on a ``TimeSeriesList``.
+                meant to stay small and readable; spillover is samples -- a tail held in memory is
+                written out in full, and only a tail spilled to disk is recorded by its file. Putting
+                it in ``state`` would bloat every metadata record and, since those are written with
+                plain ``json``, fail outright on a ``TimeSeriesList``.
 
                 Without this a resumed run starts with no spillover, so the tail is never placed and
                 the segment after the resume point silently loses that content: a measured peak of
@@ -647,7 +668,7 @@ class CheckpointManager:
             "spillover": last_simulator_spillover,
         }
         # `last_simulator_state`/`last_simulator_spillover` are not written beside this: they are the
-        # entry for `last_simulator_name`, and duplicating them would write megabytes of spillover
+        # entry for `last_simulator_name`, and duplicating them would write any in-memory spillover's
         # samples twice per batch. `load_checkpoint` rebuilds them for callers that want them.
         checkpoint = {
             "completed_batch_indices": completed_batch_indices,
@@ -688,6 +709,36 @@ class CheckpointManager:
                     self.checkpoint_tmp.unlink()
             raise
 
+    @property
+    def tail_directory(self) -> Path:
+        """Where the run spills signal tails: beside the checkpoint that references them."""
+        return self.checkpoint_directory / "tails"
+
+    def remove_unreferenced_tails(self, keep: Iterable[Path]) -> None:
+        """Delete every spilled-tail file in :attr:`tail_directory` except those in *keep*.
+
+        A file is kept while a checkpoint may still need it: the caller passes the files both the
+        checkpoint just written and the one before it reference, the latter because it survives as the
+        backup a damaged checkpoint is restored from. Everything else is a tail consumed by the run, or
+        written by a batch attempt that failed and was retried.
+
+        A file that cannot be removed -- on Windows, one still mapped -- is left and tried again at the
+        next call; :meth:`cleanup` removes the directory at the end of the run.
+
+        Args:
+            keep: Files to keep.
+        """
+        if not self.tail_directory.is_dir():
+            return
+        kept = {Path(path).resolve() for path in keep}
+        for path in self.tail_directory.rglob("*"):
+            if not path.is_file() or path.resolve() in kept:
+                continue
+            try:
+                path.unlink()
+            except OSError as error:
+                logger.debug("Could not remove the spilled tail %s yet: %s", path, error)
+
     def cleanup(self) -> None:
         """Clean up checkpoint files after successful completion."""
         # Remove both checkpoint and backup after successful completion
@@ -700,6 +751,11 @@ class CheckpointManager:
                 logger.debug("Cleaned up checkpoint backup file")
         except OSError as e:
             logger.warning("Failed to clean up checkpoint files: %s", e)
+        # Every batch is done, so no tail is needed any more.
+        if self.tail_directory.exists():
+            shutil.rmtree(self.tail_directory, ignore_errors=True)
+            if self.tail_directory.exists():
+                logger.warning("Could not remove every spilled signal tail in %s.", self.tail_directory)
 
     def get_completed_batch_indices(self) -> set[int]:
         """Get set of completed batch indices from checkpoint.

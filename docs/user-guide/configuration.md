@@ -1131,7 +1131,7 @@ processed.
 gwmock automatically creates checkpoints during long simulations. If a process
 is interrupted:
 
-1. A `.gwmock_checkpoint/simulation.checkpoint.json` file is saved in the
+1. A `.gwmock_checkpoints/simulation.checkpoint.json` file is saved in the
    working directory
 2. Rerun the same command to resume from the last checkpoint
 3. The tool automatically detects and continues from where it left off
@@ -1169,6 +1169,32 @@ answer a prompt — pass `--ignore-checkpoint`:
 ```bash
 gwmock simulate config.yaml --ignore-checkpoint
 ```
+
+### Signal tails on disk
+
+A signal longer than a segment continues into the following segments as a
+_tail_. A binary neutron star from a low minimum frequency lasts hours, so a run
+carries the tails of every signal still in band. In memory they would grow with
+the event rate times the square of the signal duration, which at 3 Hz is tens of
+gigabytes for an ET-like network.
+
+`gwmock simulate` therefore writes each tail to
+`.gwmock_checkpoints/tails/<simulator>/` once the segment that generated it is
+built, and each later segment reads only the part of it that lands there. Each
+signal is generated and placed in turn, before the next is generated, so memory
+holds the segment being built and about one signal at a time. The samples
+written are identical to those of a run that keeps its tails in memory.
+
+The checkpoint records each tail by its file, so a resumed run reads the same
+tails back. A file is removed once neither the checkpoint nor its backup refers
+to it, and the directory is removed when the run completes. Moving or deleting
+it while a checkpoint refers to it makes that checkpoint unusable: gwmock logs
+an error naming the missing file, as for a damaged checkpoint, and the run
+starts from the beginning, which needs `--overwrite` because the earlier outputs
+exist.
+
+The disk space needed is about what the tails would have taken in memory: every
+signal still in band, at 8 bytes per sample per channel.
 
 ## Resource Usage Summary
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -1000,6 +1000,18 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
     def _simulate(self) -> TimeSeriesList:
         """Generate signal chunks for the current segment from population events."""
+        return TimeSeriesList(list(self._new_chunks()))
+
+    def _new_chunks(self) -> Iterable[TimeSeries]:
+        """Generate this segment's signal chunks, one event at a time where generation allows it.
+
+        The per-event path is a generator, so :meth:`~gwmock.mixin.time_series.TimeSeriesMixin.simulate`
+        places each event -- and spills its tail -- before the next is generated. The batched,
+        stationary and continuous-wave paths produce their chunks together and return them as a list.
+
+        Returns:
+            The chunks, in generation order.
+        """
         # Ahead of the general check, which would otherwise answer a continuous-wave request for
         # the batched path by complaining that `signal.arguments` would be ignored. True, but not
         # the reason: the batched entry point generates coalescences from a catalogue of events,
@@ -1031,8 +1043,14 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         if self._execution_mode() == "batched":
             return self._simulate_batched_segment()
+        return self._per_event_chunks()
 
-        chunks = TimeSeriesList()
+    def _per_event_chunks(self) -> Iterator[TimeSeries]:
+        """Yield this segment's chunks one event at a time, consuming each event as it is generated.
+
+        Yields:
+            Each generated event's chunk, in placement order.
+        """
         self._batch_injections = []
         order = self._placement_order()
         grid = SamplingGrid(
@@ -1076,11 +1094,10 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             # crosses a segment boundary can still be attributed to its event in the next segment.
             strain.metadata.update({"injection_parameters": dict(parameters), "event_id": event_id})
             self._batch_injections.append({"event_id": event_id, "parameters": dict(parameters)})
-            chunks.append(strain)
             self.population_index = cast(int, self.population_index) + 1
+            yield strain
             if strain.start_time >= self.end_time:
                 break
-        return chunks
 
     def _warn_if_no_event_reaches_the_run(self) -> None:
         """Warn, once per orchestrator, when no event of the population reaches the requested span.
