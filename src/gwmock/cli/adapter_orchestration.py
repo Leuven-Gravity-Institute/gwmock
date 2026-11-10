@@ -15,7 +15,7 @@ from gwmock_pop import GWPopSimulator
 from gwmock_signal import DetectorStrainStack, Network, SamplingGrid
 from gwmock_signal.projection import ProjectionEffects
 
-from gwmock.cli.duty_cycle import SEGMENTS_FILE, DutyCycle
+from gwmock.cli.duty_cycle import DutyCycle
 from gwmock.cli.utils.backend_resolver import instantiate_backend, resolve_backend_class, validate_backend
 from gwmock.cli.utils.config import OrchestrationConfig, check_default_noise_arguments
 from gwmock.cli.utils.config_resolution import resolve_max_samples, resolve_segment_gap
@@ -24,7 +24,7 @@ from gwmock.data.time_series.time_series import TimeSeries
 from gwmock.data.time_series.time_series_list import TimeSeriesList
 from gwmock.mixin.time_series import TimeSeriesMixin
 from gwmock.noise import NoiseAdapter
-from gwmock.noise.adapter import _frame_channel_name
+from gwmock.noise.adapter import frame_channel_name
 from gwmock.population import PopulationAdapter
 from gwmock.signal import SignalAdapter
 from gwmock.signal.projection_backend import require_backend_accepts_projection_backend
@@ -294,7 +294,9 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
         Raises:
             DeterministicRefusalError: If there is neither a duty-cycle seed nor a noise seed to derive
-                one from: an unseeded draw would differ when a run is resumed.
+                one from, since an unseeded draw would differ when a run is resumed; or if gwmock-noise
+                refuses the model for this network, or a frame does not hold a whole number of
+                state-vector samples.
         """
         config = self.orchestration_config.duty_cycle
         if config is None:
@@ -309,7 +311,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
                 )
             seed = derive_seed(int(noise_seed), "duty-cycle")
         layout = self.segment_layout
-        return DutyCycle(
+        duty_cycle = DutyCycle(
             model=config.to_model(),
             detectors=tuple(self._duty_cycle_detectors()),
             start=float(layout.start_time),
@@ -317,6 +319,16 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
             seed=int(seed),
             sampling_frequency=float(config.sampling_frequency),
         )
+        # What depends on the network or the frame -- whether a rotating schedule fits the network,
+        # whether the correlated share is reachable, whether a frame holds whole state-vector
+        # samples -- is checked here, before any batch writes, and refused rather than retried: the
+        # same configuration fails the same way every time.
+        try:
+            duty_cycle.n_samples(float(self.duration.value))
+            _ = duty_cycle.realization
+        except ValueError as error:
+            raise DeterministicRefusalError(f"orchestration.duty-cycle: {error}") from error
+        return duty_cycle
 
     @classmethod
     def from_config(
@@ -807,25 +819,90 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
 
     def simulate(self) -> AdapterOrchestrationResult:
         """Generate signal and/or noise for the current batch depending on active adapters."""
+        if self.duty_cycle is not None:
+            # Before anything is written, so a refused batch leaves no strain behind.
+            self._check_duty_cycle_outputs()
         signal_segment = TimeSeriesMixin.simulate(self) if self.signal_adapter is not None else None
         noise_result = self._run_noise_batch() if self.noise_adapter is not None else None
         result = AdapterOrchestrationResult(signal_segment=signal_segment, noise_result=noise_result)
         if self.duty_cycle is not None:
             result.duty_cycle_paths = self._write_duty_cycle_batch()
-            segments = self._active_duty_cycle_output_directory / SEGMENTS_FILE
-            if int(self.counter) == 0 or not segments.exists():
-                result.duty_cycle_segment_paths = self.duty_cycle.write_segment_files(
-                    self._active_duty_cycle_output_directory
-                )
+            result.duty_cycle_segment_paths = self._write_duty_cycle_segments()
         return result
+
+    def _stale_segment_files(self) -> list[str]:
+        """The segment files missing from the duty-cycle directory, or holding another realization."""
+        assert self.duty_cycle is not None  # noqa: S101 -- only called when a duty cycle is configured
+        directory = self._active_duty_cycle_output_directory
+        return [
+            name
+            for name, text in self.duty_cycle.segment_file_contents().items()
+            if not (directory / name).is_file() or (directory / name).read_text(encoding="utf-8") != text
+        ]
+
+    def _check_duty_cycle_outputs(self) -> None:
+        """Refuse the batch before it writes if its duty-cycle outputs cannot be written.
+
+        Raises:
+            DeterministicRefusalError: If the output arguments or templates are invalid.
+            FileExistsError: Without overwrite, if a state-vector file of this batch already exists or a
+                segment file on disk holds another realization than this run's -- the same rule the
+                noise files follow.
+        """
+        self.duty_cycle_channels()
+        paths = self.duty_cycle_output_paths()
+        if self._active_overwrite:
+            return
+        directory = self._active_duty_cycle_output_directory
+        existing = [str(path) for path in paths.values() if path.exists()]
+        existing += [str(directory / name) for name in self._stale_segment_files() if (directory / name).exists()]
+        if existing:
+            raise FileExistsError(
+                f"Duty-cycle output(s) already exist: {', '.join(existing)}. Use overwrite=True to overwrite them."
+            )
+
+    def _write_duty_cycle_segments(self) -> list[Path]:
+        """Write the run's segment files where missing or stale; return them for the batch to record.
+
+        The first batch records them, and so does any batch that writes them -- a resumed run that
+        finds them missing, say. A file already holding this run's realization is left as it is.
+        """
+        assert self.duty_cycle is not None  # noqa: S101 -- only called when a duty cycle is configured
+        directory = self._active_duty_cycle_output_directory
+        contents = self.duty_cycle.segment_file_contents()
+        stale = self._stale_segment_files()
+        if stale:
+            directory.mkdir(parents=True, exist_ok=True)
+            for name in stale:
+                (directory / name).write_text(contents[name], encoding="utf-8")
+        if stale or int(self.counter) == 0:
+            return [directory / name for name in contents]
+        return []
 
     def duty_cycle_channels(self) -> dict[str, str]:
         """The state-vector channel of each interferometer."""
         config = self.orchestration_config.duty_cycle
         if config is None or self.duty_cycle is None:
             return {}
-        suffix = str((config.output.arguments or {}).get("channel", "STATE_VECTOR"))
-        return {detector: _frame_channel_name(detector, suffix) for detector in self.duty_cycle.detectors}
+        detectors = list(self.duty_cycle.detectors)
+        arguments = dict(
+            expand_template_variables(dict(config.output.arguments or {}), _NoiseTemplateProxy(self, detectors))
+        )
+        channel = arguments.pop("channel", "STATE_VECTOR")
+        if arguments:
+            raise DeterministicRefusalError(
+                f"Duty-cycle output arguments only support channel. Unsupported keys: {', '.join(sorted(arguments))}."
+            )
+        if isinstance(channel, list):
+            if len(channel) != len(detectors):
+                raise DeterministicRefusalError(
+                    f"Duty-cycle channel list expanded to {len(channel)} entries "
+                    f"but there are {len(detectors)} duty-cycle detectors."
+                )
+            names = [str(name) for name in channel]
+        else:
+            names = [str(channel)] * len(detectors)
+        return {detector: frame_channel_name(detector, name) for detector, name in zip(detectors, names, strict=True)}
 
     def duty_cycle_output_paths(self) -> dict[str, Path]:
         """The state-vector file of each interferometer for the current batch."""

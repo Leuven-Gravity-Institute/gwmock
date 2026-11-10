@@ -81,7 +81,14 @@ _logger = logging.getLogger("gwmock")
 #: the full host. A combined record (``split: false``) carries both in ``host``. A merged record now
 #: has a ``host`` block too, describing the machine that merged, and keeps each source record's
 #: ``cpu_model``, ``os`` and ``architecture`` in its shareable form.
-SCHEMA_VERSION = "1.9.0"
+#:
+#: 1.10.0: ``simulator_metadata.orchestration.duty_cycle`` describes the run's duty cycle (its
+#: model, seed, interferometers, span and state-vector rate), ``null`` for a run without one. A run
+#: with one also flags each injection and glitch with ``observing``, and records two more output
+#: kinds: ``duty-cycle`` (a frame's state-vector file) and ``duty-cycle-segments`` (the run's segment
+#: files, recorded by the batch that wrote them). A record written by an older gwmock has no
+#: ``duty_cycle`` key, which is not the same fact as a run without a duty cycle.
+SCHEMA_VERSION = "1.10.0"
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 #: The key the source parameters of the injected signals are recorded under. Removed from an embedded

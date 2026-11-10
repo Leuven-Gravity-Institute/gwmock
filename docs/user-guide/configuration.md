@@ -999,7 +999,11 @@ orchestration:
 
 Every key is optional; the values above are `gwmock-noise`'s defaults, from
 Negri et al. (arXiv:2606.19201) and LVK maintenance practice. An invalid value
-is refused when the configuration is loaded.
+is refused when the configuration is loaded. What depends on the network or the
+frame length is refused before the first frame is written: a `rotating` schedule
+whose windows do not fit one after another in a period, a correlated share the
+network cannot reach, or a `sampling-frequency` that does not give each frame a
+whole number of samples.
 
 One realization covers the run's whole span, so every frame sees the same duty
 cycle, and a resumed run sees the one it started with. Its seed is `seed`, or is
@@ -1013,17 +1017,23 @@ The run records it three ways:
   interferometer and frame, in `duty-cycle/` beside the other outputs. Bit 0 is
   set while the interferometer observes and bit 1 while it is in planned
   maintenance. The samples are `uint32` at `sampling-frequency`, which must give
-  each frame a whole number of samples. `duty-cycle.output` takes the same keys
-  as `noise.output`; its file extension selects GWF or HDF5.
-- **Segment files**, written once, with the first frame:
-  `duty-cycle-segments.json` holds every interferometer's observing intervals
-  and maintenance windows, the model and the seed, and
-  `<interferometer>-observing-segments.txt` lists each interferometer's
-  observing intervals, one `start end` line each, in GPS seconds. Intervals are
-  `[start, end)`.
-- **Observing flags** in the batch metadata: every injected signal gets
-  `observing: {<interferometer>: true | false}` at its merger time, and every
-  glitch gets `observing: true | false` for its own interferometer at its peak.
+  each frame a whole number of samples. `duty-cycle.output` has the shape of
+  `noise.output`: `file_name` (required whenever the block is given; its
+  extension selects GWF or HDF5), `output_directory`, and `arguments`, which
+  takes `channel` only. Templates are expanded as for noise. An existing
+  state-vector file is refused without `--overwrite`, as a noise file is.
+- **Segment files**, written with the first frame, and again by a later frame
+  only if they are missing or hold another realization (a file holding another
+  realization is refused without `--overwrite`): `duty-cycle-segments.json`
+  holds every interferometer's observing intervals and maintenance windows, the
+  model and the seed, and `<interferometer>-observing-segments.txt` lists each
+  interferometer's observing intervals, one `start end` line each, in GPS
+  seconds. Intervals are `[start, end)`.
+- **Observing flags** in the batch metadata: every injected signal with a merger
+  time (`coa_time`) gets `observing: {<interferometer>: true | false}` at that
+  time, for each interferometer of the duty cycle, and every glitch gets
+  `observing: true | false` for its own interferometer at its peak. A signal
+  with no merger time, such as a stochastic background, gets no flag.
 
 To carry the state vector into the merged strain file, pass it to `gwmock merge`
 with `--copy-channel`; see "Reading Data".

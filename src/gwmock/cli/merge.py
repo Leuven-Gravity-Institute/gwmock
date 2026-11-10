@@ -223,6 +223,9 @@ def merge_command(  # pylint: disable=too-many-locals,too-many-branches,too-many
 
     # With channels to copy, a file may hold only those; the merged channel is summed over the rest.
     merge_files, copy_sources = _split_merge_and_copy_sources(file_names, channel, copy_channel or [])
+    if output_channel is not None and output_channel in copy_sources:
+        # The copied channel would replace the merged one under the shared name.
+        raise ValueError(f"--output-channel {output_channel!r} is also a --copy-channel.")
 
     # Read the first file
     frame_data = cast(TimeSeries, TimeSeries.read(merge_files[0], channel))

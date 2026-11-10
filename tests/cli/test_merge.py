@@ -759,3 +759,38 @@ class TestCopiedChannels:
     def test_a_whole_segment_merge_takes_no_copied_channel(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="name the files to merge"):
             merge_command(None, output_dir=tmp_path, metadata=["run.json"], copy_channel=[self.STATE])
+
+    @pytest.mark.requires_gwpy
+    def test_an_output_channel_named_like_a_copied_channel_is_refused(self, tmp_path: Path, two_frames) -> None:
+        """Otherwise the copied channel would replace the merged one under the shared name."""
+        state = self._state(tmp_path / "state.gwf")
+        output = tmp_path / "m.gwf"
+        with pytest.raises(ValueError, match="is also a --copy-channel"):
+            merge_command(
+                [*two_frames, state],
+                output=str(output),
+                force=True,
+                output_channel=self.STATE,
+                copy_channel=[self.STATE],
+            )
+        assert not output.exists()
+
+    @pytest.mark.requires_gwpy
+    @pytest.mark.parametrize("suffix", [".gwf", ".hdf5"])
+    def test_a_state_vector_at_its_own_rate_rides_along(self, tmp_path: Path, suffix: str) -> None:
+        """The real case: strain at kHz, state vector at 16 Hz, in one file."""
+        strain_rate = 4096
+        signal = _frame(tmp_path / f"signal{suffix}", np.ones(strain_rate), rate=strain_rate)
+        noise = _frame(tmp_path / f"noise{suffix}", 2 * np.ones(strain_rate), rate=strain_rate)
+        state = self._state(tmp_path / f"state{suffix}")
+        output = tmp_path / f"merged{suffix}"
+
+        merge_command([signal, noise, state], output=str(output), force=True, copy_channel=[self.STATE])
+
+        merged = TimeSeries.read(str(output), CHANNEL)
+        assert merged.sample_rate.value == strain_rate
+        np.testing.assert_array_equal(merged.value, 3 * np.ones(strain_rate))
+        copied = TimeSeries.read(str(output), self.STATE)
+        assert copied.sample_rate.value == 16
+        assert copied.dtype == np.uint32
+        np.testing.assert_array_equal(copied.value, TimeSeries.read(str(state), self.STATE).value)

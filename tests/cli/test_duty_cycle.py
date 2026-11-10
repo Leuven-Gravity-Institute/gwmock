@@ -289,3 +289,135 @@ def test_an_injected_signal_is_flagged_at_its_merger_time(tmp_path: Path) -> Non
     assert flagged[1]["observing"]["ET1_EMR"] is duty_cycle.observing("ET1_EMR", outside)
     assert set(flagged[0]["observing"]) == set(TRIANGLE)
     assert "observing" not in flagged[2]
+
+
+def _noise_files(tmp_path: Path) -> list[Path]:
+    return sorted((tmp_path / "output" / "noise").glob("*")) if (tmp_path / "output" / "noise").exists() else []
+
+
+@pytest.mark.parametrize(
+    ("duty_cycle", "message"),
+    [
+        # Three interferometers maintained one after another need 3 x 1024 s within 2048 s.
+        ({"maintenance": {"strategy": "rotating", "period": 2048, "duration": 1024}}, "rotating schedule"),
+        # 4096 s at 0.3 Hz is 1228.8 samples.
+        ({"sampling-frequency": 0.3}, "whole number"),
+    ],
+)
+def test_a_duty_cycle_the_network_or_frame_cannot_take_is_refused_before_anything_is_written(
+    tmp_path: Path, duty_cycle: dict, message: str
+) -> None:
+    """Refused once, with its own message, and not retried into a complaint about the noise files."""
+    import typer
+
+    from gwmock.utils.errors import DeterministicRefusalError
+
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(_config(tmp_path, duty_cycle=duty_cycle))
+    assert isinstance(excinfo.value.__cause__, DeterministicRefusalError)
+    assert message in str(excinfo.value.__cause__)
+    assert _noise_files(tmp_path) == []
+
+
+def test_a_second_run_into_the_same_directory_is_refused_without_overwrite(tmp_path: Path) -> None:
+    """The state vectors follow the rule the noise files follow, and are checked first."""
+    import typer
+
+    from gwmock.cli.simulate import simulate_command
+
+    config = _config(tmp_path)
+    _simulate(config)
+    for path in _noise_files(tmp_path):
+        path.unlink()
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(config)
+    assert isinstance(excinfo.value.__cause__, FileExistsError)
+    assert "Duty-cycle output(s) already exist" in str(excinfo.value.__cause__)
+    assert _noise_files(tmp_path) == []
+
+    cwd = Path.cwd()
+    os.chdir(tmp_path)
+    try:
+        simulate_command([str(config)], overwrite=True)
+    finally:
+        os.chdir(cwd)
+
+
+def test_a_file_name_that_does_not_vary_per_frame_is_refused(tmp_path: Path) -> None:
+    """Without it the second frame would replace the first frame's state vector."""
+    import typer
+
+    duty_cycle = {"output": {"file_name": "state-{{ detectors }}.hdf5", "output_directory": "duty-cycle"}}
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(_config(tmp_path, duty_cycle=duty_cycle))
+    assert isinstance(excinfo.value.__cause__, FileExistsError)
+
+
+def test_a_segment_file_from_another_run_is_refused_without_overwrite(tmp_path: Path) -> None:
+    """An existing segment file is kept only if it holds this run's realization."""
+    import typer
+
+    duty = tmp_path / "output" / "duty-cycle"
+    duty.mkdir(parents=True)
+    (duty / SEGMENTS_FILE).write_text('{"seed": 1}\n', encoding="utf-8")
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(_config(tmp_path))
+    assert SEGMENTS_FILE in str(excinfo.value.__cause__)
+    assert (duty / SEGMENTS_FILE).read_text(encoding="utf-8") == '{"seed": 1}\n'
+
+
+def test_the_channel_is_expanded_like_the_noise_channel(tmp_path: Path) -> None:
+    """``{{ detectors }}:STATE_VECTOR`` names each interferometer's channel once."""
+    from gwmock_data.io import read_hdf5
+
+    duty_cycle = {
+        "output": {
+            "file_name": "state-{{ detectors }}-{{ counter }}.hdf5",
+            "output_directory": "duty-cycle",
+            "arguments": {"channel": "{{ detectors }}:STATE_VECTOR"},
+        }
+    }
+    _simulate(_config(tmp_path, duty_cycle=duty_cycle))
+    for detector in TRIANGLE:
+        assert list(read_hdf5(tmp_path / "output" / "duty-cycle" / f"state-{detector}-0.hdf5")) == [
+            f"{detector}:STATE_VECTOR"
+        ]
+
+
+def test_an_unknown_output_argument_is_refused(tmp_path: Path) -> None:
+    import typer
+
+    duty_cycle = {
+        "output": {
+            "file_name": "state-{{ detectors }}-{{ counter }}.hdf5",
+            "arguments": {"channel": "STATE_VECTOR", "gps_start": 123.0},
+        }
+    }
+    with pytest.raises(typer.Exit) as excinfo:
+        _simulate(_config(tmp_path, duty_cycle=duty_cycle))
+    assert "Unsupported keys: gps_start" in str(excinfo.value.__cause__)
+    assert _noise_files(tmp_path) == []
+
+
+def test_a_signal_only_run_draws_the_duty_cycle_for_the_signals_interferometers(tmp_path: Path, monkeypatch) -> None:
+    """With no noise, the signal's interferometers; a background has no merger time, so no flags."""
+    from gwmock.cli.simulate import _simulate_impl
+    from gwmock.cli.utils.config import DutyCycleConfig
+    from tests.cli.test_cli_orchestration import _fake_sgwb_config, _write_signal_file
+
+    config = _fake_sgwb_config(tmp_path)
+    config.orchestration.duty_cycle = DutyCycleConfig.model_validate({"seed": 5})
+    config_file = tmp_path / "sgwb.yaml"
+    config_file.write_text(yaml.safe_dump(config.model_dump(by_alias=True, exclude_none=True), sort_keys=False))
+    monkeypatch.setattr("gwmock.cli.adapter_orchestration.DetectorStrainStack.write", _write_signal_file)
+
+    _simulate_impl(str(config_file), overwrite=True, metadata=True)
+
+    record = json.loads((tmp_path / "output" / "duty-cycle" / SEGMENTS_FILE).read_text(encoding="utf-8"))
+    assert sorted(record["detectors"]) == ["H1", "L1"]
+    metadata = yaml.safe_load((tmp_path / "metadata" / "orchestration-0.metadata.json").read_text())
+    assert metadata["simulator_metadata"]["orchestration"]["duty_cycle"]["detectors"] == ["H1", "L1"]
+    assert all(
+        "observing" not in row for row in metadata["simulator_metadata"]["orchestration"]["signal"]["injections"]
+    )
+    assert [o["kind"] for o in metadata["outputs"]].count("duty-cycle") == 2

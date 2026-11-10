@@ -39,7 +39,7 @@ _SUPPORTED_OUTPUT_FORMATS = {"npy", "gwf", "hdf5"}
 _DETECTOR_PAIR_SIZE = 2
 
 
-def _frame_channel_name(detector: str, channel: str) -> str:
+def frame_channel_name(detector: str, channel: str) -> str:
     """Return detector channel name used by gwmock-noise frame outputs.
 
     Args:
@@ -635,7 +635,7 @@ class NoiseAdapter:
                 channel=(
                     config.output.channels[detector]
                     if config.output.channels and detector in config.output.channels
-                    else _frame_channel_name(detector, config.output.channel)
+                    else frame_channel_name(detector, config.output.channel)
                 ),
                 prefix=config.output.prefix,
                 gps_start=config.output.gps_start,
@@ -709,7 +709,7 @@ class NoiseAdapter:
             channel = (
                 config.output.channels[detector]
                 if config.output.channels and detector in config.output.channels
-                else _frame_channel_name(detector, config.output.channel)
+                else frame_channel_name(detector, config.output.channel)
             )
             output_path = config.output.directory / _hdf5_artifact_name(
                 detector=detector,

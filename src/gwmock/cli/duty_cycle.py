@@ -8,10 +8,17 @@ strain is not changed. The realization is recorded three ways:
   configured rate. Bit 0 (``OBSERVING_BIT``) is set while the interferometer observes and bit 1
   (``MAINTENANCE_BIT``) while it is in planned maintenance. The samples are ``uint32``: LAL, which writes
   GWF, has no unsigned 8-bit type, and LIGO's calibrated state vector is 32-bit too;
-- the run's **segments**, written once: every interferometer's observing intervals and maintenance
-  windows in one JSON file, and each interferometer's observing intervals as a plain text list;
-- an **observing flag** on every injected signal (at its merger time) and glitch (at its peak), in
-  the batch metadata.
+- the run's **segments**: every interferometer's observing intervals and maintenance windows in one
+  JSON file, and each interferometer's observing intervals as a plain text list. The first batch
+  writes them, and a later batch rewrites them only if they are missing or hold another realization
+  -- a resumed run whose duty-cycle directory was cleared, say;
+- an **observing flag** on every injected signal with a merger time (for each interferometer, at that
+  time) and on every glitch (for its interferometer, at its peak), in the batch metadata.
+
+An HDF5 state-vector file declares the gwmock strain schema, like every HDF5 file gwmock writes: the
+schema is the file's layout (one dataset per channel, named for it, with its grid in ``x0``/``dx``),
+which the state vector follows, and declaring it is what lets the run record be embedded in the file.
+Its ``unit`` is empty, as for any dimensionless series: the samples are bit masks.
 """
 
 from __future__ import annotations
@@ -150,23 +157,27 @@ class DutyCycle:
             },
         }
 
-    def write_segment_files(self, directory: Path) -> list[Path]:
-        """Write the run's segment files into ``directory``.
+    def segment_file_contents(self) -> dict[str, str]:
+        """The run's segment files, by file name.
 
         Returns:
             The JSON file, then one ``<interferometer>-observing-segments.txt`` per interferometer,
             each line ``start end`` in GPS seconds.
         """
-        directory.mkdir(parents=True, exist_ok=True)
         record = self.segments_record()
-        json_path = directory / SEGMENTS_FILE
-        json_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        paths = [json_path]
+        contents = {SEGMENTS_FILE: json.dumps(record, indent=2) + "\n"}
         for detector in self.detectors:
-            text_path = directory / f"{detector}-observing-segments.txt"
-            lines = [f"{start!r} {end!r}" for start, end in record["detectors"][detector]["observing"]]
-            text_path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-            paths.append(text_path)
+            lines = [f"{start!r} {end!r}\n" for start, end in record["detectors"][detector]["observing"]]
+            contents[f"{detector}-observing-segments.txt"] = "".join(lines)
+        return contents
+
+    def write_segment_files(self, directory: Path) -> list[Path]:
+        """Write the run's segment files into ``directory``, in the order of :meth:`segment_file_contents`."""
+        directory.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for name, text in self.segment_file_contents().items():
+            (directory / name).write_text(text, encoding="utf-8")
+            paths.append(directory / name)
         return paths
 
     def metadata(self) -> dict[str, Any]:

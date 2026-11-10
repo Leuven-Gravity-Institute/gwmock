@@ -8,12 +8,12 @@ in a private file beside it; see
 
 ## Schema
 
-Each record is validated at write time and uses schema version `1.9.0`.
+Each record is validated at write time and uses schema version `1.10.0`.
 Consumers must reject unknown major versions.
 
 ```json
 {
-    "schema_version": "1.9.0",
+    "schema_version": "1.10.0",
     "gwmock_version": "x.y.z",
     "subpackage_versions": {
         "gwmock_signal": "x.y.z",
@@ -161,6 +161,15 @@ model `cpu_model` and the host name `hostname`, and no `os` or `architecture`.
 Schema 1.9.0 added `cpu_model` and `hostname` to the record a run or a merge
 writes, and a `host` block, for the machine that merged, to a merged record; an
 older record has neither, and only `schema_version` says why.
+
+Schema 1.10.0 added `simulator_metadata.orchestration.duty_cycle`: the model,
+seed, interferometers, span and state-vector rate of the run's duty cycle (see
+[Duty cycle](configuration.md#duty-cycle)), or `null` for a run without one. A
+run with a duty cycle also adds `observing` to each injection with a merger time
+and to each glitch, and records two more output kinds: `duty-cycle`, a frame's
+state-vector file, and `duty-cycle-segments`, the run's segment files, recorded
+by the batch that wrote them. An older record has no `duty_cycle` key, which is
+not the same fact as a run without a duty cycle.
 
 `private_metadata` names the private details file written beside the record and
 the SHA-256 of its bytes. It is absent from a record written with the split
