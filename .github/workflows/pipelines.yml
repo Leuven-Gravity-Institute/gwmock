@@ -14,6 +14,7 @@ on:
         paths:
             - 'src/gwmock/**'
             - 'docs/user-guide/analysis-pipelines.md'
+            - 'docs/user-guide/configuration.md'
             - 'tests/docs/**'
             - 'pyproject.toml'
             - 'uv.lock'
@@ -23,6 +24,7 @@ on:
         paths:
             - 'src/gwmock/**'
             - 'docs/user-guide/analysis-pipelines.md'
+            - 'docs/user-guide/configuration.md'
             - 'tests/docs/**'
             - 'pyproject.toml'
             - 'uv.lock'
@@ -66,6 +68,6 @@ jobs:
               env:
                   GWMOCK_REQUIRE_PIPELINES: '1'
               run: >-
-                  uv run --no-sync pytest -m "pipelines or not pipelines"
-                  --no-cov -p no:cacheprovider -rs
+                  uv run --no-sync pytest -o addopts= -m "pipelines or not
+                  pipelines" --no-cov -p no:cacheprovider -rs
                   tests/docs/test_analysis_pipelines_page.py

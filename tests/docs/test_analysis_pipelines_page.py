@@ -251,7 +251,9 @@ def test_pycbc_live_with_the_pages_options_analyses_exactly_the_science_segments
     state_channel = f"{ifo}:{options.state_channel[ifo]}"  # as pycbc_live joins them
     mask = flag_names_to_bitmask(options.analyze_flags[ifo].split(","))
     assert mask == 0b11
-    frames = sorted(str(path) for path in (unmasked_run / "merged").glob(f"E-{ifo}_STRAIN-*.gwf"))
+    # The frames are the page's --frame-src, a glob read relative to where pycbc_live runs.
+    frames = sorted(str(path) for path in unmasked_run.glob(options.frame_src[ifo]) if f"E-{ifo}_" in path.name)
+    assert frames
     state = StatusBuffer(frames, state_channel, START, max_buffer=64, valid_mask=mask, force_update_cache=False)
     science = _science(unmasked_run, ifo)
     block = 8
