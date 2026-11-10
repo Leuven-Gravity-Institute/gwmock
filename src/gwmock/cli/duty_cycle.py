@@ -12,7 +12,7 @@ strain is not changed. The realization is recorded three ways:
   JSON file, and each interferometer's observing intervals as a plain text list. The first batch
   writes and records them. A batch rewrites them, and records them, when their contents differ
   from the ones it would write and it may overwrite: in a run started with ``--overwrite``, or a
-  resumed run. Missing ones are batch 0's missing outputs, so a resumed run regenerates from the
+  resumed run. A resumed run with no batch left to run leaves them as they are. Missing ones are batch 0's missing outputs, so a resumed run regenerates from the
   first frame, as for any missing output;
 - an **observing flag** on every injected signal with a merger time (for each interferometer, at that
   time) and on every glitch (for its interferometer, at its peak), in the batch metadata.

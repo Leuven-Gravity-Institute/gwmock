@@ -831,7 +831,7 @@ class AdapterOrchestrator(TimeSeriesMixin, Simulator):
         return result
 
     def _stale_segment_files(self) -> list[str]:
-        """The segment files missing from the duty-cycle directory, or holding another realization."""
+        """The segment files missing from the duty-cycle directory, or whose contents differ from this run's."""
         assert self.duty_cycle is not None  # noqa: S101 -- only called when a duty cycle is configured
         directory = self._active_duty_cycle_output_directory
         return [
