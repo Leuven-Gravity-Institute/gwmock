@@ -167,7 +167,7 @@ dev = [
   # Pinned to the `ruff-pre-commit` rev in `.pre-commit-config.yaml`; bump the two together.
   "ruff==0.17.4",
 ]
-docs = ["zensical>=0.1.0", "mkdocstrings-python>=2.0.10"]
+docs = ["zensical>=0.1.1", "mkdocstrings-python>=2.0.10"]
 build = ["hatch>=1.18.2"]
 release = ["git-cliff>=2.14.2"]
 
