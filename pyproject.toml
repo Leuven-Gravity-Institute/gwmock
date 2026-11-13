@@ -64,7 +64,7 @@ dependencies = [
   # 0.22.0 gathers the projection's physical effects in `ProjectionEffects`, which
   # `orchestration.signal.effects` is passed to gwmock-signal as. Below it there is no such argument:
   # the effects cannot be chosen, and the finite-arm response and the solar-system delays are absent.
-  "gwmock-signal>=0.22.0",
+  "gwmock-signal>=0.23.0",
   # 0.11.0 refuses a fractional `gps_start` when the output format is `gwf`, and is the first release
   # whose noise output config admits `hdf5`. The frame filename carries the time as an integer, so
   # below this floor two runs whose start times round to the same second compose one filename and the
@@ -106,7 +106,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sgwb = ["gwmock-signal[sgwb]>=0.22.0"]
+sgwb = ["gwmock-signal[sgwb]>=0.23.0"]
 # The batched signal path. Without this extra `SignalAdapter.simulate_segments` and
 # `execution: batched` raise, because gwmock-signal's batched entry points need JAX and ripple,
 # which the base install omits.
@@ -122,10 +122,10 @@ sgwb = ["gwmock-signal[sgwb]>=0.22.0"]
 # floor is deliberately *not* restated here as a `ripplegw` declaration: it belongs beside the
 # guard that raises on those NaNs, which lives in gwmock-signal, and stating a version in two
 # repositories is how the two drift.
-jax = ["gwmock-signal[jax]>=0.22.0"]
+jax = ["gwmock-signal[jax]>=0.23.0"]
 # The same path with an actual GPU backend. Linux x86_64 with a CUDA 12 driver only; there is no
 # macOS or Windows wheel, which is why this is separate from `jax` rather than folded into it.
-cuda = ["gwmock-signal[jax]>=0.22.0", "jax[cuda12]>=0.11.0"]
+cuda = ["gwmock-signal[jax]>=0.23.0", "jax[cuda12]>=0.11.0"]
 # The DeepExtractor glitch backend, `kind: deepextractor` under
 # `orchestration.noise.arguments.glitches`. Its waveforms are reconstructions fetched from a
 # HuggingFace dataset rather than generated, so it needs `huggingface_hub`, which the base install
@@ -149,7 +149,7 @@ hdf5 = [
   "gwmock-pop[hdf5]>=0.18.3",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
-gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.22.0"]
+gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.23.0"]
 
 [dependency-groups]
 dev = [
