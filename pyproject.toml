@@ -79,7 +79,7 @@ dependencies = [
   # 0.22.0 has the duty-cycle model `orchestration.duty-cycle` is built on.
   # 0.23.0 sets the state-vector bits as LIGO's calibrated state vector does (OBSERVING_MASK).
   "gwmock-noise>=0.23.0",
-  "gwmock-pop>=0.18.3",
+  "gwmock-pop>=0.19.0",
   "typer>=0.19.0",        # Literal-type CLI options; the SPEC 0 floor (0.13) predates them
   "tqdm>=4.67.0",
   "pydantic>=2.10.0",
@@ -146,7 +146,7 @@ pycbc = ["pycbc>=2.8.0", "pandas>=2.3.0", "h5py>=3.13.0"]
 hdf5 = [
   "h5py>=3.13.0",
   "gwmock-noise[hdf5]>=0.23.0",
-  "gwmock-pop[hdf5]>=0.18.3",
+  "gwmock-pop[hdf5]>=0.19.0",
 ]
 # Frame (GWF) output, `gwmock merge`, and hashing or validating frame artifacts.
 gwpy = ["gwpy>=4.0.0", "gwmock-signal[gwpy]>=0.23.0"]
