@@ -141,6 +141,8 @@ jobs:
             id-token: write
         with:
             tag_name: ${{ needs.create_tag.outputs.new_tag }}
+        secrets:
+            ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     publish:
         needs: [release, create_tag]

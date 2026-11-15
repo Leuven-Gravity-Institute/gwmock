@@ -11,6 +11,34 @@ body = """
         {% if commit.breaking %}[**breaking**] {% endif %}\
         {{ commit.message | upper_first }} - \
         ([{{ commit.id | truncate(length=7, end="") }}](<REPO>/commit/{{ commit.id }}))\
+        {{ self::print_contributors(commit=commit) }}\
+        {% if commit.remote.pr_number %} in [#{{ commit.remote.pr_number }}](<REPO>/pull/{{ commit.remote.pr_number }}){% endif %}\
+{% endmacro -%}
+
+{#- Credits the PR author (the GitHub login git-cliff looks up for the PR, else for the commit, else
+    the git author name when the lookup is unavailable) and every Co-authored-by trailer of the squashed commit. A
+    co-author with a GitHub noreply address is credited by login; anyone else by name, never by
+    email. A co-author who is the author already is not repeated. -#}
+{% macro print_contributors(commit) -%}
+    {%- set author_login = commit.remote.pr_author | default(value=commit.remote.username | default(value="")) -%}
+    {%- if author_login %} by @{{ author_login }}\
+    {%- else %} by {{ commit.author.name }}{% endif -%}
+    {#- A commit that is not a conventional commit has no footers at all. -#}
+    {%- for footer in commit.footers | default(value=[]) -%}
+        {%- if footer.token | lower == "co-authored-by" -%}
+            {%- set name = footer.value | split(pat=" <") | first | trim -%}
+            {%- set email = footer.value | split(pat="<") | last | trim_end_matches(pat=">") | trim -%}
+            {%- if email is ending_with("@users.noreply.github.com") -%}
+                {%- set login = email | split(pat="@") | first | split(pat="+") | last -%}
+                {%- set handle = "@" ~ login -%}
+            {%- else -%}
+                {%- set handle = name -%}
+            {%- endif -%}
+            {%- if handle != "@" ~ author_login and name != commit.author.name -%}
+                , {{ handle }}\
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor -%}
 {% endmacro -%}
 
 {% if version %}\
@@ -77,6 +105,8 @@ require_conventional = false
 split_commits = false
 # An array of regex based parsers to modify commit messages prior to further processing.
 commit_preprocessors = [
+  # Drop the "(#123)" GitHub appends to a squash-merge title: the template links the PR itself.
+  { pattern = '(?m)[ \t]*\(#[0-9]+\)$', replace = '' },
   # Replace issue numbers with link templates to be updated in `changelog.postprocessors`.
   #{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](<REPO>/issues/${2}))"},
   # Check spelling of the commit message using https://github.com/crate-ci/typos.
@@ -121,3 +151,9 @@ topo_order_commits = true
 sort_commits = "oldest"
 # Process submodules commits
 recurse_submodules = false
+
+[remote.github]
+# Lets the changelog credit each entry's PR author and link its PR. git-cliff reads the token from
+# GITHUB_TOKEN; without one it falls back to the unauthenticated API rate limit.
+owner = "Leuven-Gravity-Institute"
+repo = "gwmock"

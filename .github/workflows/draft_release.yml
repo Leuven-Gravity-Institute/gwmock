@@ -28,6 +28,8 @@ jobs:
                   args: --unreleased --verbose
               env:
                   OUTPUT: CHANGELOG.md
+                  # Lets git-cliff look up the PR and its author for each entry.
+                  GITHUB_TOKEN: ${{ github.token }}
 
             - name: Delete existing draft release
               continue-on-error: true
