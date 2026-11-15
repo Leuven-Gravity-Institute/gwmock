@@ -32,7 +32,14 @@ body = """
             {%- if email is ending_with("@users.noreply.github.com") -%}
                 {%- set login = email | split(pat="@") | first | split(pat="+") | last -%}
             {%- endif -%}
-            {%- if login != author_login and name != commit.author.name -%}
+            {#- Skip a co-author only when they are the author credited above: by login when that
+                credit is a login, otherwise by the git author name it fell back to. -#}
+            {%- if author_login -%}
+                {%- set credited = login and login == author_login -%}
+            {%- else -%}
+                {%- set credited = name == commit.author.name -%}
+            {%- endif -%}
+            {%- if not credited -%}
                 {%- if login %}, {{ self::print_login(login=login) }}{% else %}, {{ name }}{% endif -%}
             {%- endif -%}
         {%- endif -%}
