@@ -15,15 +15,16 @@ body = """
         {% if commit.remote.pr_number %} in [#{{ commit.remote.pr_number }}](<REPO>/pull/{{ commit.remote.pr_number }}){% endif %}\
 {% endmacro -%}
 
-{#- Credits the PR author (the GitHub login git-cliff looks up for the commit, or the git author name
-    when the lookup is unavailable) and every Co-authored-by trailer of the squashed commit. A
+{#- Credits the PR author (the GitHub login git-cliff looks up for the PR, else for the commit, else
+    the git author name when the lookup is unavailable) and every Co-authored-by trailer of the squashed commit. A
     co-author with a GitHub noreply address is credited by login; anyone else by name, never by
     email. A co-author who is the author already is not repeated. -#}
 {% macro print_contributors(commit) -%}
-    {%- set author_login = commit.remote.username | default(value="") -%}
+    {%- set author_login = commit.remote.pr_author | default(value=commit.remote.username | default(value="")) -%}
     {%- if author_login %} by @{{ author_login }}\
     {%- else %} by {{ commit.author.name }}{% endif -%}
-    {%- for footer in commit.footers -%}
+    {#- A commit that is not a conventional commit has no footers at all. -#}
+    {%- for footer in commit.footers | default(value=[]) -%}
         {%- if footer.token | lower == "co-authored-by" -%}
             {%- set name = footer.value | split(pat=" <") | first | trim -%}
             {%- set email = footer.value | split(pat="<") | last | trim_end_matches(pat=">") | trim -%}

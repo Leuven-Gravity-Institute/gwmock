@@ -57,8 +57,9 @@ jobs:
                   fi
 
             # Summarises the changelog for users. A failure here must never block the release: the
-            # notes then go out as the changelog alone. Claude gets read access only, and returns the
-            # text as structured output rather than writing it anywhere.
+            # notes then go out as the changelog alone. Claude gets read access only (`--tools` limits
+            # the built-in tools to Read; `--allowedTools` only pre-approves it), and returns the text
+            # as structured output rather than writing it anywhere.
             - name: Write highlights
               id: highlights
               if: steps.anthropic.outputs.available == 'true'
@@ -90,6 +91,7 @@ jobs:
                   claude_args: |
                       --model haiku
                       --max-turns 3
+                      --tools Read
                       --allowedTools Read
                       --json-schema '{"type":"object","properties":{"highlights":{"type":"string","description":"The Markdown bullet list"}},"required":["highlights"]}'
 
