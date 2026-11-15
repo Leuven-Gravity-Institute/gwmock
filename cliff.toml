@@ -16,29 +16,51 @@ body = """
 {% endmacro -%}
 
 {#- Credits the PR author (the GitHub login git-cliff looks up for the PR, else for the commit, else
-    the git author name when the lookup is unavailable) and every Co-authored-by trailer of the squashed commit. A
-    co-author with a GitHub noreply address is credited by login; anyone else by name, never by
-    email. A co-author who is the author already is not repeated. -#}
+    the git author name when the lookup is unavailable) and every Co-authored-by trailer of the
+    squashed commit. A co-author with a GitHub noreply address is credited by login; anyone else by
+    name, never by email. A co-author who is the author already is not repeated. -#}
 {% macro print_contributors(commit) -%}
     {%- set author_login = commit.remote.pr_author | default(value=commit.remote.username | default(value="")) -%}
-    {%- if author_login %} by @{{ author_login }}\
-    {%- else %} by {{ commit.author.name }}{% endif -%}
+    {%- if author_login %} by {{ self::print_login(login=author_login) }}\
+    {%- else %} by {{ self::print_name(name=commit.author.name) }}{% endif -%}
     {#- A commit that is not a conventional commit has no footers at all. -#}
     {%- for footer in commit.footers | default(value=[]) -%}
         {%- if footer.token | lower == "co-authored-by" -%}
             {%- set name = footer.value | split(pat=" <") | first | trim -%}
             {%- set email = footer.value | split(pat="<") | last | trim_end_matches(pat=">") | trim -%}
+            {%- set login = "" -%}
             {%- if email is ending_with("@users.noreply.github.com") -%}
                 {%- set login = email | split(pat="@") | first | split(pat="+") | last -%}
-                {%- set handle = "@" ~ login -%}
-            {%- else -%}
-                {%- set handle = name -%}
             {%- endif -%}
-            {%- if handle != "@" ~ author_login and name != commit.author.name -%}
-                , {{ handle }}\
+            {#- Skip a co-author only when they are the author credited above: by login when that
+                credit is a login, otherwise by the git author name it fell back to. -#}
+            {%- if author_login -%}
+                {%- set credited = login and login == author_login -%}
+            {%- else -%}
+                {%- set credited = name == commit.author.name -%}
+            {%- endif -%}
+            {%- if not credited -%}
+                {%- if login %}, {{ self::print_login(login=login) }}{% else %}, {{ self::print_name(name=name) }}{% endif -%}
             {%- endif -%}
         {%- endif -%}
     {%- endfor -%}
+{% endmacro -%}
+
+{#- A git name is free text: escape the characters Markdown would read as markup. -#}
+{% macro print_name(name) -%}
+    {{- name | replace(from="\\", to="\\\\") | replace(from="*", to="\\*") | replace(from="_", to="\\_")
+        | replace(from="`", to="\\`") | replace(from="[", to="\\[") | replace(from="]", to="\\]")
+        | replace(from="<", to="\\<") | replace(from=">", to="\\>") -}}
+{% endmacro -%}
+
+{#- A GitHub App's login ends in "[bot]", and GitHub reads "@renovate[bot]" as a mention of the user
+    "renovate" followed by the text "[bot]". Link an App to its page instead of mentioning it. -#}
+{% macro print_login(login) -%}
+    {%- if login is ending_with("[bot]") -%}
+        [{{ login | replace(from="[", to="\\[") | replace(from="]", to="\\]") }}](https://github.com/apps/{{ login | trim_end_matches(pat="[bot]") }})\
+    {%- else -%}
+        @{{ login }}\
+    {%- endif -%}
 {% endmacro -%}
 
 {% if version %}\
@@ -75,7 +97,7 @@ footer = """
 
 **Contributing**: We welcome contributions! Please see our [Contributing Guide](<REPO>/blob/main/CONTRIBUTING.md) for details.
 
-**Questions?** Open an issue on [GitHub](<REPO>/issues) or join our discussions.
+**Questions?** Open an issue on [GitHub](<REPO>/issues) or join our [discussions](<REPO>/discussions).
 """
 
 # Remove leading and trailing whitespaces from the changelog's body.
@@ -106,7 +128,8 @@ split_commits = false
 # An array of regex based parsers to modify commit messages prior to further processing.
 commit_preprocessors = [
   # Drop the "(#123)" GitHub appends to a squash-merge title: the template links the PR itself.
-  { pattern = '(?m)[ \t]*\(#[0-9]+\)$', replace = '' },
+  # Only the title line: a body line ending in "(#123)" is left alone.
+  { pattern = '\A([^\n]*?)[ \t]*\(#[0-9]+\)(\n|\z)', replace = '${1}${2}' },
   # Replace issue numbers with link templates to be updated in `changelog.postprocessors`.
   #{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](<REPO>/issues/${2}))"},
   # Check spelling of the commit message using https://github.com/crate-ci/typos.
