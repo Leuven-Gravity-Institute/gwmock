@@ -21,29 +21,32 @@ on:
                 required: false
 
 permissions:
-    contents: write
+    contents: read
 
 jobs:
-    release:
+    # Summarises the changelog for users, in a job of its own so that the model never runs beside a
+    # token that can write: this job's token can only read. A failure here must never block the
+    # release, which then goes out with the changelog alone.
+    highlights:
         runs-on: ubuntu-latest
         permissions:
-            contents: write
+            contents: read
+        outputs:
+            highlights: ${{ steps.parse.outputs.highlights }}
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   fetch-depth: 0
                   ref: ${{ inputs.tag_name || github.event.inputs.tag_name }}
 
+            # Offline: the summary needs the changes, not the PR credits.
             - name: Generate changelog
-              id: changelog
               uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
               with:
                   config: cliff.toml
-                  args: --current --verbose
+                  args: --current --offline
               env:
                   OUTPUT: CHANGELOG.md
-                  # Lets git-cliff look up the PR and its author for each entry.
-                  GITHUB_TOKEN: ${{ github.token }}
 
             - name: Check for the Anthropic API key
               id: anthropic
@@ -56,10 +59,9 @@ jobs:
                     echo "::warning::ANTHROPIC_API_KEY is not set; publishing the release without Highlights."
                   fi
 
-            # Summarises the changelog for users. A failure here must never block the release: the
-            # notes then go out as the changelog alone. Claude gets read access only (`--tools` limits
-            # the built-in tools to Read; `--allowedTools` only pre-approves it), and returns the text
-            # as structured output rather than writing it anywhere.
+            # `--tools Read` leaves Read as the only built-in tool (`--allowedTools` only pre-approves
+            # it) and `--disallowedTools 'mcp__*'` removes the GitHub MCP tools the action adds. The
+            # text comes back as structured output rather than being written anywhere.
             - name: Write highlights
               id: highlights
               if: steps.anthropic.outputs.available == 'true'
@@ -93,19 +95,59 @@ jobs:
                       --max-turns 3
                       --tools Read
                       --allowedTools Read
+                      --disallowedTools 'mcp__*'
                       --json-schema '{"type":"object","properties":{"highlights":{"type":"string","description":"The Markdown bullet list"}},"required":["highlights"]}'
+
+            # Parsed in the shell rather than with fromJSON(), which would fail on an empty or malformed
+            # output instead of leaving the Highlights out. The random delimiter keeps the model's text
+            # from ending the multi-line output early.
+            - name: Parse highlights
+              id: parse
+              env:
+                  STRUCTURED_OUTPUT:
+                      ${{ steps.highlights.outputs.structured_output }}
+              run: |
+                  HIGHLIGHTS=$(jq -r '.highlights // empty' <<< "$STRUCTURED_OUTPUT" 2>/dev/null || true)
+                  DELIMITER="HIGHLIGHTS_$(openssl rand -hex 16)"
+                  {
+                    echo "highlights<<$DELIMITER"
+                    printf '%s\n' "$HIGHLIGHTS"
+                    echo "$DELIMITER"
+                  } >> "$GITHUB_OUTPUT"
+
+    release:
+        needs: highlights
+        # Publish even when the highlights job failed: the notes then carry the changelog alone.
+        if: ${{ !cancelled() }}
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            # git-cliff looks up the PR and its author for each entry.
+            pull-requests: read
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  fetch-depth: 0
+                  ref: ${{ inputs.tag_name || github.event.inputs.tag_name }}
+
+            - name: Generate changelog
+              id: changelog
+              uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+              with:
+                  config: cliff.toml
+                  args: --current --verbose
+              env:
+                  OUTPUT: CHANGELOG.md
+                  # Lets git-cliff look up the PR and its author for each entry.
+                  GITHUB_TOKEN: ${{ github.token }}
 
             - name: Assemble release notes
               env:
-                  # Parsed in the shell rather than with fromJSON(), which would fail the job on an
-                  # empty or malformed output instead of leaving the Highlights out.
-                  STRUCTURED_OUTPUT:
-                      ${{ steps.highlights.outputs.structured_output }}
+                  HIGHLIGHTS: ${{ needs.highlights.outputs.highlights }}
                   CHANGELOG: ${{ steps.changelog.outputs.content }}
               run: |
-                  HIGHLIGHTS=$(jq -r '.highlights // empty' <<< "$STRUCTURED_OUTPUT" 2>/dev/null || true)
                   {
-                    if [ -n "$HIGHLIGHTS" ]; then
+                    if [ -n "${HIGHLIGHTS//[[:space:]]/}" ]; then
                       printf '## Highlights\n\n%s\n\n' "$HIGHLIGHTS"
                     fi
                     printf '%s\n' "$CHANGELOG"

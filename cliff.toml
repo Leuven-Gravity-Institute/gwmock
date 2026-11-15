@@ -22,7 +22,7 @@ body = """
 {% macro print_contributors(commit) -%}
     {%- set author_login = commit.remote.pr_author | default(value=commit.remote.username | default(value="")) -%}
     {%- if author_login %} by {{ self::print_login(login=author_login) }}\
-    {%- else %} by {{ commit.author.name }}{% endif -%}
+    {%- else %} by {{ self::print_name(name=commit.author.name) }}{% endif -%}
     {#- A commit that is not a conventional commit has no footers at all. -#}
     {%- for footer in commit.footers | default(value=[]) -%}
         {%- if footer.token | lower == "co-authored-by" -%}
@@ -40,10 +40,17 @@ body = """
                 {%- set credited = name == commit.author.name -%}
             {%- endif -%}
             {%- if not credited -%}
-                {%- if login %}, {{ self::print_login(login=login) }}{% else %}, {{ name }}{% endif -%}
+                {%- if login %}, {{ self::print_login(login=login) }}{% else %}, {{ self::print_name(name=name) }}{% endif -%}
             {%- endif -%}
         {%- endif -%}
     {%- endfor -%}
+{% endmacro -%}
+
+{#- A git name is free text: escape the characters Markdown would read as markup. -#}
+{% macro print_name(name) -%}
+    {{- name | replace(from="\\", to="\\\\") | replace(from="*", to="\\*") | replace(from="_", to="\\_")
+        | replace(from="`", to="\\`") | replace(from="[", to="\\[") | replace(from="]", to="\\]")
+        | replace(from="<", to="\\<") | replace(from=">", to="\\>") -}}
 {% endmacro -%}
 
 {#- A GitHub App's login ends in "[bot]", and GitHub reads "@renovate[bot]" as a mention of the user
@@ -121,7 +128,8 @@ split_commits = false
 # An array of regex based parsers to modify commit messages prior to further processing.
 commit_preprocessors = [
   # Drop the "(#123)" GitHub appends to a squash-merge title: the template links the PR itself.
-  { pattern = '(?m)[ \t]*\(#[0-9]+\)$', replace = '' },
+  # Only the title line: a body line ending in "(#123)" is left alone.
+  { pattern = '\A([^\n]*?)[ \t]*\(#[0-9]+\)(\n|\z)', replace = '${1}${2}' },
   # Replace issue numbers with link templates to be updated in `changelog.postprocessors`.
   #{ pattern = '\((\w+\s)?#([0-9]+)\)', replace = "([#${2}](<REPO>/issues/${2}))"},
   # Check spelling of the commit message using https://github.com/crate-ci/typos.
