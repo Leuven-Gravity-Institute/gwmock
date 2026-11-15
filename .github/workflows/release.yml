@@ -14,9 +14,10 @@ on:
                 required: true
                 type: string
         secrets:
-            ANTHROPIC_API_KEY:
+            CLAUDE_CODE_OAUTH_TOKEN:
                 description:
-                    'Writes the Highlights section of the release notes. Without
+                    'Claude Code OAuth token (from `claude setup-token`) that
+                    writes the Highlights section of the release notes. Without
                     it the release is published with the changelog alone.'
                 required: false
 
@@ -49,15 +50,16 @@ jobs:
               env:
                   OUTPUT: CHANGELOG.md
 
-            - name: Check for the Anthropic API key
-              id: anthropic
+            - name: Check for the Claude Code OAuth token
+              id: claude
               env:
-                  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+                  CLAUDE_CODE_OAUTH_TOKEN:
+                      ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
               run: |
-                  if [ -n "$ANTHROPIC_API_KEY" ]; then
+                  if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
                     echo "available=true" >> "$GITHUB_OUTPUT"
                   else
-                    echo "::warning::ANTHROPIC_API_KEY is not set; publishing the release without Highlights."
+                    echo "::warning::CLAUDE_CODE_OAUTH_TOKEN is not set; publishing the release without Highlights."
                   fi
 
             # The changelog goes into the prompt and the model gets no tools at all: changelog text
@@ -68,11 +70,12 @@ jobs:
             # back as structured output rather than being written anywhere.
             - name: Write highlights
               id: highlights
-              if: steps.anthropic.outputs.available == 'true'
+              if: steps.claude.outputs.available == 'true'
               continue-on-error: true
               uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
               with:
-                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  claude_code_oauth_token:
+                      ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
                   github_token: ${{ github.token }}
                   display_report: 'false'
                   prompt: |
