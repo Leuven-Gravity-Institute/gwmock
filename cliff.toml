@@ -97,7 +97,7 @@ footer = """
 
 **Contributing**: We welcome contributions! Please see our [Contributing Guide](<REPO>/blob/main/CONTRIBUTING.md) for details.
 
-**Questions?** Open an issue on [GitHub](<REPO>/issues) or join our discussions.
+**Questions?** Open an issue on [GitHub](<REPO>/issues) or join our [discussions](<REPO>/discussions).
 """
 
 # Remove leading and trailing whitespaces from the changelog's body.

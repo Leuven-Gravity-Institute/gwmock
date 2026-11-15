@@ -152,12 +152,16 @@ jobs:
               env:
                   HIGHLIGHTS: ${{ needs.highlights.outputs.highlights }}
                   CHANGELOG: ${{ steps.changelog.outputs.content }}
+              # The Highlights go under the version heading (the changelog's first line), as the first
+              # of its sections.
               run: |
                   {
                     if [ -n "${HIGHLIGHTS//[[:space:]]/}" ]; then
-                      printf '## Highlights\n\n%s\n\n' "$HIGHLIGHTS"
+                      printf '%s\n\n### Highlights\n\n%s\n\n' "$(head -n 1 <<< "$CHANGELOG")" "$HIGHLIGHTS"
+                      tail -n +2 <<< "$CHANGELOG" | sed '/./,$!d'
+                    else
+                      printf '%s\n' "$CHANGELOG"
                     fi
-                    printf '%s\n' "$CHANGELOG"
                   } > RELEASE_NOTES.md
 
             - name: Delete draft release
