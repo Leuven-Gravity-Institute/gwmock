@@ -33,6 +33,14 @@ file records. Rewriting them from an architecture whose LAL differs does not fix
 the same 4e-06 onto the machines that were green before, and the diff looks like a real change to
 every entry that generates through LAL. The macOS section below is what that is about.
 
+**The platform includes the C library, which the fingerprint does not record.** The ``lalsuite``
+wheels bundle their own FFTW and GSL but call the system ``libm``, and glibc 2.43 (Ubuntu 26.04,
+GitHub's ``ubuntu-latest`` from November 2026) returns different last bits from glibc 2.39 (Ubuntu
+24.04) for ``cbrt``, which IMRPhenomXPHM calls. That moves ``signal/bbh/et_triangle_sardinia`` by
+2.2e-06 of peak while every other entry moves by 4e-10 or less. The references were regenerated on
+the glibc 2.43 runner, so a Linux/x86_64 host on an older glibc fails that one entry under the tight
+bound: regenerate from a glibc 2.43 host, not from such a machine.
+
 **Portability: measured, and it does not hold.** An earlier run suggested these hashes reproduced
 bit-for-bit between a local Linux/x86_64 machine and GitHub's ubuntu-latest runner. That was wrong.
 With identical package versions -- numpy, scipy, lalsuite, jax and ripplegw all unchanged -- CI and
