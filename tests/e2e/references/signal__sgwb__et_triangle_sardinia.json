@@ -1,23 +1,23 @@
 {
   "environment": {
-    "astropy": "8.0.1",
-    "astropy-iers-data": "0.2026.10.5.1.0.7",
-    "gwmock": "0.16.3-post.4+5bee1dd",
-    "gwmock-noise": "0.14.0",
-    "gwmock-pop": "0.14.1",
-    "gwmock-signal": "0.17.4",
-    "jax": "0.11.2",
-    "jaxlib": "0.11.2",
-    "lalsuite": "7.26.16",
-    "numpy": "2.5.3",
+    "astropy": "8.0.2",
+    "astropy-iers-data": "0.2026.11.9.0.35.9",
+    "gwmock": "0.23.0-post.15+c108750",
+    "gwmock-noise": "0.23.0",
+    "gwmock-pop": "0.19.0",
+    "gwmock-signal": "0.24.0",
+    "jax": "0.12.0.1",
+    "jaxlib": "0.12.0.1",
+    "lalsuite": "8.0.0",
+    "numpy": "2.5.4",
     "pyerfa": "2.0.1.5",
-    "ripplegw": "0.4.0",
+    "ripplegw": "0.5.0",
     "scipy": "1.18.1"
   },
   "fingerprint": {
     "device": "cpu",
     "machine": "x86_64",
-    "python": "3.12",
+    "python": "3.13",
     "system": "Linux"
   },
   "label": "signal/sgwb/et_triangle_sardinia",
@@ -54,12 +54,12 @@
     },
     "output/signal/sgwb-et-triangle-0.hdf5": {
       "argmax": 1807,
-      "content_hash": "sha256:baad66afd493763f205d6029465a56bd51d62948558fb8026914a6e12c358a58",
-      "mean": -2.989436723892943e-42,
+      "content_hash": "sha256:2fd69be8385b158f2b7dc24659ba709da30177fc3f926c43973c4f113649f20b",
+      "mean": 2.0328169722472014e-42,
       "n": 24576,
       "nonzero": 24576,
       "peak": 6.93698448988948e-24,
-      "rms": 1.780976723503206e-24,
+      "rms": 1.780976726136095e-24,
       "signed_peak": 6.93698448988948e-24
     }
   }

@@ -1,11 +1,11 @@
 {
   "environment": {
     "astropy": "8.0.2",
-    "astropy-iers-data": "0.2026.11.2.0.34.55",
-    "gwmock": "0.20.3-post.5+8051699",
-    "gwmock-noise": "0.20.0",
-    "gwmock-pop": "0.18.1",
-    "gwmock-signal": "0.22.0",
+    "astropy-iers-data": "0.2026.11.9.0.35.9",
+    "gwmock": "0.23.0-post.15+c108750",
+    "gwmock-noise": "0.23.0",
+    "gwmock-pop": "0.19.0",
+    "gwmock-signal": "0.24.0",
     "jax": "0.12.0.1",
     "jaxlib": "0.12.0.1",
     "lalsuite": "8.0.0",
@@ -24,32 +24,32 @@
   "outputs": {
     "output/signal/E-ET1_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4078,
-      "content_hash": "sha256:a11bf9720f1628945aa8c90546246422c6e5b19cb063954080daa93f9224e031",
-      "mean": 1.0063625607151711e-28,
+      "content_hash": "sha256:590d4bc9deab2a83afa936c912f28c61fce0717ea3c4bce4daf020f59182f0eb",
+      "mean": 1.0063625922446937e-28,
       "n": 16384,
       "nonzero": 4644,
-      "peak": 8.66349988020009e-22,
-      "rms": 5.2897038240834916e-23,
-      "signed_peak": 8.66349988020009e-22
+      "peak": 8.663499880200047e-22,
+      "rms": 5.289703824078766e-23,
+      "signed_peak": 8.663499880200047e-22
     },
     "output/signal/E-ET2_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4077,
-      "content_hash": "sha256:02514ea374d4d8a7f55f223fa4ea7ad99052aaa88cc6db80b94fda4b4d474803",
-      "mean": -6.603978396790495e-29,
+      "content_hash": "sha256:ec10131d76344b8cdf82d6d21ae2914fc1a5cfe8c52f133574d73ad863bdc628",
+      "mean": -6.603978341546494e-29,
       "n": 16384,
       "nonzero": 4644,
-      "peak": 8.628743035412952e-22,
-      "rms": 5.444951860991764e-23,
-      "signed_peak": -8.628743035412952e-22
+      "peak": 8.628743035412979e-22,
+      "rms": 5.444951860992253e-23,
+      "signed_peak": -8.628743035412979e-22
     },
     "output/signal/E-ET3_SARD_STRAIN_BBH-1419724816-16.hdf5": {
       "argmax": 4076,
-      "content_hash": "sha256:26cc219397b150694089151af5649c91d27540107d1b3e77ac6473235a5a8275",
-      "mean": -3.4596471872423853e-29,
+      "content_hash": "sha256:3c0c2ab5e4a90a64445868c481594913a1a066da6bd68a1bcbb054f95282f2c7",
+      "mean": -3.4596475476058946e-29,
       "n": 16384,
       "nonzero": 4644,
       "peak": 8.1262472351837905e-22,
-      "rms": 5.560997842839717e-23,
+      "rms": 5.560997842839895e-23,
       "signed_peak": 8.1262472351837905e-22
     }
   }
