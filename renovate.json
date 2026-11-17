@@ -5,8 +5,10 @@
         "config:best-practices",
         ":semanticCommitTypeAll(chore)"
     ],
-    "dependencyDashboard": true,
-    "dependencyDashboardTitle": "Dependency Dashboard",
+    "dependencyDashboard": {
+        "enabled": true,
+        "title": "Dependency Dashboard"
+    },
     "pre-commit": {
         "enabled": true
     },
